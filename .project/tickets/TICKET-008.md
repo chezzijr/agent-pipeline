@@ -1,0 +1,38 @@
+---
+id: TICKET-008
+stage: new
+class: feature
+branch: ticket/008
+test_file: null
+files_declared: []
+counters: {plan_validation_attempts: 0, review_loops: 0, blocked_count: 0, lease_expiries: 0}
+lease: {holder: null, expires: null}
+---
+
+## Summary
+
+a plan must be able to supersede an existing decision record
+
+`record_decision` writes `.project/decisions/DEC-<n>.md` when a ticket lands, and
+`planning.md` greps that directory. Nothing can ever retire or contradict an
+entry. The plan-validation checklist says a plan must "comply or explicitly
+supersede with justification", but there is no mechanism for superseding.
+
+Expected: a decision record can be marked superseded by a later ticket, with the
+reason recorded, and planning agents see that status when they grep.
+
+## Reproduction
+
+## Digest
+
+## Decisions checked
+
+## Plan
+
+## Acceptance criteria
+
+## Decisions
+
+## Rollback
+
+## Thread
