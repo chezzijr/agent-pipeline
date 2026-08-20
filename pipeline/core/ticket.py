@@ -1,13 +1,23 @@
-"""Ticket files: read, validate, write, and the thread they carry."""
+"""Ticket files: read, validate, write, and the thread they carry.
+
+The ticket is the whole protocol between stages, so it stays hand-editable
+markdown in git. `Ticket` is a typed view over it, not a schema it must obey:
+every key the model does not know is round-tripped in `extra`, and a thread
+header that does not parse comes back as a freeform note rather than an error.
+"""
+import os
 import re
-from datetime import datetime, timezone
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import yaml
 
+from pipeline.core import PipelineError
 from pipeline.core.machine import KNOWN_STAGES
 
 LEASE_MINUTES = 30
+TS_FMT = "%Y-%m-%d %H:%M:%SZ"
 
 
 def now() -> datetime:
@@ -50,9 +60,21 @@ def load_ticket(path: Path) -> tuple[dict, str]:
     return split_frontmatter(path)
 
 
-def save_ticket(path: Path, meta: dict, body: str) -> None:
+def render(meta: dict, body: str) -> str:
     fm = yaml.safe_dump(meta, sort_keys=False, default_flow_style=False)
-    path.write_text(f"---\n{fm}---\n{body}")
+    return f"---\n{fm}---\n{body}"
+
+
+def write_atomic(path: Path, text: str) -> None:
+    """The daemon and the TUI read these files while the supervisor writes
+    them; a half-written ticket must never be observable."""
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(text)
+    os.replace(tmp, path)
+
+
+def save_ticket(path: Path, meta: dict, body: str) -> None:
+    write_atomic(path, render(meta, body))
 
 
 def sections(body: str) -> dict[str, str]:
@@ -71,12 +93,15 @@ def sections(body: str) -> dict[str, str]:
     return out
 
 
-def append_thread(body: str, text: str) -> str:
-    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ")
-    entry = f"\n### {stamp}\n\n{text.strip()}\n"
+def append_entry(body: str, header: str, text: str) -> str:
+    entry = f"\n### {header}\n\n{text.strip()}\n"
     if "## Thread" in body:
         return body.rstrip() + "\n" + entry
     return body.rstrip() + "\n\n## Thread\n" + entry
+
+
+def append_thread(body: str, text: str) -> str:
+    return append_entry(body, now().strftime(TS_FMT), text)
 
 
 def tickets_dir(project: Path) -> Path:
@@ -132,3 +157,144 @@ def record_decision(project: Path, meta: dict, body: str) -> str | None:
         f"- files: {', '.join(meta.get('files_declared') or []) or 'n/a'}\n"
         f"- decided: {now().date().isoformat()}\n\n{text}\n")
     return did
+
+
+# --------------------------------------------------------------------------
+# the model
+# --------------------------------------------------------------------------
+
+# The vocabulary a stage may write. Reading stays lenient; writing does not,
+# because an invented kind is a typo nothing would ever notice.
+KINDS = frozenset({"note", "transition", "gate", "question", "answer", "finding",
+                   "escalation", "approval", "rejection", "session", "decision"})
+
+# `class` is a Python keyword, so the attribute is `klass`; the YAML key stays
+# `class`. `frontmatter()` is the only place that translation lives.
+TYPED_KEYS = ("id", "stage", "class", "branch", "test_file", "files_declared",
+              "counters", "lease")
+
+
+@dataclass(frozen=True)
+class ThreadEntry:
+    ts: datetime | None      # None when a hand-written header does not parse
+    stage: str               # "" for freeform
+    kind: str                # "note" for freeform
+    attrs: dict[str, str]
+    text: str
+
+
+def _parse_header(line: str) -> tuple[datetime | None, str, str, dict[str, str]]:
+    """`2026-08-20 14:59:31Z · review · finding · severity=blocking`.
+
+    Never raises: a header a human typed by hand is a note, not an error."""
+    parts = [p.strip() for p in line.split("·")]
+    try:
+        ts = datetime.strptime(parts[0], TS_FMT).replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None, "", "note", {}
+    stage = parts[1] if len(parts) > 1 else ""
+    kind = parts[2] if len(parts) > 2 else "note"
+    attrs = dict(p.split("=", 1) for p in parts[3:] if "=" in p)
+    return ts, stage, kind, attrs
+
+
+@dataclass
+class Ticket:
+    """One ticket file. `extra` carries every key the model does not name, so a
+    field a human (or a later version) added survives a save."""
+    path: Path
+    id: str
+    stage: str = "new"
+    klass: str = "bugfix"
+    branch: str = ""
+    test_file: str | None = None
+    files_declared: list[str] = field(default_factory=list)
+    counters: dict[str, int] = field(default_factory=dict)
+    lease: dict = field(default_factory=lambda: {"holder": None, "expires": None})
+    extra: dict = field(default_factory=dict)
+    body: str = ""
+
+    # -- io ---------------------------------------------------------------
+    @classmethod
+    def load(cls, path) -> "Ticket":
+        path = Path(path)
+        try:
+            meta, body = split_frontmatter(path)
+        except Exception as e:
+            raise PipelineError(f"{path}: {e}") from e
+        if not isinstance(meta, dict):
+            raise PipelineError(f"{path}: frontmatter is not a mapping")
+        meta = dict(meta)
+        lease = meta.pop("lease", None) or {"holder": None, "expires": None}
+        return cls(path=path, id=str(meta.pop("id", "")),
+                   stage=meta.pop("stage", None) or "new",
+                   klass=meta.pop("class", None) or "bugfix",
+                   branch=meta.pop("branch", None) or "",
+                   test_file=meta.pop("test_file", None),
+                   files_declared=meta.pop("files_declared", None) or [],
+                   counters=meta.pop("counters", None) or {},
+                   lease=lease, extra=meta, body=body)
+
+    @classmethod
+    def find(cls, project: Path, tid: str) -> "Ticket":
+        return cls.load(ticket_path(project, tid))
+
+    def frontmatter(self) -> dict:
+        """Typed fields first in a stable order, then everything else."""
+        fm = {"id": self.id, "stage": self.stage, "class": self.klass,
+              "branch": self.branch, "test_file": self.test_file,
+              "files_declared": self.files_declared, "counters": self.counters,
+              "lease": self.lease}
+        fm.update({k: v for k, v in self.extra.items() if k not in TYPED_KEYS})
+        return fm
+
+    def errors(self) -> list[str]:
+        return validate_meta(self.frontmatter())
+
+    def save(self) -> None:
+        """Validated on the way in, not only on the next load, and written
+        atomically -- something is always reading these files."""
+        bad = self.errors()
+        if bad:
+            raise PipelineError(f"{self.path}: refusing to write: " + "; ".join(bad))
+        write_atomic(self.path, render(self.frontmatter(), self.body))
+
+    # -- body -------------------------------------------------------------
+    def sections(self) -> dict[str, str]:
+        return sections(self.body)
+
+    def section(self, name: str) -> str:
+        return self.sections().get(name, "")
+
+    def append(self, stage: str, kind: str, text: str, **attrs) -> None:
+        if kind not in KINDS:
+            raise PipelineError(f"unknown thread kind {kind!r}")
+        head = " · ".join([now().strftime(TS_FMT), stage, kind]
+                               + [f"{k}={v}" for k, v in attrs.items()])
+        self.body = append_entry(self.body, head, text)
+
+    def thread(self) -> list[ThreadEntry]:
+        out: list[ThreadEntry] = []
+        head, buf = None, []
+        for line in self.section("Thread").splitlines():
+            if line.startswith("### "):
+                if head is not None:
+                    out.append(ThreadEntry(*head, "\n".join(buf).strip()))
+                head, buf = _parse_header(line[4:]), []
+            elif head is not None:
+                buf.append(line)
+        if head is not None:
+            out.append(ThreadEntry(*head, "\n".join(buf).strip()))
+        return out
+
+    # -- lease ------------------------------------------------------------
+    def lease_active(self) -> bool:
+        exp = (self.lease or {}).get("expires")
+        return bool(exp) and now() < datetime.fromisoformat(exp)
+
+    def take_lease(self, holder: str, minutes: int = LEASE_MINUTES) -> None:
+        self.lease = {"holder": holder,
+                      "expires": (now() + timedelta(minutes=minutes)).isoformat()}
+
+    def release_lease(self) -> None:
+        self.lease = {"holder": None, "expires": None}

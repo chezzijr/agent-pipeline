@@ -9,6 +9,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from pipeline.core import PipelineError
 from pipeline.core.config import (compose_prompt, harness, is_readonly,
                                   project_config, stage_config, stage_settings)
 from pipeline.core.gate import gate
@@ -138,7 +139,13 @@ def start(project: Path, path: Path, hcfg: dict, inflight: dict) -> tuple[bool, 
     if files_conflict(meta, [r["meta"] for r in inflight.values()]):
         return False, None  # wait, do not fail -- cheap ordering without a scheduler
 
-    cfg = project_config(project)
+    try:
+        cfg = project_config(project)
+    except PipelineError as e:
+        # one unconfigured project must not take the loop -- and every other
+        # ticket's agent -- down with it
+        escalate(path, meta, body, str(e))
+        return True, None
     wt = ensure_worktree(project, meta, cfg)
     if wt is None:
         escalate(path, meta, body, "could not create a worktree")

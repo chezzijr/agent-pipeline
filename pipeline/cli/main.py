@@ -6,7 +6,8 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from pipeline.core.config import CONFIG_TEMPLATE, TICKET_TEMPLATE, die
+from pipeline.core import PipelineError
+from pipeline.core.config import CONFIG_TEMPLATE, TICKET_TEMPLATE
 from pipeline.core.gate import gate
 from pipeline.core.machine import HUMAN_GATES, KNOWN_STAGES, TERMINAL
 from pipeline.core.ticket import (all_tickets, append_thread, load_ticket, now,
@@ -15,6 +16,13 @@ from pipeline.core.worktree import worktree
 from pipeline.daemon.supervisor import lease_active, run
 
 STALE_HOURS = 4  # overlap ordering is silent; surface anything sitting still
+
+
+def die(msg: str) -> None:
+    """The one place a bad input ends the process. The library raises
+    `PipelineError` instead, so one broken project cannot kill the loop."""
+    print(f"error: {msg}", file=sys.stderr)
+    sys.exit(1)
 
 
 def cmd_init(args) -> None:
@@ -127,8 +135,11 @@ def main() -> None:
     p = sub.add_parser("run"); p.add_argument("--once", action="store_true"); p.add_argument("--interval", type=int, default=10); p.add_argument("--harness", default="claude-code"); p.add_argument("-j", "--max-parallel", type=int, default=3); p.set_defaults(fn=None)
 
     args = ap.parse_args()
-    if args.cmd == "run":
-        run(Path(args.project).resolve(), args.once, args.interval, args.harness,
-            args.max_parallel)
-    else:
-        args.fn(args)
+    try:
+        if args.cmd == "run":
+            run(Path(args.project).resolve(), args.once, args.interval,
+                args.harness, args.max_parallel)
+        else:
+            args.fn(args)
+    except PipelineError as e:
+        die(str(e))

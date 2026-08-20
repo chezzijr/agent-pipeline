@@ -9,6 +9,9 @@ KNOWN_STAGES = TERMINAL | HUMAN_GATES | {
     "review", "holistic-review", "verifying"}
 # only these leave a worktree behind for a human to look at
 CLEANUP_STAGES = {"done", "rejected"}
+# stages the dispatcher runs itself, with no agent and so no prompt file. A
+# test subtracts this set rather than hard-coding the exceptions.
+DISPATCHER_STAGES = {"verifying"}
 
 
 def transition(stage: str, result: str, counters: dict, klass: str = "bugfix"):

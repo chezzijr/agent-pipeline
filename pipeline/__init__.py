@@ -16,11 +16,12 @@ from pipeline.core.config import (STAGES_DIR, agent_stages, compose_prompt,
                                   stage_settings)
 from pipeline.core.gate import gate
 from pipeline.core.machine import (CLEANUP_STAGES, CONTROL_FIELDS,
-                                   HUMAN_GATES, TERMINAL, apply_claims,
-                                   files_conflict, transition)
-from pipeline.core.ticket import (drop_result, load_ticket, read_result,
-                                  record_decision, result_file, save_ticket,
-                                  sections, validate_meta)
+                                   DISPATCHER_STAGES, HUMAN_GATES, TERMINAL,
+                                   apply_claims, files_conflict, transition)
+from pipeline.core.ticket import (KINDS, ThreadEntry, Ticket, drop_result,
+                                  load_ticket, read_result, record_decision,
+                                  result_file, save_ticket, sections,
+                                  validate_meta)
 from pipeline.core.worktree import (drop_worktree, ensure_worktree,
                                     project_env)
 from pipeline.daemon.supervisor import escalate, lease_active, start

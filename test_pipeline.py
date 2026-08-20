@@ -469,6 +469,71 @@ def test_ticket_roundtrips():
     shutil.rmtree(d)
 
 
+# --- the Ticket model ------------------------------------------------------
+
+def test_unknown_frontmatter_survives_a_save():
+    """The trap a typed model walks into: a field nobody modelled is data loss."""
+    d = _project(FIXTURE.replace("counters: {}", "approved_by: chezzijr\ncounters: {}"))
+    p = d / ".project/tickets/TICKET-001.md"
+    t = P.Ticket.load(p)
+    assert t.extra["approved_by"] == "chezzijr"
+    t.save()
+    assert P.Ticket.load(p).extra["approved_by"] == "chezzijr"
+    shutil.rmtree(d)
+
+
+def test_save_refuses_an_invalid_ticket():
+    """Invariant 5 on the WRITE side: today a hostile branch reaches disk and is
+    only caught by the next load."""
+    d = _project()
+    p = d / ".project/tickets/TICKET-001.md"
+    t = P.Ticket.load(p)
+    before = p.read_text()
+    t.branch = "x; rm -rf ~"
+    try:
+        t.save()
+        assert False, "wrote a hostile branch to disk"
+    except P.PipelineError:
+        pass
+    assert p.read_text() == before, "a refused save still touched the file"
+    shutil.rmtree(d)
+
+
+def test_thread_entries_round_trip_and_freeform_survives():
+    d = _project()
+    t = P.Ticket.load(d / ".project/tickets/TICKET-001.md")
+    t.append("review", "finding", "evict drops the wrong key", severity="blocking")
+    e = t.thread()[-1]
+    assert (e.stage, e.kind, e.attrs["severity"]) == ("review", "finding", "blocking")
+    assert "evict drops the wrong key" in e.text
+    t.save()
+    assert P.Ticket.load(t.path).thread()[-1].attrs["severity"] == "blocking"
+
+    t.body += "\n### notes from a human\nlooks fine\n"
+    last = t.thread()[-1]           # must not raise: hand-editing is the point
+    assert last.kind == "note" and last.ts is None and last.stage == ""
+    shutil.rmtree(d)
+
+
+def test_a_broken_project_config_escalates_one_ticket_not_the_process():
+    """`project_config` used to `sys.exit(1)`, so one unconfigured project took
+    the whole loop -- and every other ticket's agent -- down with it."""
+    d, _ = _git_project()
+    path = d / ".project/tickets/TICKET-001.md"
+    path.write_text(FIXTURE.replace("stage: plan-validation", "stage: implementing"))
+    (d / ".project/pipeline.toml").unlink()
+    did, rec = P.start(d, path, P.harness("fake"), {})
+    assert did and rec is None
+    assert P.Ticket.load(path).stage == "escalated"
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_dispatcher_stages_are_the_ones_with_no_prompt():
+    assert P.DISPATCHER_STAGES == {"verifying"}
+    for stage in P.DISPATCHER_STAGES:
+        assert stage not in P.agent_stages(), f"{stage} has an agent prompt"
+
+
 def test_cli_new_then_status():
     d = Path(tempfile.mkdtemp())
     run = lambda *a: subprocess.run([sys.executable, "-m", "pipeline",

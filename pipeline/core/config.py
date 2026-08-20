@@ -4,11 +4,11 @@ The stage prompts, hooks, harnesses and templates sit INSIDE the package:
 located from the repo root they are simply gone after `uv tool install .`.
 """
 import json
-import sys
 import tempfile
 import tomllib
 from pathlib import Path
 
+from pipeline.core import PipelineError
 from pipeline.core.ticket import split_frontmatter
 
 PKG = Path(__file__).resolve().parent.parent
@@ -36,18 +36,13 @@ def is_readonly(stage: str) -> bool:
 def project_config(project: Path) -> dict:
     cfg = project / ".project" / "pipeline.toml"
     if not cfg.is_file():
-        die(f"no {cfg} -- run `pipeline init {project}` first")
+        raise PipelineError(f"no {cfg} -- run `pipeline init {project}` first")
     return tomllib.loads(cfg.read_text())
-
-
-def die(msg: str) -> None:
-    print(f"error: {msg}", file=sys.stderr)
-    sys.exit(1)
 
 def harness(name: str = "claude-code") -> dict:
     p = HARNESSES_DIR / f"{name}.toml"
     if not p.is_file():
-        die(f"no harness config {p}")
+        raise PipelineError(f"no harness config {p}")
     return tomllib.loads(p.read_text())
 
 
