@@ -123,6 +123,120 @@ def test_no_decisions_section_records_nothing():
     shutil.rmtree(d)
 
 
+def test_a_decision_can_supersede_an_earlier_one():
+    d = project(FIXTURE.replace(
+        "## Rollback\nrevert",
+        "## Decisions\nsupersedes: DEC-003 -- the flush moved into the writer, "
+        "so the explicit call is dead\n"
+        "## Rollback\nrevert"))
+    dec = d / ".project" / "decisions"
+    dec.mkdir(parents=True, exist_ok=True)
+    (dec / "DEC-003.md").write_text(
+        "# DEC-003\n\n- ticket: TICKET-003 (bugfix)\n- branch: ticket/003\n"
+        "- files: writer.py\n- decided: 2026-01-01\n\n"
+        "keep the explicit flush; without it the buffer leaks\n")
+
+    t = Ticket.load(d / ".project/tickets/TICKET-001.md")
+    t.id = "TICKET-011"
+    did = T.record_decision(d, t)
+    assert did == "DEC-011"
+    assert "superseded-by: DEC-011" in (dec / "DEC-003.md").read_text()
+    assert "supersedes: DEC-003" in (dec / "DEC-011.md").read_text()
+    assert "DEC-003" not in [dd.id for dd in T.active_decisions(d)]
+    assert "DEC-011" in [dd.id for dd in T.active_decisions(d)]
+    shutil.rmtree(d)
+
+
+def test_supersedes_naming_a_bad_or_missing_record_is_a_finding_not_a_crash():
+    d = project(FIXTURE.replace(
+        "## Rollback\nrevert",
+        "## Decisions\nsupersedes: ../../etc/passwd -- pwn\n"
+        "## Rollback\nrevert"))
+    t = Ticket.load(d / ".project/tickets/TICKET-001.md")
+    t.id = "TICKET-012"
+    did = T.record_decision(d, t)
+    assert did == "DEC-012"
+    dec = d / ".project" / "decisions"
+    written = list(dec.glob("*"))
+    assert all(p.name == f"{did}.md" for p in written), written
+    assert not (d / "etc").exists()
+    finding = next(e for e in t.thread() if e.kind == "finding")
+    assert "'../../etc/passwd'" in finding.text, finding.text
+
+    d2 = project(FIXTURE.replace(
+        "## Rollback\nrevert",
+        "## Decisions\nsupersedes: DEC-999 -- ghost\n"
+        "## Rollback\nrevert"))
+    t2 = Ticket.load(d2 / ".project/tickets/TICKET-001.md")
+    t2.id = "TICKET-013"
+    did2 = T.record_decision(d2, t2)
+    assert did2 == "DEC-013"
+    assert "DEC-999" not in [dd.id for dd in T.active_decisions(d2)]
+    finding2 = next(e for e in t2.thread() if e.kind == "finding")
+    assert "'DEC-999'" in finding2.text, finding2.text
+    shutil.rmtree(d)
+    shutil.rmtree(d2)
+
+
+def test_active_decisions_ignores_a_coincidental_superseded_by_line_in_body_text():
+    """A decision's own prose is agent-written too -- a loose text scan for
+    `superseded-by:` anywhere in the file would drop a brand-new, still-active
+    record just because its body happens to mention the phrase."""
+    d = project(FIXTURE.replace(
+        "## Rollback\nrevert",
+        "## Decisions\nwe considered - superseded-by: DEC-999 (rejected) as an "
+        "approach but kept the original design\n"
+        "## Rollback\nrevert"))
+    t = Ticket.load(d / ".project/tickets/TICKET-001.md")
+    t.id = "TICKET-014"
+    did = T.record_decision(d, t)
+    assert did == "DEC-014"
+    assert "DEC-014" in [dd.id for dd in T.active_decisions(d)]
+    shutil.rmtree(d)
+
+
+def test_record_decision_refuses_to_follow_a_planted_symlink():
+    """`SAFE_DEC_ID` only constrains the name; a symlink planted at that exact
+    path must still be refused rather than followed."""
+    d = project(FIXTURE.replace(
+        "## Rollback\nrevert",
+        "## Decisions\nsupersedes: DEC-999 -- pwn\n"
+        "## Rollback\nrevert"))
+    dec = d / ".project" / "decisions"
+    dec.mkdir(parents=True, exist_ok=True)
+    secret = d / "secret.txt"
+    secret.write_text("outside decisions/\n")
+    (dec / "DEC-999.md").symlink_to(secret)
+
+    t = Ticket.load(d / ".project/tickets/TICKET-001.md")
+    t.id = "TICKET-015"
+    did = T.record_decision(d, t)
+    assert did == "DEC-015"
+    assert secret.read_text() == "outside decisions/\n", "wrote through the symlink"
+    assert "DEC-999" not in [dd.id for dd in T.active_decisions(d)]
+    shutil.rmtree(d)
+
+
+def test_record_decision_is_idempotent_under_a_crash_recovery_replay():
+    """The dispatcher's lease-expiry recovery can respawn a stage and replay
+    the same transition; record_decision() must not double-append."""
+    d = project(FIXTURE.replace(
+        "## Rollback\nrevert",
+        "## Decisions\nsupersedes: DEC-003 -- reason\n"
+        "## Rollback\nrevert"))
+    dec = d / ".project" / "decisions"
+    dec.mkdir(parents=True, exist_ok=True)
+    (dec / "DEC-003.md").write_text("# DEC-003\n\nkeep it\n")
+
+    t = Ticket.load(d / ".project/tickets/TICKET-001.md")
+    t.id = "TICKET-016"
+    T.record_decision(d, t)
+    T.record_decision(d, t)  # a replayed respawn calling this a second time
+    text = (dec / "DEC-003.md").read_text()
+    assert text.count("superseded-by: DEC-016") == 1, text
+    shutil.rmtree(d)
+
+
 def test_there_is_only_one_writer_path():
     """Two writers meant validation-on-save was dead code. It is gone."""
     for name in ("load_ticket", "save_ticket", "append_thread"):

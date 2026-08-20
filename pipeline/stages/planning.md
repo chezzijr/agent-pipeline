@@ -28,6 +28,13 @@ Fill in these sections:
   say "none relevant" and list the grep terms you used. Something in this
   codebase may exist deliberately (a workaround, a flush, an extra copy);
   removing it without knowing why is the failure this section prevents.
+  A record carrying a `- superseded-by: DEC-<n> (...)` line is advisory
+  history, not a binding constraint -- it explains why the code once looked a
+  certain way, but a later decision already moved past it. Cite it if it is
+  useful context; do not treat it as something this plan must comply with. If
+  the plan genuinely needs to contradict a still-active record (no
+  `superseded-by:` line), do not silently diverge from it -- open your own
+  `## Decisions` section with `supersedes: DEC-<n> -- reason`, below.
 - `## Plan` -- an ordered, numbered step list (`1.`, `2.`, ...; the gate parses
   a leading `N.` or `N)`). Every step names its target files -- spell out the
   path (e.g. `pipeline/core/machine.py`), not just the function -- and each
@@ -54,6 +61,13 @@ plan reuses what is already here.
   context. It is copied into `.project/decisions/` when the ticket lands, and it
   is what the next planning agent greps. Leave it empty only if this change
   really constrains nothing.
+  If this plan deliberately contradicts a still-active decision record you
+  cited above, open this section's first line with
+  `supersedes: DEC-<n> -- reason` (the exact id you cited, and why it no
+  longer holds). That old record is not overwritten -- it stays on disk marked
+  `superseded-by:` -- but it stops binding future plans. Comply or explicitly
+  supersede with justification; do not leave a plan silently contradicting a
+  record you read.
 
 You are the one stage that may ask the human a question. If the ticket is
 genuinely ambiguous -- two defensible designs, a missing requirement, an
