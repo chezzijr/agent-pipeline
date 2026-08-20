@@ -18,3 +18,7 @@ packages = ["pipeline"]
 
 [dependency-groups]
 dev = ["pytest>=8"]
+
+[tool.pyright]
+# `tests/helpers.py` is imported flat; conftest.py puts tests/ on sys.path at runtime.
+extraPaths = ["tests"]
