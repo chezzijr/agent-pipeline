@@ -1,8 +1,10 @@
 """`pipeline` -- the human side: scaffold, file, inspect and unblock tickets."""
 import argparse
+import json
 import os
 import re
 import sys
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -13,6 +15,7 @@ from pipeline.core.machine import HUMAN_GATES, KNOWN_STAGES, TERMINAL
 from pipeline.core.ticket import Ticket, all_tickets, now, tickets_dir
 from pipeline.core.worktree import worktree
 from pipeline.daemon.supervisor import run
+from pipeline.stream import StreamReader
 
 STALE_HOURS = 4  # overlap ordering is silent; surface anything sitting still
 
@@ -143,6 +146,74 @@ def cmd_status(args) -> None:
                   f"replay=`claude --resume {last['id']}`")
 
 
+def _one(s, n: int = 160) -> str:
+    s = " ".join(str(s).split())
+    return s if len(s) <= n else s[:n] + "..."
+
+
+def render(ev: dict) -> str:
+    """One parsed event -> one screenful-safe line. Total: every branch returns
+    a string and none of them can raise on a shape the parser let through."""
+    k = ev["kind"]
+    if k == "init":
+        return (f"-- init {ev['model']} mode={ev['permission_mode']} "
+                f"tools={len(ev['tools'])}")
+    if k == "assistant":
+        out = [f"   ~ {_one(ev['thinking'])}"] if ev["thinking"] else []
+        if ev["text"]:
+            out.append(ev["text"])
+        out += [f"   -> {t['name']}({_one(json.dumps(t['input'], default=str))})"
+                for t in ev["tools"]]
+        return "\n".join(out)
+    if k == "tool_result":
+        return f"   <- {'ERR' if ev['is_error'] else 'ok'} {_one(ev['text'])}"
+    if k == "hook_started":
+        return f"   [hook {ev['hook']} {ev['tool'] or ''}]"
+    if k == "hook_response":
+        # the guard biting, live -- the one event worth watching for
+        return (f"   [hook {ev['hook']} exit={ev['exit_code']} {ev['outcome'] or ''}] "
+                f"{_one(ev['stderr'])}")
+    if k == "rate_limit":
+        return f"!! rate limit {ev.get('status')} resets {ev.get('resets_at')}"
+    if k == "result":
+        ms = ev["duration_ms"] if isinstance(ev["duration_ms"], (int, float)) else 0
+        return (f"== {ev['subtype']} ${ev['total_cost_usd']:.4f} "
+                f"{ev['num_turns']} turns {ms / 1000:.1f}s")
+    return f"?? {ev.get('raw_type') or _one(ev.get('raw') or ev.get('error') or '')}"
+
+
+def cmd_logs(args) -> None:
+    """Pretty-print a stage's stream-json log. `-f` follows it and returns when
+    the stage's `result` event lands. Today the log file is the stream: the
+    child writes it, this reads it. When the daemon (TICKET-011) owns the
+    child's fd it feeds the same `StreamReader` from the pipe instead."""
+    project = Path(args.project).resolve()
+    logs = sorted((project / ".project" / "logs").glob(f"{args.id}-*.log"),
+                  key=lambda p: p.stat().st_mtime)
+    if not logs:
+        die(f"no log for {args.id} under .project/logs")
+    log = logs[-1]
+    print(f"-- {log.relative_to(project)}")
+    reader = StreamReader()
+    try:
+        with log.open("rb") as fh:
+            while True:
+                chunk = fh.read(1 << 16)
+                if not chunk:
+                    if not args.follow:
+                        return
+                    time.sleep(0.4)
+                    continue
+                for ev in reader.feed(chunk):
+                    line = render(ev)
+                    if line:
+                        print(line, flush=True)
+                    if ev["kind"] == "result":
+                        return
+    except KeyboardInterrupt:
+        return
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--project", default=".", help="target project dir")
@@ -155,6 +226,7 @@ def main() -> None:
     p = sub.add_parser("reject"); p.add_argument("id"); p.add_argument("reason"); p.set_defaults(fn=cmd_reject)
     p = sub.add_parser("answer"); p.add_argument("id"); p.add_argument("text"); p.set_defaults(fn=cmd_answer)
     p = sub.add_parser("resume"); p.add_argument("id"); p.add_argument("--stage", required=True); p.add_argument("--reset", nargs="*"); p.set_defaults(fn=cmd_resume)
+    p = sub.add_parser("logs"); p.add_argument("id"); p.add_argument("-f", "--follow", action="store_true"); p.set_defaults(fn=cmd_logs)
     p = sub.add_parser("status"); p.add_argument("-v", "--verbose", action="store_true"); p.set_defaults(fn=cmd_status)
     p = sub.add_parser("run"); p.add_argument("--once", action="store_true"); p.add_argument("--interval", type=int, default=10); p.add_argument("--harness", default="claude-code"); p.add_argument("-j", "--max-parallel", type=int, default=3); p.set_defaults(fn=None)
 

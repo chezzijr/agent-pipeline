@@ -82,3 +82,19 @@ def test_reject_refuses_an_empty_reason():
     t = Ticket.load(d / ".project/tickets/TICKET-001.md")
     assert t.stage == "awaiting-approval" and t.counters.get("plan_rejections", 0) == 0
     shutil.rmtree(d)
+
+
+def test_logs_pretty_prints_a_stream_json_log():
+    """`pipeline logs` is the dogfood view and the fallback when the TUI breaks."""
+    d = Path(tempfile.mkdtemp())
+    cli(d, "new", "t")
+    logs = d / ".project" / "logs"
+    logs.mkdir(parents=True)
+    fixture = (ROOT / "tests" / "fixtures" / "stream-planning.ndjson").read_bytes()
+    (logs / "TICKET-001-planning-6f1c0a2e.log").write_bytes(fixture)
+    r = cli(d, "logs", "TICKET-001", "-f")   # -f returns at the `result` event
+    assert r.returncode == 0, r.stderr
+    assert "-- init claude-sonnet-4-6 mode=plan" in r.stdout, r.stdout
+    assert "exit=2" in r.stdout and "== success $0.3412" in r.stdout, r.stdout
+    assert cli(d, "logs", "TICKET-002").returncode != 0   # no log, no guessing
+    shutil.rmtree(d)
