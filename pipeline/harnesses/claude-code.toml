@@ -6,6 +6,9 @@
 # The agent's cwd is the ticket's git worktree; the ticket itself lives in the
 # main checkout, which is why {project} is passed as an extra allowed dir.
 
+prompt_mode = "system"   # composed prompt via --append-system-prompt
+supports_hooks = true    # PreToolUse hooks registered via --settings
+
 effort_flag = "--effort {effort}"
 session_flag = "--session-id {session}"
 settings_flag = "--settings {settings}"

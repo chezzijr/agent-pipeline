@@ -1,0 +1,34 @@
+# Harness adapter: data, not code. Written to prove the seam, never run --
+# the user has no codex account, so this is exercised only by asserting the
+# rendered command string (tests/test_harness.py), same as fake.toml is.
+#
+# `codex exec` has no --append-system-prompt, no --session-id, no
+# settings/hooks file, no --tools, and no budget cap (verified against
+# `codex exec --help`). Two of those absences are load-bearing:
+#
+# - prompt_mode = "inline": with no system-prompt flag, the composed stage
+#   prompt is read by render() and prepended to the work-ticket message as
+#   codex's single positional PROMPT argument, instead of a separate flag.
+# - supports_hooks = false: with no settings/hooks file, spawn() refuses any
+#   stage that declares `hooks:` rather than running it unguarded (invariant
+#   4 -- a hook is the only layer that decides with code; every stage in this
+#   repo declares hooks, so every stage is refused on this harness today).
+#
+# session_flag, settings_flag and effort_flag stay empty strings, exactly
+# like fake.toml -- the harness abstraction already treats "this harness has
+# no such flag" as expressible. `max_usd` likewise maps to nothing: {cap} is
+# simply not referenced below. `readonly_tools`/`write_tools` are reused for
+# codex's own writability switch -- `-s/--sandbox` -- since both express the
+# same fact ("may this stage write?") in the harness's own vocabulary.
+
+prompt_mode = "inline"
+supports_hooks = false
+
+effort_flag = ""
+session_flag = ""
+settings_flag = ""
+readonly_tools = "read-only"
+write_tools = "workspace-write"
+max_usd = 0
+
+cmd = """codex exec --model {model} --sandbox {tools} {prompt}"""

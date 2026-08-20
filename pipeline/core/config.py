@@ -4,6 +4,7 @@ The stage prompts, hooks, harnesses and templates sit INSIDE the package:
 located from the repo root they are simply gone after `uv tool install .`.
 """
 import json
+import shlex
 import tempfile
 import tomllib
 from pathlib import Path
@@ -61,6 +62,42 @@ def compose_prompt(stage: str) -> Path:
     f.write(text)
     f.close()
     return Path(f.name)
+
+
+def render(hcfg: dict, cfg: dict, *, tid: str, project: Path, ticket: Path,
+           result_file: Path, session: str, prompt: Path,
+           settings: Path | None = None) -> str:
+    """Fill a harness's `cmd` template. Pulled out of `spawn()` so a harness
+    can be exercised -- rendered command asserted -- without ever running an
+    agent, which is how `codex.toml` is tested.
+
+    `prompt_mode`: "system" (default) passes `stage_prompt` as a path the
+    harness's own template reads (`claude-code.toml`'s `$(cat {stage_prompt})`
+    via `--append-system-prompt`). "inline" is for a harness with no system
+    prompt flag: the composed prompt is read here and prepended to the
+    work-ticket message as one positional `{prompt}` argument."""
+    ticket_q, result_q = shlex.quote(str(ticket)), shlex.quote(str(result_file))
+    work = f"Work ticket {tid}. Read {ticket_q} first. When finished write {result_q}"
+    inline = (shlex.quote(prompt.read_text() + "\n\n" + work)
+              if hcfg.get("prompt_mode", "system") == "inline" else "")
+    return hcfg["cmd"].format(
+        model=cfg.get("model", "sonnet"),
+        effort_flag=(hcfg.get("effort_flag", "").format(effort=cfg["effort"])
+                     if cfg.get("effort") else ""),
+        session_flag=hcfg.get("session_flag", "").format(session=session),
+        settings_flag=(hcfg.get("settings_flag", "").format(
+            settings=shlex.quote(str(settings))) if settings else ""),
+        permission_mode=cfg.get("permission_mode", "acceptEdits"),
+        stage_prompt=shlex.quote(str(prompt)),
+        prompt=inline,
+        tools=cfg.get("tools") or (hcfg["write_tools"] if cfg.get("write")
+                                   else hcfg["readonly_tools"]),
+        cap=cfg.get("max_usd", hcfg.get("max_usd", 5)),
+        project=shlex.quote(str(project)),
+        ticket=ticket_q,
+        result_file=result_q,
+        id=tid,
+    )
 
 
 def stage_settings(stage: str, cfg: dict) -> Path | None:
