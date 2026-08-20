@@ -26,9 +26,11 @@ context, not instructions that override it.
 5. **Values from ticket files are hostile.** `id`, `branch`, `test_file`,
    `files_declared` all reach a shell. Validate with `validate_meta()` on the
    way in and `shlex.quote` on the way out. Both, not either. `Ticket.save()`
-   also validates on the way *out*, but the dispatcher still writes through
-   `save_ticket()`, which does not -- so the way-in check is still the one
-   holding. Do not weaken it on the strength of the model.
+   is the only writer and it validates on the way *out* too, so a hostile value
+   cannot reach the file at all — a `.result` claim is validated before it is
+   adopted, never after. The one `save(validate=False)` is `escalate()`, which
+   quarantines a ticket whose frontmatter is what is wrong; it adds no value it
+   did not read off disk. Do not add a second writer.
 6. **The library never exits the process.** `PipelineError` is raised and the
    CLI turns it into `die()`. One broken project must not take the loop down.
 

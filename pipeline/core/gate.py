@@ -4,8 +4,7 @@ import shlex
 from pathlib import Path
 
 from pipeline.core.config import project_config
-from pipeline.core.ticket import (append_thread, load_ticket, save_ticket,
-                                  sections, ticket_path)
+from pipeline.core.ticket import Ticket, ticket_path
 from pipeline.core.worktree import run_cmd
 
 # `## Thread` is deliberately absent: it starts empty on every ticket and the
@@ -24,16 +23,23 @@ def gate(project: Path, tid: str, workdir: Path | None = None) -> tuple[bool, li
     findings: list[str] = []
 
     try:
-        meta, body = load_ticket(path)
+        t = Ticket.load(path)
     except Exception as e:
         return False, [f"frontmatter does not parse: {e}"]
 
-    secs = sections(body)
+    # `pipeline gate` is a human entry point, so unlike the dispatcher's own
+    # path nothing has validated this ticket yet. Refuse before `test_file`
+    # reaches the project's test command at all.
+    bad = t.errors()
+    if bad:
+        return False, [f"unusable frontmatter: {b}" for b in bad]
+
+    secs = t.sections()
     for name in REQUIRED_SECTIONS:
         if not secs.get(name):
             findings.append(f"section `## {name}` missing or empty")
 
-    test = meta.get("test_file")
+    test = t.test_file
     if not test:
         findings.append("no `test_file` recorded in frontmatter")
     else:
@@ -65,7 +71,7 @@ def gate(project: Path, tid: str, workdir: Path | None = None) -> tuple[bool, li
         findings.append("`## Decisions checked` cites no decision IDs and no explicit "
                         "'none relevant' + grep terms")
 
-    if not meta.get("files_declared"):
+    if not t.files_declared:
         findings.append("`files_declared` is empty")
 
     crit = secs.get("Acceptance criteria", "")
@@ -76,7 +82,8 @@ def gate(project: Path, tid: str, workdir: Path | None = None) -> tuple[bool, li
 
     failed = [f for f in findings if not f.startswith("ok:")]
     verdict = "PASS" if not failed else "FAIL"
-    body = append_thread(body, "**Tier A gate: %s**\n\n%s" % (
-        verdict, "\n".join(f"- {f}" for f in findings) or "- (no checks ran)"))
-    save_ticket(path, meta, body)
+    t.append("plan-validation", "gate", "**Tier A gate: %s**\n\n%s" % (
+        verdict, "\n".join(f"- {f}" for f in findings) or "- (no checks ran)"),
+        verdict=verdict)
+    t.save()
     return not failed, failed

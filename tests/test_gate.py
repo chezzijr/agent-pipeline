@@ -71,9 +71,9 @@ def test_shell_injection_through_test_file_is_dead():
     d = project()
     marker = d / "PWNED"
     path = d / ".project/tickets/TICKET-001.md"
-    meta, body = T.load_ticket(path)
+    meta, body = T.split_frontmatter(path)
     meta["test_file"] = f"test_thing.py::test_x; touch {marker}"
-    T.save_ticket(path, meta, body)
+    T.write_atomic(path, T.render(meta, body))   # Ticket.save() would refuse it
     (d / ".project" / "pipeline.toml").write_text(
         'test_one = "echo {test}"\ntest_suite = "true"\n'
         'test_suite_without_new = "echo {test}"\n')
