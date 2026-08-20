@@ -3,6 +3,7 @@ import shutil
 
 from helpers import FIXTURE, git_project, project
 from pipeline.core import ticket as T
+from pipeline.core import config
 from pipeline.core.config import harness
 from pipeline.core.ticket import Ticket
 from pipeline.daemon import supervisor
@@ -86,4 +87,51 @@ def test_an_agent_that_rewrote_stage_is_still_caught():
     assert t.stage == "escalated", "a tampered `stage` was accepted"
     assert "edited dispatcher-owned frontmatter" in t.thread()[-1].text
     assert T.read_result(d, "TICKET-001") is None, "the verdict was still applied"
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_verifying_runs_as_a_tracked_child():
+    """`verifying` used to run the suite inline, so a slow suite stalled the
+    whole loop: nothing else advanced and no finished agent was reaped."""
+    assert "verifying" not in config.agent_stages(), \
+        "verifying must stay script-run -- no agent may judge a test result"
+    d, _ = git_project()
+    (d / ".project/pipeline.toml").write_text(
+        'test_one = "true"\n'
+        'test_suite = "sh -c \'sleep 0.3; exit 1\'"\n'
+        'test_suite_without_new = "true"\nbase = "main"\n')
+    path = d / ".project/tickets/TICKET-001.md"
+    path.write_text(FIXTURE.replace("stage: plan-validation", "stage: verifying"))
+    # an earlier stage's leftover verdict: if the suite's result ever came from
+    # this file instead of an exit code, the ticket would reach `done`
+    T.result_file(d, "TICKET-001").write_text("result: ok\nsummary: planted\n")
+
+    did, rec = supervisor.start(d, path, harness("fake"), {})
+
+    assert did and rec and rec["kind"] == "suite"
+    assert rec["proc"].poll() is None, "the suite blocked the dispatcher loop"
+    assert Ticket.load(path).stage == "verifying"
+    assert Ticket.load(path).lease_active(), "a child outliving the tick must lease"
+
+    rec["proc"].wait()
+    supervisor.finish(d, rec)
+
+    t = Ticket.load(path)
+    assert t.stage == "implementing", "the suite's exit code did not decide it"
+    assert t.counters["review_loops"] == 1
+    assert not t.lease_active()
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_ctrl_c_during_a_suite_does_not_crash_on_its_missing_prompt():
+    """`shut_down` unlinked `rec["prompt"]` unconditionally; a suite record has
+    none, so Ctrl-C during `verifying` raised and left every lease held."""
+    d, _ = git_project()
+    path = d / ".project/tickets/TICKET-001.md"
+    path.write_text(FIXTURE.replace("stage: plan-validation", "stage: verifying"))
+    _, rec = supervisor.start(d, path, harness("fake"), {})
+
+    supervisor.shut_down(d, {"TICKET-001": rec})
+
+    assert not Ticket.load(path).lease_active(), "an interrupted suite kept its lease"
     shutil.rmtree(d, ignore_errors=True)
