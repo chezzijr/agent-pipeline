@@ -5,5 +5,5 @@ session_flag = ""
 readonly_tools = ""
 write_tools = ""
 max_usd = 0
-cmd = """printf 'result: %s\\nsummary: fake %s agent\\nfiles_declared: [thing.py]\\ntest_file: %s\\n' \
-"${{FAKE_RESULT:-ok}}" "{model}" "${{FAKE_TEST_FILE:-null}}" > .project/tickets/{id}.result"""
+cmd = """sleep "${{FAKE_SLEEP:-0}}"; printf 'result: %s\\nsummary: fake %s agent\\nfiles_declared: [%s]\\ntest_file: %s\\n' \
+"${{FAKE_RESULT:-ok}}" "{model}" "${{FAKE_FILES:-thing.py}}" "${{FAKE_TEST_FILE:-null}}" > {result_file}"""

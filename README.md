@@ -4,6 +4,10 @@ Agents do not talk to each other. They talk through a ticket file, one stage at
 a time, each in a fresh stateless process. A dumb dispatcher owns the state
 machine; no model ever decides what happens next.
 
+This is a pipeline, not a session tree. Nothing forks a parent session, so no
+process sits holding context while it waits, and nothing dies because its caller
+did. Tickets are the queue; agents are stateless workers pulled off it.
+
     triage -> planning -> plan-validation -> [human] -> implementing
                                                             |
                                     done <- verifying <- review
@@ -31,8 +35,31 @@ $EDITOR ~/code/myproject/.project/pipeline.toml   # how to run this project's te
     --stage planning --reset plan_validation_attempts
 ```
 
-`run --once` does a single pass, which is what you want while you are still
-watching it.
+`run --once` drains the queue and exits -- what you want while you are still
+watching it. Plain `run` keeps polling.
+
+## Concurrency
+
+    ./pipeline.py --project ~/code/myproject run -j 4
+
+Each ticket gets its own git worktree under `.worktrees/<ID>`, created from
+`base` and removed when the ticket reaches a terminal stage. Two tickets cannot
+share one checkout, which is why worktrees and parallelism arrive together.
+
+Ticket files stay in the **main** checkout, not the worktree. They are the queue,
+and keeping them in one place is also what stops parallel agents from producing
+merge conflicts on their own ticket threads.
+
+Two tickets whose `files_declared` intersect never run at the same time -- the
+second one waits rather than failing. That ordering is silent, so `status` flags
+anything sitting still for more than `STALE_HOURS`.
+
+Per-project worktree setup (shared build cache, `.env`, dependency install) is
+one config line, so it is never improvised by an agent:
+
+```toml
+worktree_setup = "ln -s ~/.cache/cargo-target target && cp ../../.env ."
+```
 
 ## Watching a run
 
@@ -51,10 +78,17 @@ run the loop under systemd or tmux, which already solve supervision.
 
 ## The three invariants
 
+0. **No agent waits on another agent.** The dispatcher launches and returns;
+   `reap()` collects finished processes on the next tick. A stage that hangs
+   burns its own lease and nothing else.
 1. **An agent never writes `stage`.** It writes `.project/tickets/<ID>.result`
    with `result: ok|fail|blocked|rejected`; `transition()` maps that to the next
    stage. An agent cannot skip a gate or escape a bound because it has no way to
    name one. An unrecognised result escalates rather than guessing.
+   It also cannot rewrite a field it does not own: only `triage` sets
+   `test_file`, only `planning` sets `files_declared` (implementation may add to
+   it, never shrink it). Otherwise a reviewer could shrink the declared set and
+   unblock a ticket that overlaps one already in flight.
 2. **Read-only stages are checked, not trusted.** The dispatcher snapshots the
    tree before a review stage and escalates if it changed. This catches an edit
    made through Bash, which a tool allowlist does not.
@@ -94,6 +128,11 @@ that *errors* (missing dependency) being indistinguishable from one that fails.
 
 ## Not built yet
 
-Worktrees and parallelism, file-overlap detection between in-flight tickets,
-per-class bounds, model tiering. Single-ticket flow first. Watch the escalation
-rate per stage -- the frontmatter counters give it to you for free.
+- **No real agent has run yet.** The stage prompts are the only unverified part;
+  everything around them is tested against a fake harness.
+- **`.project/decisions/` has no writer.** `planning.md` greps it; nothing ever
+  appends to it, so the "do not revert this, it fixed a leak" case is still open.
+- **No merge step.** `done` leaves the fix on `ticket/<id>` for a human to open a
+  PR from. Deliberate, for now.
+- Per-class bounds, model tiering. Watch the escalation rate per stage -- the
+  frontmatter counters give it to you for free.

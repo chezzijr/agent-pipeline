@@ -212,6 +212,27 @@ def test_every_stage_named_by_the_state_machine_has_a_prompt():
         assert (P.STAGES_DIR / f"{stage}.md").is_file(), f"no prompt for `{stage}`"
 
 
+def test_only_the_owning_stage_can_set_a_frontmatter_field():
+    meta = {"files_declared": ["a.py"], "test_file": "t.py::x"}
+    P.apply_claims(meta, "review", {"files_declared": ["z.py"], "test_file": "other"})
+    assert meta == {"files_declared": ["a.py"], "test_file": "t.py::x"}, \
+        "a review stage rewrote fields it does not own"
+
+    P.apply_claims(meta, "implementing", {"files_declared": ["b.py"]})
+    assert meta["files_declared"] == ["a.py", "b.py"], "implementation may only add files"
+
+    P.apply_claims(meta, "planning", {"files_declared": ["c.py"]})
+    assert meta["files_declared"] == ["c.py"], "planning owns the declared set"
+
+
+def test_overlapping_tickets_do_not_run_together():
+    mine = {"files_declared": ["shared.py", "a.py"]}
+    assert P.files_conflict(mine, [{"files_declared": ["shared.py"]}])
+    assert not P.files_conflict(mine, [{"files_declared": ["b.py"]}])
+    assert not P.files_conflict(mine, []), "nothing in flight cannot conflict"
+    assert not P.files_conflict({"files_declared": []}, [{"files_declared": ["a.py"]}])
+
+
 def test_ticket_roundtrips():
     d = _project()
     p = d / ".project/tickets/TICKET-001.md"
