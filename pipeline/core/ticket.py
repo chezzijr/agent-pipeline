@@ -141,22 +141,141 @@ def drop_result(project: Path, tid: str) -> None:
     result_file(project, tid).unlink(missing_ok=True)
 
 
+# `t.id` is a control field: it only reaches here already checked against
+# SAFE_ID (every save() validates on the way out, and start() escalates a
+# loaded ticket whose frontmatter fails errors() before it can advance()).
+# `supersedes:` is different -- it is agent-written prose living in the same
+# body a plan is free to hand-edit, and it becomes a filename below, so it
+# gets its own check before touching a path. CLAUDE.md invariant 5.
+SUPERSEDES_RE = re.compile(r"^supersedes:\s*(?P<id>\S+)(?:\s*--\s*(?P<reason>.*))?\s*$")
+SAFE_DEC_ID = re.compile(r"^DEC-\d{1,6}$")
+
+# The footer `record_decision` appends to a superseded record. A record's
+# BODY is agent-written prose too, and could itself contain a line that
+# happens to start with "- superseded-by:" -- a loose text scan would then
+# drop an unrelated, still-active record from `active_decisions()` on
+# nothing more than a coincidental line. The marker is what we actually
+# search for, and it is never emitted anywhere except by the append below.
+SUPERSEDED_MARKER = "<!-- pipeline:superseded-by -->"
+
+
+@dataclass(frozen=True)
+class Decision:
+    """One row of `.project/decisions/` -- what `active_decisions()` hands
+    a planning agent instead of a raw grep."""
+    id: str
+    path: Path
+    text: str
+
+
+def decisions_dir(project: Path) -> Path:
+    return project / ".project" / "decisions"
+
+
+def _refuse_symlink(p: Path) -> None:
+    """A decision record's path is built from a name already checked against
+    SAFE_DEC_ID, but that check is on the *name*, not the *path* -- nothing
+    stops something else from having planted a symlink there first. Following
+    it would turn a write (or a planning agent's read) into one against
+    whatever the link points at. CLAUDE.md invariant 5: hostile, so refuse
+    rather than follow."""
+    if p.is_symlink():
+        raise PipelineError(f"{p}: refusing to follow a symlink in decisions/")
+
+
+def active_decisions(project: Path) -> list[Decision]:
+    """Decision records nobody has superseded -- what still binds a plan.
+    A record carrying the superseded footer stays on disk (it is still the
+    reason something was once done that way) but drops out of this list."""
+    d = decisions_dir(project)
+    if not d.is_dir():
+        return []
+    out = []
+    for p in sorted(d.glob("DEC-*.md")):
+        if p.is_symlink():
+            continue  # never follow a planted symlink into an active listing
+        text = p.read_text()
+        if SUPERSEDED_MARKER not in text:
+            out.append(Decision(id=p.stem, path=p, text=text))
+    return out
+
+
 def record_decision(project: Path, t: "Ticket") -> str | None:
     """Copy the ticket's `## Decisions` into `.project/decisions/`. Planning
-    greps that directory; until now nothing ever wrote to it, so the check that
-    is supposed to stop you reverting a deliberate fix had no data."""
+    greps that directory, so a check meant to stop you reverting a deliberate
+    fix needs data there to find.
+
+    A `## Decisions` section may open with `supersedes: DEC-003 -- reason`:
+    the new record gets a `supersedes:` header and the old record gets an
+    *appended* footer -- never rewritten, since a superseded decision is
+    still the reason something was once done that way. A `supersedes:`
+    naming a bad, absent, or symlinked id is left as plain text in the new
+    record and reported as a `finding` in the thread, not applied and not a
+    crash.
+    """
     text = t.section("Decisions").strip()
     if not text:
         return None
-    d = project / ".project" / "decisions"
+    d = decisions_dir(project)
     d.mkdir(parents=True, exist_ok=True)
     did = f"DEC-{t.id.split('-')[-1]}"
-    (d / f"{did}.md").write_text(
-        f"# {did}\n\n"
-        f"- ticket: {t.id} ({t.klass})\n"
-        f"- branch: {t.branch}\n"
-        f"- files: {', '.join(t.files_declared) or 'n/a'}\n"
-        f"- decided: {now().date().isoformat()}\n\n{text}\n")
+    if not SAFE_DEC_ID.match(did):
+        # Unreachable in the live pipeline -- t.id is SAFE_ID-checked before
+        # advance() ever calls this -- but record_decision is a public,
+        # directly-callable function and this filename is built from it, so
+        # invariant 5 ("both, not either") gets checked here too rather than
+        # only trusted upstream.
+        raise PipelineError(f"{t.id!r} does not yield a valid decision id")
+
+    lines = text.splitlines()
+    m = SUPERSEDES_RE.match(lines[0]) if lines else None
+    body_text, supersedes_id, reason = text, None, ""
+    if m:
+        raw_id = m.group("id")
+        reason = (m.group("reason") or "").strip()
+        old_path = d / f"{raw_id}.md" if SAFE_DEC_ID.match(raw_id) else None
+        if old_path is None:
+            t.append(t.stage, "finding",
+                     f"`## Decisions` tried to supersede {raw_id!r}, which is "
+                     "not a valid decision id (want DEC-<digits>); recorded "
+                     "as plain text, nothing superseded", severity="minor")
+        elif old_path.is_symlink() or not old_path.is_file():
+            t.append(t.stage, "finding",
+                     f"`## Decisions` tried to supersede {raw_id!r}, which "
+                     "does not name an existing decision record; recorded "
+                     "as plain text, nothing superseded", severity="minor")
+        else:
+            supersedes_id = raw_id
+            body_text = "\n".join(lines[1:]).strip()
+
+    header = (f"# {did}\n\n"
+              f"- ticket: {t.id} ({t.klass})\n"
+              f"- branch: {t.branch}\n"
+              f"- files: {', '.join(t.files_declared) or 'n/a'}\n"
+              f"- decided: {now().date().isoformat()}\n")
+    if supersedes_id:
+        header += f"- supersedes: {supersedes_id}\n"
+    new_path = d / f"{did}.md"
+    _refuse_symlink(new_path)
+    # write_atomic, not write_text: planning agents grep this directory
+    # concurrently (`max_parallel`), and a half-written record must not be
+    # observable any more than a half-written ticket is.
+    write_atomic(new_path, f"{header}\n{body_text}\n")
+
+    if supersedes_id:
+        old_path = d / f"{supersedes_id}.md"
+        _refuse_symlink(old_path)
+        old_text = old_path.read_text()
+        if SUPERSEDED_MARKER not in old_text:
+            # Idempotency guard: a crash-recovery respawn (lease expiry) can
+            # replay this same transition and call record_decision() again
+            # for the same ticket. Without this check a replay would append a
+            # second, duplicate footer every time it fires.
+            reason_part = f"{reason}, " if reason else ""
+            write_atomic(old_path, old_text.rstrip("\n") +
+                         f"\n\n{SUPERSEDED_MARKER}\n- superseded-by: {did} "
+                         f"({reason_part}{now().date().isoformat()})\n")
+
     return did
 
 
