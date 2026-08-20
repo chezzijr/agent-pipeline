@@ -1,6 +1,8 @@
 ---
 model: opus
 write: false
+max_usd: 3
+hooks: [dangerous-commands]
 ---
 
 ## Your stage: plan-validation

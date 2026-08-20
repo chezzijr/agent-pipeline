@@ -23,6 +23,8 @@ lease: {holder: null, expires: null}
 
 ## Acceptance criteria
 
+## Decisions
+
 ## Rollback
 
 ## Thread

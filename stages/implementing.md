@@ -1,6 +1,9 @@
 ---
 model: sonnet
 write: true
+max_usd: 8
+hooks: [dangerous-commands]
+skills: [superpowers:test-driven-development]
 ---
 
 ## Your stage: implementing

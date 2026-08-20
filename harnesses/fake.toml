@@ -2,6 +2,7 @@
 # canned result -- the reply is read from FAKE_RESULT in the environment.
 effort_flag = ""
 session_flag = ""
+settings_flag = ""
 readonly_tools = ""
 write_tools = ""
 max_usd = 0

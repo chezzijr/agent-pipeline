@@ -1,6 +1,9 @@
 ---
 model: opus
 write: true
+max_usd: 5
+hooks: [dangerous-commands]
+skills: [superpowers:writing-plans]
 ---
 
 ## Your stage: planning
@@ -28,4 +31,23 @@ Report the full list of files the plan will modify in your result's
 Search for existing helpers and patterns before planning new ones. The best
 plan reuses what is already here.
 
-`result`: `ok` (plan written) | `fail` (cannot plan; say what is missing)
+- `## Decisions` -- anything a future change must not silently undo: a
+  workaround and what breaks without it, a deliberate trade-off, an ordering
+  that matters. Write it for someone who will meet this code in a year with no
+  context. It is copied into `.project/decisions/` when the ticket lands, and it
+  is what the next planning agent greps. Leave it empty only if this change
+  really constrains nothing.
+
+You are the one stage that may ask the human a question. If the ticket is
+genuinely ambiguous -- two defensible designs, a missing requirement, an
+unclear acceptance boundary -- append your questions to `## Thread`, keep any
+research you have already done in `## Digest`, and return `needs-input`. The
+ticket parks until someone runs `pipeline.py answer`, then comes back to you
+with their reply in the thread. Guessing here is the most expensive mistake in
+the pipeline: everything downstream executes your guess faithfully.
+
+Ask only what you cannot settle by reading the code. Two rounds of questions on
+one ticket means you should have read more.
+
+`result`: `ok` (plan written) | `needs-input` (questions appended) |
+`fail` (cannot plan; say what is missing)

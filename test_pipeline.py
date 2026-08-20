@@ -233,6 +233,52 @@ def test_overlapping_tickets_do_not_run_together():
     assert not P.files_conflict({"files_declared": []}, [{"files_declared": ["a.py"]}])
 
 
+def test_stage_settings_register_the_guard_as_a_pretooluse_hook():
+    import json
+    f = P.stage_settings("implementing", P.stage_config("implementing"))
+    data = json.loads(f.read_text()); f.unlink()
+    entry = data["hooks"]["PreToolUse"][0]
+    assert entry["matcher"] == "Bash"
+    assert entry["hooks"][0]["command"].endswith("dangerous-commands.py")
+    assert Path(entry["hooks"][0]["command"]).is_file(), "hook path does not exist"
+
+
+def test_every_stage_that_can_run_bash_has_the_guard():
+    for stage in P.agent_stages():
+        assert "dangerous-commands" in (P.stage_config(stage).get("hooks") or []), \
+            f"{stage} runs Bash with no guard"
+
+
+def test_declared_skills_reach_the_prompt():
+    f = P.compose_prompt("implementing")
+    text = f.read_text(); f.unlink()
+    assert "/superpowers:test-driven-development" in text
+
+
+def test_planning_can_park_for_a_human_and_come_back():
+    assert t("planning", "needs-input")[0] == "needs-input"
+    assert "needs-input" in P.HUMAN_GATES, "the dispatcher would spawn an agent on it"
+    assert t("planning", "needs-input")[1] == {}, "asking a question is not a failure"
+
+
+def test_decision_is_recorded_when_a_ticket_lands():
+    d = _project(FIXTURE.replace("## Rollback\nrevert",
+                                 "## Decisions\nkeep the explicit flush; without it the buffer leaks\n## Rollback\nrevert"))
+    path = d / ".project/tickets/TICKET-001.md"
+    meta, body = P.load_ticket(path)
+    did = P.record_decision(d, meta, body)
+    text = (d / ".project/decisions" / f"{did}.md").read_text()
+    assert "buffer leaks" in text and "TICKET-001" in text, text
+    shutil.rmtree(d)
+
+
+def test_no_decisions_section_records_nothing():
+    d = _project()
+    meta, body = P.load_ticket(d / ".project/tickets/TICKET-001.md")
+    assert P.record_decision(d, meta, body) is None
+    shutil.rmtree(d)
+
+
 def test_ticket_roundtrips():
     d = _project()
     p = d / ".project/tickets/TICKET-001.md"

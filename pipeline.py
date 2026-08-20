@@ -17,6 +17,7 @@ import re
 import shlex
 import subprocess
 import sys
+import json
 import tempfile
 import time
 import tomllib
@@ -31,6 +32,7 @@ MAX_ATTEMPTS = 2  # every bounded loop gets the same budget
 LEASE_MINUTES = 30
 STALE_HOURS = 4  # overlap ordering is silent; surface anything sitting still
 TERMINAL = {"done", "rejected", "escalated"}
+HUMAN_GATES = {"awaiting-approval", "needs-input"}
 
 # `## Thread` is deliberately absent: it starts empty on every ticket and the
 # gate itself is what first writes to it.
@@ -40,6 +42,7 @@ REQUIRED_SECTIONS = [
 ]
 
 STAGES_DIR = HERE / "stages"
+HOOKS_DIR = HERE / "hooks"
 
 
 def stage_config(stage: str) -> dict:
@@ -152,6 +155,10 @@ def transition(stage: str, result: str, counters: dict, klass: str = "bugfix"):
             return "rejected", c
         case ("planning", "ok"):
             return "plan-validation", c
+        case ("planning", "needs-input"):
+            # planning is the stage that genuinely needs the human; parking the
+            # ticket is better than guessing an answer into the plan
+            return "needs-input", c
         case ("plan-validation", "ok"):
             return "awaiting-approval", c
         case ("plan-validation", "fail"):
@@ -310,9 +317,30 @@ def harness(name: str = "claude-code") -> dict:
 
 def compose_prompt(stage: str) -> Path:
     """_common.md + this stage's body, frontmatter stripped, as one file."""
-    _, body = split_frontmatter(STAGES_DIR / f"{stage}.md")
+    cfg, body = split_frontmatter(STAGES_DIR / f"{stage}.md")
+    text = (STAGES_DIR / "_common.md").read_text() + "\n" + body
+    if cfg.get("skills"):
+        text += ("\n\n## Skills for this stage\n\n"
+                 "Invoke these before you start; they are here because this "
+                 "stage's job depends on them.\n\n"
+                 + "\n".join(f"- `/{sk}`" for sk in cfg["skills"]) + "\n")
     f = tempfile.NamedTemporaryFile("w", suffix=".md", delete=False)
-    f.write((STAGES_DIR / "_common.md").read_text() + "\n" + body)
+    f.write(text)
+    f.close()
+    return Path(f.name)
+
+
+def stage_settings(stage: str, cfg: dict) -> Path | None:
+    """Per-stage hooks, as a settings file the harness loads. A hook is the only
+    layer that decides with code, so this is where a stage's non-negotiables go."""
+    names = cfg.get("hooks") or []
+    if not names:
+        return None
+    entries = [{"type": "command", "command": str(HOOKS_DIR / f"{n}.py")}
+               for n in names]
+    settings = {"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": entries}]}}
+    f = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
+    json.dump(settings, f)
     f.close()
     return Path(f.name)
 
@@ -326,14 +354,19 @@ def spawn(project: Path, wt: Path, tid: str, stage: str, hcfg: dict) -> dict:
     logs.mkdir(parents=True, exist_ok=True)
     log = logs / f"{tid}-{stage}-{session[:8]}.log"
     prompt = compose_prompt(stage)
+    settings = stage_settings(stage, cfg)
     cmd = hcfg["cmd"].format(
         model=cfg.get("model", "sonnet"),
         effort_flag=(hcfg.get("effort_flag", "").format(effort=cfg["effort"])
                      if cfg.get("effort") else ""),
         session_flag=hcfg.get("session_flag", "").format(session=session),
+        settings_flag=(hcfg.get("settings_flag", "").format(
+            settings=shlex.quote(str(settings))) if settings else ""),
+        permission_mode=cfg.get("permission_mode", "acceptEdits"),
         stage_prompt=shlex.quote(str(prompt)),
-        tools=hcfg["write_tools"] if cfg.get("write") else hcfg["readonly_tools"],
-        cap=hcfg.get("max_usd", 5),
+        tools=cfg.get("tools") or (hcfg["write_tools"] if cfg.get("write")
+                                   else hcfg["readonly_tools"]),
+        cap=cfg.get("max_usd", hcfg.get("max_usd", 5)),
         project=shlex.quote(str(project)),
         ticket=shlex.quote(str(ticket_path(project, tid))),
         result_file=shlex.quote(str(tickets_dir(project) / f"{tid}.result")),
@@ -342,10 +375,14 @@ def spawn(project: Path, wt: Path, tid: str, stage: str, hcfg: dict) -> dict:
     fh = log.open("w")
     fh.write(f"$ {cmd}\n\n")
     fh.flush()
+    env = project_env()
+    env["PIPELINE_STAGE"] = stage
+    env["PIPELINE_READONLY"] = "0" if cfg.get("write") else "1"
     proc = subprocess.Popen(cmd, shell=True, cwd=wt, stdout=fh,
-                            stderr=subprocess.STDOUT, env=project_env())
+                            stderr=subprocess.STDOUT, env=env)
     print(f"  start {tid}: {stage} ({cfg.get('model')}) pid {proc.pid} -> {log.name}")
-    return {"proc": proc, "fh": fh, "prompt": prompt, "session": session,
+    return {"proc": proc, "fh": fh, "prompt": prompt, "settings": settings,
+            "session": session,
             "log": log, "stage": stage, "wt": wt}
 
 
@@ -387,10 +424,34 @@ def escalate(path: Path, meta: dict, body: str, reason: str) -> None:
     print(f"  {path.stem}: -> escalated ({reason})")
 
 
+def record_decision(project: Path, meta: dict, body: str) -> str | None:
+    """Copy the ticket's `## Decisions` into `.project/decisions/`. Planning
+    greps that directory; until now nothing ever wrote to it, so the check that
+    is supposed to stop you reverting a deliberate fix had no data."""
+    text = sections(body).get("Decisions", "").strip()
+    if not text:
+        return None
+    d = project / ".project" / "decisions"
+    d.mkdir(parents=True, exist_ok=True)
+    did = f"DEC-{meta['id'].split('-')[-1]}"
+    (d / f"{did}.md").write_text(
+        f"# {did}\n\n"
+        f"- ticket: {meta['id']} ({meta.get('class', '')})\n"
+        f"- branch: {meta.get('branch')}\n"
+        f"- files: {', '.join(meta.get('files_declared') or []) or 'n/a'}\n"
+        f"- decided: {now().date().isoformat()}\n\n{text}\n")
+    return did
+
+
 def advance(project: Path, path: Path, meta: dict, body: str, result: str, note: str) -> None:
     nxt, counters = transition(meta["stage"], result, meta.get("counters") or {},
                                meta.get("class", "bugfix"))
     body = append_thread(body, f"**{meta['stage']} -> {nxt}** (result: `{result}`)\n\n{note}")
+    if nxt == "done":
+        did = record_decision(project, meta, body)
+        body = append_thread(body, f"decision recorded as `{did}`" if did else
+                             "no `## Decisions` section -- nothing recorded for "
+                             "future planning agents to find")
     meta["counters"] = counters
     meta["stage"] = nxt
     meta["lease"] = {"holder": None, "expires": None}
@@ -429,7 +490,7 @@ def start(project: Path, path: Path, hcfg: dict, inflight: dict) -> dict | None:
     stage = meta.get("stage", "new")
     tid = meta["id"]
 
-    if stage == "awaiting-approval":
+    if stage in HUMAN_GATES:
         return None
 
     if stage in TERMINAL:
@@ -494,6 +555,8 @@ def start(project: Path, path: Path, hcfg: dict, inflight: dict) -> dict | None:
 def finish(project: Path, rec: dict) -> None:
     rec["fh"].close()
     rec["prompt"].unlink(missing_ok=True)
+    if rec.get("settings"):
+        rec["settings"].unlink(missing_ok=True)
     path, tid, stage = rec["path"], rec["tid"], rec["stage"]
     session, log, wt = rec["session"], rec["log"], rec["wt"]
 
@@ -601,6 +664,18 @@ def cmd_approve(args) -> None:
     print(f"{args.id}: -> implementing")
 
 
+def cmd_answer(args) -> None:
+    project = Path(args.project).resolve()
+    path = ticket_path(project, args.id)
+    meta, body = load_ticket(path)
+    if meta["stage"] != "needs-input":
+        die(f"{args.id} is in `{meta['stage']}`, not `needs-input`")
+    meta["stage"] = "planning"
+    save_ticket(path, meta, append_thread(
+        body, f"**answer from {os.environ.get('USER', 'human')}**\n\n{args.text}"))
+    print(f"{args.id}: -> planning")
+
+
 def cmd_resume(args) -> None:
     project = Path(args.project).resolve()
     path = ticket_path(project, args.id)
@@ -619,7 +694,7 @@ def cmd_status(args) -> None:
         meta, _ = load_ticket(p)
         c = meta.get("counters") or {}
         stale = ""
-        if (meta.get("stage") not in TERMINAL | {"awaiting-approval"}
+        if (meta.get("stage") not in TERMINAL | HUMAN_GATES
                 and not lease_active(meta)
                 and now() - datetime.fromtimestamp(p.stat().st_mtime, timezone.utc)
                 > timedelta(hours=STALE_HOURS)):
@@ -642,6 +717,7 @@ def main() -> None:
     p = sub.add_parser("new"); p.add_argument("title"); p.add_argument("--class", dest="cls", default="bugfix"); p.set_defaults(fn=cmd_new)
     p = sub.add_parser("gate"); p.add_argument("id"); p.set_defaults(fn=cmd_gate)
     p = sub.add_parser("approve"); p.add_argument("id"); p.add_argument("--by"); p.set_defaults(fn=cmd_approve)
+    p = sub.add_parser("answer"); p.add_argument("id"); p.add_argument("text"); p.set_defaults(fn=cmd_answer)
     p = sub.add_parser("resume"); p.add_argument("id"); p.add_argument("--stage", required=True); p.add_argument("--reset", nargs="*"); p.set_defaults(fn=cmd_resume)
     p = sub.add_parser("status"); p.add_argument("-v", "--verbose", action="store_true"); p.set_defaults(fn=cmd_status)
     p = sub.add_parser("run"); p.add_argument("--once", action="store_true"); p.add_argument("--interval", type=int, default=10); p.add_argument("--harness", default="claude-code"); p.add_argument("-j", "--max-parallel", type=int, default=3); p.set_defaults(fn=None)

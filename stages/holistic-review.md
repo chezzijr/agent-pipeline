@@ -1,6 +1,8 @@
 ---
 model: opus
 write: false
+max_usd: 4
+hooks: [dangerous-commands]
 ---
 
 ## Your stage: holistic-review

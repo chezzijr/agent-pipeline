@@ -2,6 +2,9 @@
 model: opus
 effort: low
 write: true
+max_usd: 3
+hooks: [dangerous-commands]
+skills: [superpowers:systematic-debugging]
 ---
 
 ## Your stage: triage
