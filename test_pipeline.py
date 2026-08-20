@@ -68,9 +68,9 @@ def test_unknown_result_escalates_rather_than_guesses():
 
 
 def test_no_agent_can_reach_a_human_gate_or_a_terminal_state():
-    reachable = {t(s, r)[0] for s in P.STAGES for r in
+    reachable = {t(s, r)[0] for s in P.agent_stages() for r in
                  ["ok", "fail", "blocked", "rejected", "junk"]}
-    assert "awaiting-approval" not in {t(s, r)[0] for s in P.STAGES if s != "plan-validation"
+    assert "awaiting-approval" not in {t(s, r)[0] for s in P.agent_stages() if s != "plan-validation"
                                        for r in ["ok", "fail", "blocked", "rejected"]}
     assert "done" not in reachable, "an agent stage must never reach `done`"
 
@@ -183,6 +183,33 @@ def test_escalation_clears_the_lease_so_a_human_can_resume():
     assert meta["stage"] == "escalated"
     assert not P.lease_active(meta), "a leased escalated ticket cannot be resumed"
     shutil.rmtree(d)
+
+
+def test_every_stage_prompt_declares_its_config():
+    """A stage is one self-contained file: prompt plus model/effort/write."""
+    for stage in P.agent_stages():
+        cfg = P.stage_config(stage)
+        assert cfg.get("model"), f"{stage}: no model in frontmatter"
+        assert isinstance(cfg.get("write"), bool), f"{stage}: no write flag"
+    assert P.is_readonly("review") and P.is_readonly("plan-validation")
+    assert not P.is_readonly("implementing")
+
+
+def test_composed_prompt_has_common_rules_and_no_frontmatter():
+    f = P.compose_prompt("review")
+    text = f.read_text()
+    f.unlink()
+    assert "Failure protocol" in text, "shared rules missing"
+    assert "Your stage: review" in text
+    assert not text.startswith("---"), "frontmatter leaked into the system prompt"
+    assert "model:" not in text.split("## Your stage")[0].split("```")[0]
+
+
+def test_every_stage_named_by_the_state_machine_has_a_prompt():
+    reachable = {t(s, r)[0] for s in P.agent_stages()
+                 for r in ["ok", "fail", "blocked", "rejected"]}
+    for stage in reachable - P.TERMINAL - {"awaiting-approval", "verifying"}:
+        assert (P.STAGES_DIR / f"{stage}.md").is_file(), f"no prompt for `{stage}`"
 
 
 def test_ticket_roundtrips():

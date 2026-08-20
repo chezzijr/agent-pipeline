@@ -1,8 +1,9 @@
 # Test fixture for end-to-end dispatcher runs. Simulates an agent by echoing a
 # canned result -- the reply is read from FAKE_RESULT in the environment.
 effort_flag = ""
+session_flag = ""
 readonly_tools = ""
 write_tools = ""
 max_usd = 0
-cmd = """printf 'result: %s\\nsummary: fake %s agent\\nfiles_declared: [thing.py]\\n' \
-"${{FAKE_RESULT:-ok}}" "{model}" > .project/tickets/{id}.result"""
+cmd = """printf 'result: %s\\nsummary: fake %s agent\\nfiles_declared: [thing.py]\\ntest_file: %s\\n' \
+"${{FAKE_RESULT:-ok}}" "{model}" "${{FAKE_TEST_FILE:-null}}" > .project/tickets/{id}.result"""

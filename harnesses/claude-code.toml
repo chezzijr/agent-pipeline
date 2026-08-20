@@ -1,14 +1,15 @@
 # Harness adapter: data, not code. A second harness is a second file here.
-# Placeholders filled by pipeline.py: model, effort_flag, stage_prompt, tools,
-# cap, project, id.
+# Placeholders filled by pipeline.py: model, effort_flag, session_flag,
+# stage_prompt, tools, cap, project, id.
 
 effort_flag = "--effort {effort}"
+session_flag = "--session-id {session}"
 readonly_tools = "Read,Grep,Glob,Bash"
 write_tools = "Read,Grep,Glob,Bash,Edit,Write"
 max_usd = 5
 
-cmd = """claude -p --model {model} {effort_flag} \
---append-system-prompt "$(cat {common_prompt} {stage_prompt})" \
+cmd = """claude -p --model {model} {effort_flag} {session_flag} \
+--append-system-prompt "$(cat {stage_prompt})" \
 --tools "{tools}" \
 --permission-mode acceptEdits \
 --max-budget-usd {cap} \

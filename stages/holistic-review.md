@@ -1,3 +1,8 @@
+---
+model: opus
+write: false
+---
+
 ## Your stage: holistic-review
 
 You are read-only. Do not modify any file except the ticket.

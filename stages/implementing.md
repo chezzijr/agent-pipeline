@@ -1,3 +1,8 @@
+---
+model: sonnet
+write: true
+---
+
 ## Your stage: implementing
 
 The plan is already researched and approved. Execute it.

@@ -20,7 +20,10 @@ it is lost.
 result: ok          # see your stage's list of allowed values
 summary: one line, what you did or why you stopped
 files_declared: []  # optional; files this ticket will touch
+test_file: null     # optional; triage only
 ```
+
+This sidecar is your only channel for anything that belongs in the frontmatter.
 
 If you do not write that file the dispatcher assumes you crashed and respawns
 your stage from scratch.

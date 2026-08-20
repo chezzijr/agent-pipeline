@@ -1,3 +1,9 @@
+---
+model: opus
+effort: low
+write: true
+---
+
 ## Your stage: triage
 
 Confirm the ticket is real by reproducing it, and leave behind an *executable*
@@ -12,8 +18,10 @@ proof rather than a sentence.
 5. Write `## Reproduction`: the test's path, the exact failure output, and the
    command that produces it.
 
-Record the test's path/id in your result summary so a human can copy it into
-the `test_file` frontmatter field -- you must not edit frontmatter yourself.
+Put the test's id in your result file as `test_file:` (e.g.
+`test_file: tests/test_cache.py::test_evicts`). The dispatcher copies it into
+the frontmatter -- you must not edit frontmatter yourself. Every later stage
+depends on this field, so a triage that omits it has not finished.
 
 `result`:
 - `ok` -- reproduced, failing test committed

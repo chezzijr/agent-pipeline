@@ -34,6 +34,21 @@ $EDITOR ~/code/myproject/.project/pipeline.toml   # how to run this project's te
 `run --once` does a single pass, which is what you want while you are still
 watching it.
 
+## Watching a run
+
+Every spawn gets a session id and a log:
+
+```
+$ pipeline.py --project ~/code/myproject status -v
+TICKET-001   review    bugfix  {'review_loops': 1, ...}
+             last: review log=.project/logs/TICKET-001-review-3582ef02.log
+                   replay=`claude --resume 3582ef02-...`
+```
+
+`tail -f` the log while it runs; `claude --resume <id>` to open the session and
+see what the agent actually did. There is no daemon manager here on purpose --
+run the loop under systemd or tmux, which already solve supervision.
+
 ## The three invariants
 
 1. **An agent never writes `stage`.** It writes `.project/tickets/<ID>.result`
@@ -50,9 +65,13 @@ watching it.
 
     pipeline.py         dispatcher, gate, CLI
     stages/_common.md   rules every stage shares, incl. the failure protocol
-    stages/*.md         one prompt per stage, harness-neutral
+    stages/*.md         one self-contained stage: frontmatter (model, effort,
+                        write) plus the prompt. Harness-neutral.
     harnesses/*.toml    how to spawn an agent. A new harness is a new file here.
     ticket-template.md  the ticket schema
+
+Adding a stage means adding `stages/<name>.md` and a row in `transition()`.
+Nothing else knows the list.
 
 Tickets live in the **target** project (`.project/tickets/`), not here, so they
 branch, diff, and revert with the code they describe.

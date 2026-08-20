@@ -17,8 +17,10 @@ import re
 import shlex
 import subprocess
 import sys
+import tempfile
 import time
 import tomllib
+import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -36,29 +38,38 @@ REQUIRED_SECTIONS = [
     "Plan", "Acceptance criteria", "Rollback",
 ]
 
-# stage -> (model, effort, needs_write, counter charged on failure)
-STAGES = {
-    "triage":          {"model": "opus",   "effort": "low", "write": True},
-    "planning":        {"model": "opus",   "effort": None,  "write": True},
-    "plan-validation": {"model": "opus",   "effort": None,  "write": False},
-    "implementing":    {"model": "sonnet", "effort": None,  "write": True},
-    "review":          {"model": "opus",   "effort": None,  "write": False},
-    "holistic-review": {"model": "opus",   "effort": None,  "write": False},
-}
-READONLY_STAGES = {"plan-validation", "review", "holistic-review"}
+STAGES_DIR = HERE / "stages"
+
+
+def stage_config(stage: str) -> dict:
+    """Model, effort and write access come from the stage prompt's own
+    frontmatter, so a stage is one self-contained file."""
+    meta, _ = split_frontmatter(STAGES_DIR / f"{stage}.md")
+    return meta
+
+
+def agent_stages() -> list[str]:
+    return sorted(p.stem for p in STAGES_DIR.glob("*.md") if not p.stem.startswith("_"))
+
+
+def is_readonly(stage: str) -> bool:
+    return not stage_config(stage).get("write", False)
 
 
 # --------------------------------------------------------------------------
 # ticket io
 # --------------------------------------------------------------------------
 
-def load_ticket(path: Path) -> tuple[dict, str]:
+def split_frontmatter(path: Path) -> tuple[dict, str]:
     text = path.read_text()
     if not text.startswith("---\n"):
         raise ValueError(f"{path}: no frontmatter")
     _, fm, body = text.split("---\n", 2)
-    meta = yaml.safe_load(fm) or {}
-    return meta, body
+    return (yaml.safe_load(fm) or {}), body
+
+
+def load_ticket(path: Path) -> tuple[dict, str]:
+    return split_frontmatter(path)
 
 
 def save_ticket(path: Path, meta: dict, body: str) -> None:
@@ -265,20 +276,42 @@ def harness(name: str = "claude-code") -> dict:
     return tomllib.loads(p.read_text())
 
 
-def spawn(project: Path, tid: str, stage: str, hcfg: dict) -> None:
-    s = STAGES[stage]
+def compose_prompt(stage: str) -> Path:
+    """_common.md + this stage's body, frontmatter stripped, as one file."""
+    _, body = split_frontmatter(STAGES_DIR / f"{stage}.md")
+    f = tempfile.NamedTemporaryFile("w", suffix=".md", delete=False)
+    f.write((STAGES_DIR / "_common.md").read_text() + "\n" + body)
+    f.close()
+    return Path(f.name)
+
+
+def spawn(project: Path, tid: str, stage: str, hcfg: dict) -> tuple[str, Path]:
+    """Returns (session_id, log_path) so both can be recorded in the ticket."""
+    cfg = stage_config(stage)
+    session = str(uuid.uuid4())
+    logs = project / ".project" / "logs"
+    logs.mkdir(parents=True, exist_ok=True)
+    log = logs / f"{tid}-{stage}-{session[:8]}.log"
+    prompt = compose_prompt(stage)
     cmd = hcfg["cmd"].format(
-        model=s["model"],
-        effort_flag=hcfg["effort_flag"].format(effort=s["effort"]) if s["effort"] else "",
-        common_prompt=shlex.quote(str(HERE / "stages" / "_common.md")),
-        stage_prompt=shlex.quote(str(HERE / "stages" / f"{stage}.md")),
-        tools=hcfg["readonly_tools"] if not s["write"] else hcfg["write_tools"],
+        model=cfg.get("model", "sonnet"),
+        effort_flag=(hcfg.get("effort_flag", "").format(effort=cfg["effort"])
+                     if cfg.get("effort") else ""),
+        session_flag=hcfg.get("session_flag", "").format(session=session),
+        stage_prompt=shlex.quote(str(prompt)),
+        tools=hcfg["write_tools"] if cfg.get("write") else hcfg["readonly_tools"],
         cap=hcfg.get("max_usd", 5),
         project=shlex.quote(str(project)),
         id=tid,
     )
-    print(f"  spawn: {stage} ({s['model']})")
-    subprocess.run(cmd, shell=True, cwd=project)
+    print(f"  spawn: {stage} ({cfg.get('model')}) session {session[:8]} -> {log}")
+    with log.open("w") as fh:
+        fh.write(f"$ {cmd}\n\n")
+        fh.flush()
+        subprocess.run(cmd, shell=True, cwd=project, stdout=fh,
+                       stderr=subprocess.STDOUT, env=project_env())
+    prompt.unlink(missing_ok=True)
+    return session, log
 
 
 def read_result(project: Path, tid: str) -> dict | None:
@@ -370,16 +403,21 @@ def step(project: Path, path: Path, hcfg: dict) -> bool:
             return True
         meta, body = load_ticket(path)
 
-    before = tree_snapshot(project) if stage in READONLY_STAGES else None
+    before = tree_snapshot(project) if is_readonly(stage) else None
 
     meta["lease"] = {"holder": f"{stage}-{os.getpid()}",
                      "expires": (now() + timedelta(minutes=LEASE_MINUTES)).isoformat()}
     save_ticket(path, meta, body)
 
-    spawn(project, tid, stage, hcfg)
+    session, log = spawn(project, tid, stage, hcfg)
 
     res = read_result(project, tid)
     meta, body = load_ticket(path)
+    body = append_thread(body, f"`{stage}` ran as session `{session}`\n"
+                               f"- replay: `claude --resume {session}`\n"
+                               f"- log: `{log.relative_to(project)}`")
+    meta["last_session"] = {"stage": stage, "id": session,
+                            "log": str(log.relative_to(project))}
 
     if before is not None and tree_snapshot(project) != before:
         escalate(path, meta, body,
@@ -392,9 +430,10 @@ def step(project: Path, path: Path, hcfg: dict) -> bool:
             body, f"`{stage}` wrote no .result sidecar -- will respawn"))
         return True
 
-    if res.get("files_declared"):
-        meta["files_declared"] = res["files_declared"]
-        save_ticket(path, meta, body)
+    for field in ("files_declared", "test_file"):
+        if res.get(field):
+            meta[field] = res[field]
+    save_ticket(path, meta, body)
 
     advance(project, path, meta, body, res.get("result", "fail"), res.get("summary", ""))
     return True
@@ -479,6 +518,10 @@ def cmd_status(args) -> None:
         lease = "LEASED" if lease_active(meta) else ""
         print(f"{meta['id']:<12} {meta.get('stage',''):<17} {meta.get('class',''):<9} "
               f"{c} {lease}")
+        last = meta.get("last_session")
+        if last and args.verbose:
+            print(f"{'':<12} last: {last['stage']} log={last['log']} "
+                  f"replay=`claude --resume {last['id']}`")
 
 
 def main() -> None:
@@ -491,7 +534,7 @@ def main() -> None:
     p = sub.add_parser("gate"); p.add_argument("id"); p.set_defaults(fn=cmd_gate)
     p = sub.add_parser("approve"); p.add_argument("id"); p.add_argument("--by"); p.set_defaults(fn=cmd_approve)
     p = sub.add_parser("resume"); p.add_argument("id"); p.add_argument("--stage", required=True); p.add_argument("--reset", nargs="*"); p.set_defaults(fn=cmd_resume)
-    p = sub.add_parser("status"); p.set_defaults(fn=cmd_status)
+    p = sub.add_parser("status"); p.add_argument("-v", "--verbose", action="store_true"); p.set_defaults(fn=cmd_status)
     p = sub.add_parser("run"); p.add_argument("--once", action="store_true"); p.add_argument("--interval", type=int, default=10); p.add_argument("--harness", default="claude-code"); p.set_defaults(fn=None)
 
     args = ap.parse_args()

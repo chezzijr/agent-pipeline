@@ -1,3 +1,8 @@
+---
+model: opus
+write: true
+---
+
 ## Your stage: planning
 
 Produce a plan an implementer can follow without doing any research of its own.
