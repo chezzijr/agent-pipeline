@@ -1,0 +1,6 @@
+# How to run this project's tests. `{test}` is substituted with the ticket's
+# `test_file` frontmatter value.
+test_one                = "pytest -x {test}"
+test_suite              = "pytest"
+test_suite_without_new  = "pytest --deselect {test}"
+base                    = "main"
