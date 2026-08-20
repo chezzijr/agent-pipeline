@@ -91,12 +91,13 @@ def spawn(project: Path, wt: Path, tid: str, stage: str, hcfg: dict) -> dict:
             "log": log, "stage": stage, "wt": wt}
 
 
-def spawn_suite(project: Path, wt: Path, tid: str, cfg: dict) -> dict:
-    """Start the regression suite as a tracked child, shaped like `spawn()`'s
-    record so `reap()` collects it with everything else. Run inline it stalled
-    the loop: no other ticket advanced and no finished agent was reaped while a
-    real project's suite took its minutes."""
-    stage, cmd = "verifying", cfg["test_suite"]
+def spawn_command(project: Path, wt: Path, tid: str, stage: str, cmd: str,
+                  kind: str = "command") -> dict:
+    """Start a dispatcher-owned command as a tracked child, shaped like
+    `spawn()`'s record so `reap()` collects it with everything else. Run inline
+    the suite stalled the loop: no other ticket advanced and no finished agent
+    was reaped while a real project's suite took its minutes. `kind` is what
+    `finish()` branches on -- these children have no agent to check."""
     logs = project / ".project" / "logs"
     logs.mkdir(parents=True, exist_ok=True)
     log = logs / f"{tid}-{stage}-{uuid.uuid4().hex[:8]}.log"
@@ -106,9 +107,31 @@ def spawn_suite(project: Path, wt: Path, tid: str, cfg: dict) -> dict:
     proc = subprocess.Popen(cmd, shell=True, cwd=wt, stdout=fh,
                             stderr=subprocess.STDOUT, env=project_env())
     print(f"  start {tid}: {stage} (script) pid {proc.pid} -> {log.name}")
-    return {"kind": "suite", "proc": proc, "fh": fh, "prompt": None,
+    return {"kind": kind, "proc": proc, "fh": fh, "prompt": None,
             "settings": None, "session": None,
             "log": log, "stage": stage, "wt": wt}
+
+
+def merge_cmd(project: Path, t: Ticket, cfg: dict) -> str:
+    """Land the ticket branch on base, in two steps that both refuse to guess.
+
+    The base merge runs in the ticket's OWN worktree, so a conflict surfaces in
+    the checkout the escalated human is already going to open, and the step
+    after it never runs, leaving base untouched. The main checkout then only
+    ever fast-forwards, and only while it is actually sitting on `base`: a
+    dirty, diverged or elsewhere-parked checkout escalates rather than landing
+    the ticket half-way or onto some other branch. Nothing resolves a conflict.
+    """
+    # ponytail: two tickets merging in the same tick race on the main
+    # checkout's index.lock and the loser escalates spuriously. Fails safe --
+    # nothing lands half-merged -- so serialise merges only if it shows up.
+    base = shlex.quote(str(cfg.get("base", "main")))
+    proj = shlex.quote(str(project))
+    return (f"git merge --no-edit {base} || exit 1\n"
+            f"head=$(git -C {proj} rev-parse --abbrev-ref HEAD) || exit 1\n"
+            f'[ "$head" = {base} ] || {{ echo "main checkout is parked on'
+            f' $head, not the base branch -- refusing to land"; exit 1; }}\n'
+            f"git -C {proj} merge --ff-only {shlex.quote(t.branch)}\n")
 
 
 def start(project: Path, path: Path, hcfg: dict, inflight: dict) -> tuple[bool, dict | None]:
@@ -171,14 +194,22 @@ def start(project: Path, path: Path, hcfg: dict, inflight: dict) -> tuple[bool, 
         escalate(t, "could not create a worktree")
         return True, None
 
-    if stage == "verifying":
+    def child(cmd: str, kind: str) -> tuple[bool, dict]:
         # a child that outlives the tick must lease exactly like an agent, or a
-        # crash mid-suite leaves nothing for the expiry path to recover
+        # crash mid-command leaves nothing for the expiry path to recover
         t.take_lease(f"{stage}-{os.getpid()}")
         t.save()
-        rec = spawn_suite(project, wt, tid, cfg)
+        rec = spawn_command(project, wt, tid, stage, cmd, kind)
+        # `meta` is not optional: start()'s own overlap check reads it off every
+        # in-flight record
         rec["path"], rec["tid"], rec["meta"], rec["before"] = path, tid, t, None
         return True, rec
+
+    if stage == "verifying":
+        return child(cfg["test_suite"], "suite")
+
+    if stage == "merging":
+        return child(merge_cmd(project, t, cfg), "merge")
 
     if stage == "plan-validation":
         ok, failures = gate(project, tid, wt)
@@ -201,18 +232,26 @@ def start(project: Path, path: Path, hcfg: dict, inflight: dict) -> tuple[bool, 
     return True, rec
 
 
+def finish_child(project: Path, rec: dict, label: str) -> None:
+    """Apply a dispatcher-owned child's verdict: its exit code, nothing else."""
+    rec["fh"].close()
+    code = rec["proc"].returncode
+    advance(project, Ticket.load(rec["path"]), "ok" if code == 0 else "fail",
+            f"{label} exit {code}\n```\n{rec['log'].read_text()[-1500:]}\n```")
+
+
 def finish(project: Path, rec: dict) -> None:
     # BEFORE anything agent-specific: the suite's verdict is its exit code, and
     # falling through to read_result() would let a `.result` an earlier stage's
     # agent left behind speak for the test run. It also skips the tamper check,
     # the tree snapshot and apply_claims -- none of which have an agent to check.
     if rec.get("kind") == "suite":
-        rec["fh"].close()
-        code = rec["proc"].returncode
-        advance(project, Ticket.load(rec["path"]), "ok" if code == 0 else "fail",
-                f"regression suite exit {code}\n```\n"
-                f"{rec['log'].read_text()[-1500:]}\n```")
-        return
+        return finish_child(project, rec, "regression suite")
+    # a merge is the dispatcher's own child too: its verdict is the exit code of
+    # git, and `fail` means a conflict nobody may auto-resolve. Its worktree
+    # stays -- `escalated` is not in CLEANUP_STAGES.
+    if rec.get("kind") == "merge":
+        return finish_child(project, rec, "merge")
 
     rec["fh"].close()
     if rec.get("prompt"):

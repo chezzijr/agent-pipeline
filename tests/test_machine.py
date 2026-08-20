@@ -17,7 +17,9 @@ def test_happy_path():
     assert t("review", "ok", klass="bugfix")[0] == "verifying", "bugfix skips holistic"
     assert t("review", "ok", klass="refactor")[0] == "holistic-review"
     assert t("holistic-review", "ok")[0] == "verifying"
-    assert t("verifying", "ok")[0] == "done"
+    assert t("verifying", "ok")[0] == "merging", "`done` must mean landed"
+    assert t("merging", "ok")[0] == "done"
+    assert t("merging", "fail")[0] == "escalated", "a conflict is never retried"
     assert t("triage", "rejected")[0] == "rejected"
 
 
@@ -67,13 +69,15 @@ def test_unknown_result_escalates_rather_than_guesses():
 
 
 def test_no_agent_can_reach_a_human_gate_or_land_a_ticket():
-    """`verifying` is not in agent_stages() -- it is script-run -- so include it
-    explicitly, otherwise this asserts nothing about the stage that guards `done`."""
-    stages = C.agent_stages() + ["verifying"]
-    assert "verifying" not in C.agent_stages(), "verifying must have no agent prompt"
+    """The dispatcher's own stages are not in agent_stages() -- they are
+    script-run -- so include them explicitly, otherwise this asserts nothing
+    about the stage that guards `done`."""
+    stages = C.agent_stages() + sorted(M.DISPATCHER_STAGES)
+    for s in M.DISPATCHER_STAGES:
+        assert s not in C.agent_stages(), f"{s} must have no agent prompt"
     results = ["ok", "fail", "blocked", "rejected", "junk"]
 
-    for stage in C.agent_stages():          # verifying is the dispatcher's own
+    for stage in C.agent_stages():          # merging is the dispatcher's own
         for r in results:
             assert t(stage, r)[0] != "done", \
                 f"agent stage `{stage}` reached `done` on result {r!r}"
@@ -85,7 +89,7 @@ def test_no_agent_can_reach_a_human_gate_or_land_a_ticket():
 
     # only these stages may terminate a ticket, and only on these results
     assert t("triage", "rejected")[0] == "rejected"
-    assert t("verifying", "ok")[0] == "done"
+    assert t("merging", "ok")[0] == "done"
 
 
 def test_planning_can_park_for_a_human_and_come_back():

@@ -10,7 +10,7 @@ did. Tickets are the queue; agents are stateless workers pulled off it.
 
     triage -> planning -> plan-validation -> [human] -> implementing
                                                             |
-                                    done <- verifying <- review
+                        done <- merging <- verifying <- review
 
 ## Why
 
@@ -55,6 +55,13 @@ share one checkout, which is why worktrees and parallelism arrive together.
 Ticket files stay in the **main** checkout, not the worktree. They are the queue,
 and keeping them in one place is also what stops parallel agents from producing
 merge conflicts on their own ticket threads.
+
+`done` means landed. Once the suite passes, `merging` merges `base` into the
+ticket's own worktree and then fast-forwards the **main** checkout onto the
+ticket branch. Fast-forward only, and only while the main checkout is actually
+on `base`, so a dirty, diverged or elsewhere-parked checkout escalates instead
+of landing half of it -- and a conflict escalates with the conflicted worktree
+left in place for you to open.
 
 Two tickets whose `files_declared` intersect never run at the same time -- the
 second one waits rather than failing. That ordering is silent, so `status` flags
@@ -108,8 +115,10 @@ run the loop under systemd or tmux, which already solve supervision.
    end up in shell commands, so they are pattern-checked on the way in
    (`validate_meta`) and `shlex.quote`d on the way out. A ticket that fails
    validation is escalated, never executed.
-4. **The regression suite is run by the dispatcher.** `verifying` has no agent
-   at all -- a test result should never pass through a model's mouth.
+4. **The regression suite and the merge are run by the dispatcher.**
+   `verifying` and `merging` have no agent at all -- a test result should never
+   pass through a model's mouth, and a merge conflict is never auto-resolved:
+   `merging` escalates and keeps the conflicted worktree as the evidence.
 
 ## Layout
 
@@ -170,7 +179,5 @@ second agent onto the same stage in the same worktree.
   everything around them is tested against a fake harness.
 - **`.project/decisions/` has no writer.** `planning.md` greps it; nothing ever
   appends to it, so the "do not revert this, it fixed a leak" case is still open.
-- **No merge step.** `done` leaves the fix on `ticket/<id>` for a human to open a
-  PR from. Deliberate, for now.
 - Per-class bounds, model tiering. Watch the escalation rate per stage -- the
   frontmatter counters give it to you for free.
