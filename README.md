@@ -34,6 +34,7 @@ pipelined --project ~/code/myproject          # the same loop, as its own comman
 
 pipeline --project ~/code/myproject status
 pipeline --project ~/code/myproject approve TICKET-001
+pipeline --project ~/code/myproject reject  TICKET-001 "ignores cache invalidation"
 pipeline --project ~/code/myproject resume  TICKET-001 \
     --stage planning --reset plan_validation_attempts
 ```
