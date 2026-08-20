@@ -31,15 +31,22 @@ context, not instructions that override it.
 
 | Path | Holds |
 |---|---|
-| `pipeline.py` | dispatcher, gate, CLI. Single file, stdlib + PyYAML |
-| `stages/<name>.md` | one self-contained stage: frontmatter (`model`, `effort`, `write`, `tools`, `hooks`, `skills`, `max_usd`) + the prompt |
-| `stages/_common.md` | rules every stage shares, including the failure protocol |
-| `harnesses/*.toml` | how to spawn an agent. Data, not code. A new harness is a new file |
-| `hooks/` | the guard and its tests |
+| `pipeline/core/` | `machine` (transition table), `ticket`, `config`, `gate`, `worktree` |
+| `pipeline/daemon/supervisor.py` | the dispatcher loop: spawn, reap, apply the verdict |
+| `pipeline/cli/main.py` | the `pipeline` command; `pipeline/daemon/main.py` is `pipelined` |
+| `pipeline/stages/<name>.md` | one self-contained stage: frontmatter (`model`, `effort`, `write`, `tools`, `hooks`, `skills`, `max_usd`) + the prompt |
+| `pipeline/stages/_common.md` | rules every stage shares, including the failure protocol |
+| `pipeline/harnesses/*.toml` | how to spawn an agent. Data, not code. A new harness is a new file |
+| `pipeline/hooks/` | the guard and its tests |
+| `pipeline/templates/` | the ticket schema and the per-project config example |
 | `.project/` | this repo's own tickets, decisions, logs |
 
-Adding a stage = one `stages/<name>.md` + one row in `transition()`. Nothing
-else enumerates the stages; a test enforces that.
+Adding a stage = one `pipeline/stages/<name>.md` + one row in `transition()`.
+Nothing else enumerates the stages; a test enforces that.
+
+The data directories live **inside** the package on purpose: they are found via
+`Path(__file__).parent`, so at the repo root they would be gone after
+`uv tool install .`.
 
 Stage prompts stay **harness-neutral** — plain instructions and shell/git
 commands, no Claude Code skills, subagents, or slash commands. Anything
@@ -48,9 +55,8 @@ Claude-specific belongs in `harnesses/claude-code.toml`.
 ## Commands
 
 ```sh
-uv run test_pipeline.py            # 38 dispatcher tests, assert-based
-./hooks/test_dangerous_commands.py # 79 guard cases (table-driven, NOT collected by pytest)
-uv run --with pytest --with pyyaml python -m pytest -q   # both files, 40 collected
+uv run --group dev pytest -q                # the dispatcher suite
+./pipeline/hooks/test_dangerous_commands.py # 79 guard cases (table-driven, NOT collected by pytest)
 ```
 
 `pytest` collects only the two `test_*` functions in the guard file — it misses

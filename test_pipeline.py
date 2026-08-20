@@ -389,7 +389,7 @@ def test_a_corrupt_result_file_does_not_crash_the_dispatcher():
 
 def test_resume_refuses_a_stage_that_does_not_exist():
     d = Path(tempfile.mkdtemp())
-    run = lambda *a: subprocess.run([sys.executable, str(HERE / "pipeline.py"),
+    run = lambda *a: subprocess.run([sys.executable, "-m", "pipeline",
                                      "--project", str(d), *a],
                                     capture_output=True, text=True)
     run("new", "t")
@@ -471,7 +471,7 @@ def test_ticket_roundtrips():
 
 def test_cli_new_then_status():
     d = Path(tempfile.mkdtemp())
-    run = lambda *a: subprocess.run([sys.executable, str(HERE / "pipeline.py"),
+    run = lambda *a: subprocess.run([sys.executable, "-m", "pipeline",
                                      "--project", str(d), *a],
                                     capture_output=True, text=True)
     r = run("new", "cache leaks", "--class", "bugfix")

@@ -1,5 +1,5 @@
 # Harness adapter: data, not code. A second harness is a second file here.
-# Placeholders filled by pipeline.py: model, effort_flag, session_flag,
+# Placeholders filled by the dispatcher: model, effort_flag, session_flag,
 # settings_flag, permission_mode, stage_prompt, tools, cap, project, ticket,
 # result_file, id.
 #

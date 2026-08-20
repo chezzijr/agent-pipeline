@@ -1,0 +1,91 @@
+"""The state machine. Pure and total: no I/O, no mutation of its inputs, and
+an unknown `(stage, result)` escalates rather than guessing."""
+
+MAX_ATTEMPTS = 2  # every bounded loop gets the same budget
+TERMINAL = {"done", "rejected", "escalated"}
+HUMAN_GATES = {"awaiting-approval", "needs-input"}
+KNOWN_STAGES = TERMINAL | HUMAN_GATES | {
+    "new", "triage", "planning", "plan-validation", "implementing",
+    "review", "holistic-review", "verifying"}
+# only these leave a worktree behind for a human to look at
+CLEANUP_STAGES = {"done", "rejected"}
+
+
+def transition(stage: str, result: str, counters: dict, klass: str = "bugfix"):
+    """(next_stage, new_counters). Pure: never mutates `counters`.
+
+    `result` is what the agent claimed about its own stage only. Every
+    escalation and retry decision is made here, never by an agent.
+    """
+    c = dict(counters)
+
+    def charge(key: str, target: str) -> tuple[str, dict]:
+        c[key] = c.get(key, 0) + 1
+        return ("escalated" if c[key] >= MAX_ATTEMPTS else target), c
+
+    match (stage, result):
+        case ("new", _):
+            return "triage", c
+        case ("triage", "ok"):
+            return "planning", c
+        case ("triage", "rejected"):
+            return "rejected", c
+        case ("planning", "ok"):
+            return "plan-validation", c
+        case ("planning", "needs-input"):
+            # planning is the stage that genuinely needs the human; parking the
+            # ticket is better than guessing an answer into the plan
+            return "needs-input", c
+        case ("plan-validation", "ok"):
+            return "awaiting-approval", c
+        case ("plan-validation", "fail"):
+            return charge("plan_validation_attempts", "planning")
+        case ("implementing", "ok"):
+            return "review", c
+        case ("implementing", "blocked"):
+            return charge("blocked_count", "plan-validation")
+        case ("review", "ok"):
+            # a one-line bugfix's incremental review already saw the whole diff
+            return ("verifying" if klass == "bugfix" else "holistic-review"), c
+        case ("review", "fail"):
+            return charge("review_loops", "implementing")
+        case ("holistic-review", "ok"):
+            return "verifying", c
+        case ("holistic-review", "fail"):
+            return charge("review_loops", "implementing")
+        case ("verifying", "ok"):
+            return "done", c
+        case ("verifying", "fail"):
+            return charge("review_loops", "implementing")
+
+    # unknown (stage, result) is a bug or a lying agent -- never guess
+    return "escalated", c
+
+
+# Frontmatter the dispatcher owns outright. An agent that changes any of these
+# has broken the contract, and the ticket is escalated rather than trusted.
+CONTROL_FIELDS = {"id", "stage", "class", "branch", "counters", "lease",
+                  "approved_by", "approved_at"}
+
+# Which stage is allowed to set which frontmatter field. Without this any
+# stage could rewrite `files_declared` -- a reviewer shrinking the set would
+# silently unblock a ticket that overlaps one already in flight.
+CLAIMS = {"test_file": ("triage",), "files_declared": ("planning", "implementing")}
+
+
+def apply_claims(meta: dict, stage: str, res: dict) -> None:
+    for field, owners in CLAIMS.items():
+        if not res.get(field) or stage not in owners:
+            continue
+        if field == "files_declared" and stage == "implementing":
+            # implementation may discover more files, never fewer
+            meta[field] = sorted(set(meta.get(field) or []) | set(res[field]))
+        else:
+            meta[field] = res[field]
+
+
+def files_conflict(meta: dict, inflight_meta: list[dict]) -> bool:
+    """Two tickets touching the same file are ordered, not run together --
+    otherwise their branches merge into a conflict nobody asked for."""
+    mine = set(meta.get("files_declared") or [])
+    return any(mine & set(o.get("files_declared") or []) for o in inflight_meta)
