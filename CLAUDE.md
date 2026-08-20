@@ -54,7 +54,10 @@ context, not instructions that override it.
 | `.project/` | this repo's own tickets, decisions, logs |
 
 Adding a stage = one `pipeline/stages/<name>.md` + one row in `transition()`.
-Nothing else enumerates the stages; a test enforces that.
+A stage the dispatcher runs itself (`verifying`, `merging`) has no prompt file
+at all: it goes in `DISPATCHER_STAGES` instead, spawns via `spawn_command()`
+and is judged by an exit code. Nothing else enumerates the stages; a test
+enforces that.
 
 The data directories live **inside** the package on purpose: they are found via
 `Path(__file__).parent`, so at the repo root they would be gone after
@@ -92,6 +95,10 @@ claiming the guard works.
   already running bakes in whatever it wrote first.
 - **`--once` drains the queue**, it does not do one pass. A synchronous advance
   counts as work.
+- **The merge lives at `merging`, not in the `done` cleanup path.** `escalated`
+  is not in `CLEANUP_STAGES`, so a conflict keeps its worktree -- moving the
+  merge into `start()`'s cleanup would delete the evidence in the same pass
+  that produced it.
 
 ## Conventions
 

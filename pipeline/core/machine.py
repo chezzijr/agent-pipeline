@@ -13,12 +13,12 @@ TERMINAL = {"done", "rejected", "escalated"}
 HUMAN_GATES = {"awaiting-approval", "needs-input"}
 KNOWN_STAGES = TERMINAL | HUMAN_GATES | {
     "new", "triage", "planning", "plan-validation", "implementing",
-    "review", "holistic-review", "verifying"}
+    "review", "holistic-review", "verifying", "merging"}
 # only these leave a worktree behind for a human to look at
 CLEANUP_STAGES = {"done", "rejected"}
 # stages the dispatcher runs itself, with no agent and so no prompt file. A
 # test subtracts this set rather than hard-coding the exceptions.
-DISPATCHER_STAGES = {"verifying"}
+DISPATCHER_STAGES = {"verifying", "merging"}
 
 
 def transition(stage: str, result: str, counters: dict, klass: str = "bugfix"):
@@ -65,9 +65,15 @@ def transition(stage: str, result: str, counters: dict, klass: str = "bugfix"):
         case ("holistic-review", "fail"):
             return charge("review_loops", "implementing")
         case ("verifying", "ok"):
-            return "done", c
+            return "merging", c
         case ("verifying", "fail"):
             return charge("review_loops", "implementing")
+        case ("merging", "ok"):
+            return "done", c
+        case ("merging", "fail"):
+            # a conflict is never retried and never auto-resolved: the
+            # conflicted worktree is what the human is being called for
+            return "escalated", c
 
     # unknown (stage, result) is a bug or a lying agent -- never guess
     return "escalated", c

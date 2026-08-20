@@ -1,9 +1,11 @@
 """What the dispatcher does with a ticket it cannot run."""
 import shutil
+import subprocess
 
 from helpers import FIXTURE, git_project, project
 from pipeline.core import ticket as T
 from pipeline.core import config
+from pipeline.core import machine as M
 from pipeline.core.config import harness
 from pipeline.core.ticket import Ticket
 from pipeline.daemon import supervisor
@@ -134,4 +136,85 @@ def test_ctrl_c_during_a_suite_does_not_crash_on_its_missing_prompt():
     supervisor.shut_down(d, {"TICKET-001": rec})
 
     assert not Ticket.load(path).lease_active(), "an interrupted suite kept its lease"
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def _commit(wt, msg):
+    subprocess.run(f"git add -A && git commit -qm {msg}", shell=True, cwd=wt,
+                   capture_output=True, text=True)
+
+
+def test_a_verified_ticket_lands_on_base():
+    """`done` means landed. `verifying` used to go straight to `done`, leaving
+    the fix on `ticket/<id>` with nothing to say a branch was waiting."""
+    assert M.transition("verifying", "ok", {})[0] == "merging"
+    d, sh = git_project()
+    path = d / ".project/tickets/TICKET-001.md"
+    path.write_text(FIXTURE.replace("stage: plan-validation", "stage: verifying"))
+    wt = supervisor.ensure_worktree(
+        d, {"id": "TICKET-001", "branch": "ticket/001"}, {"base": "main"})
+    (wt / "g.py").write_text("the fix\n")
+    _commit(wt, "'ticket commit'")
+
+    for expect in ("merging", "done"):           # verifying -> merging -> done
+        did, rec = supervisor.start(d, path, harness("fake"), {})
+        assert did and rec, f"nothing spawned on the way to {expect}"
+        rec["proc"].wait()
+        supervisor.finish(d, rec)
+        assert Ticket.load(path).stage == expect, f"did not reach {expect}"
+
+    assert "ticket commit" in sh("git log --oneline main").stdout, \
+        "`done` but the fix never landed on base"
+    supervisor.start(d, path, harness("fake"), {})   # the `done` cleanup pass
+    assert not wt.is_dir()
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_a_merge_conflict_escalates_and_keeps_the_worktree():
+    """The conflicted index is the evidence the human was escalated to look at,
+    and it lives in the worktree. Never auto-resolved, never retried."""
+    d, sh = git_project()
+    path = d / ".project/tickets/TICKET-001.md"
+    path.write_text(FIXTURE.replace("stage: plan-validation", "stage: merging"))
+    wt = supervisor.ensure_worktree(
+        d, {"id": "TICKET-001", "branch": "ticket/001"}, {"base": "main"})
+    (wt / "f.py").write_text("branch side\n")       # both sides edit one line
+    _commit(wt, "'ticket commit'")
+    (d / "f.py").write_text("base side\n")
+    sh("git add -A && git commit -qm 'base moved'")
+
+    did, rec = supervisor.start(d, path, harness("fake"), {})
+    assert did and rec and rec["kind"] == "merge"
+    rec["proc"].wait()
+    supervisor.finish(d, rec)
+
+    assert Ticket.load(path).stage == "escalated"
+    assert wt.is_dir(), "the conflicted worktree is the evidence"
+    assert "f.py" in sh(f"git -C {wt} diff --name-only --diff-filter=U").stdout, \
+        "the conflict was resolved instead of left for the human"
+    assert "ticket commit" not in sh("git log --oneline main").stdout, \
+        "a conflicting branch was merged into base anyway"
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_a_main_checkout_parked_elsewhere_does_not_get_the_ticket_landed_on_it():
+    """Step 2 merges into whatever the main checkout has checked out. If that
+    is not `base`, a fast-forward can still succeed -- onto the wrong branch."""
+    d, sh = git_project()
+    path = d / ".project/tickets/TICKET-001.md"
+    path.write_text(FIXTURE.replace("stage: plan-validation", "stage: merging"))
+    wt = supervisor.ensure_worktree(
+        d, {"id": "TICKET-001", "branch": "ticket/001"}, {"base": "main"})
+    (wt / "g.py").write_text("the fix\n")
+    _commit(wt, "'ticket commit'")
+    sh("git checkout -qb sidequest")          # a human left main parked
+
+    did, rec = supervisor.start(d, path, harness("fake"), {})
+    rec["proc"].wait()
+    supervisor.finish(d, rec)
+
+    assert Ticket.load(path).stage == "escalated"
+    assert "ticket commit" not in sh("git log --oneline sidequest").stdout, \
+        "the ticket landed on whatever branch happened to be checked out"
+    assert "ticket commit" not in sh("git log --oneline main").stdout
     shutil.rmtree(d, ignore_errors=True)
