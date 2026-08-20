@@ -74,6 +74,31 @@ def cmd_approve(args) -> None:
     print(f"{args.id}: -> implementing")
 
 
+def cmd_reject(args) -> None:
+    """A human rejecting a plan they simply do not want -- distinct from
+    plan-validation's mechanical/judgment rejection, so it charges its own
+    counter (`plan_rejections`) instead of `plan_validation_attempts`. At the
+    bound this refuses rather than escalating: escalation means "a human must
+    look", and one already is, holding the keyboard. The counter is lifetime,
+    not "in a row" -- like every other counter here it only clears via an
+    explicit `--reset`, which is why the escape hatch below names it."""
+    project = Path(args.project).resolve()
+    if not args.reason.strip():
+        die("a rejection needs a reason -- that's the whole point")
+    t = Ticket.find(project, args.id)
+    if t.stage != "awaiting-approval":
+        die(f"{args.id} is in `{t.stage}`, not `awaiting-approval`")
+    if t.counters.get("plan_rejections", 0) >= 2:
+        die(f"{args.id}: 3rd rejection: the ticket is the problem, not the plan.\n"
+            f"Try `pipeline resume {args.id} --stage triage --reset plan_rejections`, "
+            f"or close the ticket.")
+    t.counters["plan_rejections"] = t.counters.get("plan_rejections", 0) + 1
+    t.stage = "planning"
+    t.append("human", "rejection", args.reason)
+    t.save()
+    print(f"{args.id}: -> planning")
+
+
 def cmd_answer(args) -> None:
     project = Path(args.project).resolve()
     t = Ticket.find(project, args.id)
@@ -127,6 +152,7 @@ def main() -> None:
     p = sub.add_parser("new"); p.add_argument("title"); p.add_argument("--class", dest="cls", default="bugfix"); p.set_defaults(fn=cmd_new)
     p = sub.add_parser("gate"); p.add_argument("id"); p.set_defaults(fn=cmd_gate)
     p = sub.add_parser("approve"); p.add_argument("id"); p.add_argument("--by"); p.set_defaults(fn=cmd_approve)
+    p = sub.add_parser("reject"); p.add_argument("id"); p.add_argument("reason"); p.set_defaults(fn=cmd_reject)
     p = sub.add_parser("answer"); p.add_argument("id"); p.add_argument("text"); p.set_defaults(fn=cmd_answer)
     p = sub.add_parser("resume"); p.add_argument("id"); p.add_argument("--stage", required=True); p.add_argument("--reset", nargs="*"); p.set_defaults(fn=cmd_resume)
     p = sub.add_parser("status"); p.add_argument("-v", "--verbose", action="store_true"); p.set_defaults(fn=cmd_status)

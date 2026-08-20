@@ -10,6 +10,12 @@ skills: [superpowers:writing-plans]
 
 Produce a plan an implementer can follow without doing any research of its own.
 
+If the thread carries `rejection` entries -- a human ran `pipeline reject`
+because they did not want the last plan -- read every one of them before you
+write anything. Say in `## Digest` how this plan differs from the rejected one
+and how it addresses each reason given. Guessing why it was rejected instead
+of reading the entry is the same mistake this whole section exists to prevent.
+
 Fill in these sections:
 
 - `## Digest` -- the files, key functions, entry points and gotchas the next

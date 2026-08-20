@@ -6,6 +6,7 @@ import tempfile
 from pathlib import Path
 
 from helpers import ROOT
+from pipeline.core.ticket import Ticket
 
 
 def cli(project, *args):
@@ -33,4 +34,51 @@ def test_cli_new_then_status():
     assert "TICKET-001" in r.stdout and "new" in r.stdout, r.stdout
     r = cli(d, "approve", "TICKET-001")
     assert r.returncode != 0, "approve must refuse a ticket that is not awaiting-approval"
+    shutil.rmtree(d)
+
+
+def test_reject_returns_a_plan_with_its_reason():
+    d = Path(tempfile.mkdtemp())
+    cli(d, "new", "t")
+    cli(d, "resume", "TICKET-001", "--stage", "awaiting-approval")
+    r = cli(d, "reject", "TICKET-001", "ignores cache invalidation")
+    assert r.returncode == 0, r.stderr
+    t = Ticket.load(d / ".project/tickets/TICKET-001.md")
+    assert t.stage == "planning"
+    assert t.counters["plan_validation_attempts"] == 0
+    e = [e for e in t.thread() if e.kind == "rejection"][-1]
+    assert e.stage == "human" and "cache invalidation" in e.text
+
+    # the bound: a human's third reject is refused, not escalated -- escalation
+    # means "a human must look", and one already is. `plan_rejections` is
+    # lifetime (like every other counter here), so the escape hatch the error
+    # prints must actually clear it, not just point at `resume`.
+    cli(d, "resume", "TICKET-001", "--stage", "awaiting-approval")
+    r = cli(d, "reject", "TICKET-001", "still wrong")
+    assert r.returncode == 0, r.stderr
+    cli(d, "resume", "TICKET-001", "--stage", "awaiting-approval")
+    r = cli(d, "reject", "TICKET-001", "nope again")
+    assert r.returncode != 0, "3rd reject must refuse, not silently escalate"
+    assert "--reset plan_rejections" in r.stderr, \
+        "the printed escape hatch must actually clear the counter it refused on"
+    t = Ticket.load(d / ".project/tickets/TICKET-001.md")
+    assert t.stage == "awaiting-approval"
+
+    # follow the printed advice: resume with the reset it names, and a plan
+    # that has never been rejected before must not be refused on first try
+    cli(d, "resume", "TICKET-001", "--stage", "awaiting-approval",
+        "--reset", "plan_rejections")
+    r = cli(d, "reject", "TICKET-001", "a brand new complaint")
+    assert r.returncode == 0, r.stderr
+    shutil.rmtree(d)
+
+
+def test_reject_refuses_an_empty_reason():
+    d = Path(tempfile.mkdtemp())
+    cli(d, "new", "t")
+    cli(d, "resume", "TICKET-001", "--stage", "awaiting-approval")
+    r = cli(d, "reject", "TICKET-001", "   ")
+    assert r.returncode != 0 and "reason" in r.stderr, r
+    t = Ticket.load(d / ".project/tickets/TICKET-001.md")
+    assert t.stage == "awaiting-approval" and t.counters.get("plan_rejections", 0) == 0
     shutil.rmtree(d)
