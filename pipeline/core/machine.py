@@ -1,7 +1,14 @@
 """The state machine. Pure and total: no I/O, no mutation of its inputs, and
 an unknown `(stage, result)` escalates rather than guessing."""
 
-MAX_ATTEMPTS = 2  # every bounded loop gets the same budget
+MAX_ATTEMPTS = 2  # default bound: unknown classes, and the dispatcher's own counters
+# Per-class loop budgets, owned by the dispatcher alone -- no stage prompt ever
+# learns what its budget is. Missing class or key falls back to MAX_ATTEMPTS.
+BOUNDS = {
+    "bugfix":   {"review_loops": 2, "plan_validation_attempts": 2, "blocked_count": 2},
+    "feature":  {"review_loops": 2, "plan_validation_attempts": 2, "blocked_count": 2},
+    "refactor": {"review_loops": 3, "plan_validation_attempts": 3, "blocked_count": 2},
+}
 TERMINAL = {"done", "rejected", "escalated"}
 HUMAN_GATES = {"awaiting-approval", "needs-input"}
 KNOWN_STAGES = TERMINAL | HUMAN_GATES | {
@@ -24,7 +31,8 @@ def transition(stage: str, result: str, counters: dict, klass: str = "bugfix"):
 
     def charge(key: str, target: str) -> tuple[str, dict]:
         c[key] = c.get(key, 0) + 1
-        return ("escalated" if c[key] >= MAX_ATTEMPTS else target), c
+        bound = BOUNDS.get(klass, {}).get(key, MAX_ATTEMPTS)
+        return ("escalated" if c[key] >= bound else target), c
 
     match (stage, result):
         case ("new", _):

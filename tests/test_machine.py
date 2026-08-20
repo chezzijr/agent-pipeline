@@ -37,6 +37,18 @@ def test_bounds_escalate_on_the_second_failure():
         assert c[key] == 2
 
 
+def test_bounds_come_from_the_ticket_class():
+    """A refactor gets a third review loop; a bugfix does not."""
+    assert t("review", "fail", {"review_loops": 1}, "refactor")[0] == "implementing"
+    assert t("review", "fail", {"review_loops": 1}, "bugfix")[0] == "escalated"
+    assert t("review", "fail", {"review_loops": 2}, "refactor")[0] == "escalated"
+    # an unknown class falls back to MAX_ATTEMPTS
+    assert t("review", "fail", {"review_loops": 1}, "spelunking")[0] == "escalated"
+    c = {"review_loops": 1}
+    t("review", "fail", c, "refactor")
+    assert c == {"review_loops": 1}, "transition mutated its input"
+
+
 def test_review_loops_are_a_shared_budget():
     """A review fail then a holistic fail must escalate -- not reset per stage."""
     _, c = t("review", "fail")
