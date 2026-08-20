@@ -1,0 +1,116 @@
+"""The transition table's bounds, the claims table, and overlap ordering.
+Pure functions: nothing here touches the disk."""
+from pipeline.core import config as C
+from pipeline.core import machine as M
+
+
+def t(stage, result, counters=None, klass="bugfix"):
+    return M.transition(stage, result, counters or {}, klass)
+
+
+def test_happy_path():
+    assert t("new", "-")[0] == "triage"
+    assert t("triage", "ok")[0] == "planning"
+    assert t("planning", "ok")[0] == "plan-validation"
+    assert t("plan-validation", "ok")[0] == "awaiting-approval"
+    assert t("implementing", "ok")[0] == "review"
+    assert t("review", "ok", klass="bugfix")[0] == "verifying", "bugfix skips holistic"
+    assert t("review", "ok", klass="refactor")[0] == "holistic-review"
+    assert t("holistic-review", "ok")[0] == "verifying"
+    assert t("verifying", "ok")[0] == "done"
+    assert t("triage", "rejected")[0] == "rejected"
+
+
+def test_bounds_escalate_on_the_second_failure():
+    for stage, result, key in [
+        ("plan-validation", "fail", "plan_validation_attempts"),
+        ("review", "fail", "review_loops"),
+        ("holistic-review", "fail", "review_loops"),
+        ("verifying", "fail", "review_loops"),
+        ("implementing", "blocked", "blocked_count"),
+    ]:
+        nxt, c = t(stage, result)
+        assert nxt != "escalated", f"{stage}: first {result} must retry, got {nxt}"
+        assert c[key] == 1, f"{stage}: counter not charged"
+        nxt, c = t(stage, result, c)
+        assert nxt == "escalated", f"{stage}: second {result} must escalate, got {nxt}"
+        assert c[key] == 2
+
+
+def test_review_loops_are_a_shared_budget():
+    """A review fail then a holistic fail must escalate -- not reset per stage."""
+    _, c = t("review", "fail")
+    assert t("holistic-review", "fail", c)[0] == "escalated"
+
+
+def test_transition_is_pure():
+    c = {"review_loops": 0}
+    t("review", "fail", c)
+    assert c == {"review_loops": 0}, "transition mutated its input"
+
+
+def test_unknown_result_escalates_rather_than_guesses():
+    assert t("review", "lgtm!")[0] == "escalated"
+    assert t("implementing", "")[0] == "escalated"
+
+
+def test_no_agent_can_reach_a_human_gate_or_land_a_ticket():
+    """`verifying` is not in agent_stages() -- it is script-run -- so include it
+    explicitly, otherwise this asserts nothing about the stage that guards `done`."""
+    stages = C.agent_stages() + ["verifying"]
+    assert "verifying" not in C.agent_stages(), "verifying must have no agent prompt"
+    results = ["ok", "fail", "blocked", "rejected", "junk"]
+
+    for stage in C.agent_stages():          # verifying is the dispatcher's own
+        for r in results:
+            assert t(stage, r)[0] != "done", \
+                f"agent stage `{stage}` reached `done` on result {r!r}"
+
+    for stage in stages:
+        for r in results:
+            assert t(stage, r)[0] != "awaiting-approval" or stage == "plan-validation", \
+                f"`{stage}` reached the human approval gate on {r!r}"
+
+    # only these stages may terminate a ticket, and only on these results
+    assert t("triage", "rejected")[0] == "rejected"
+    assert t("verifying", "ok")[0] == "done"
+
+
+def test_planning_can_park_for_a_human_and_come_back():
+    assert t("planning", "needs-input")[0] == "needs-input"
+    assert "needs-input" in M.HUMAN_GATES, "the dispatcher would spawn an agent on it"
+    assert t("planning", "needs-input")[1] == {}, "asking a question is not a failure"
+
+
+def test_only_the_owning_stage_can_set_a_frontmatter_field():
+    meta = {"files_declared": ["a.py"], "test_file": "t.py::x"}
+    M.apply_claims(meta, "review", {"files_declared": ["z.py"], "test_file": "other"})
+    assert meta == {"files_declared": ["a.py"], "test_file": "t.py::x"}, \
+        "a review stage rewrote fields it does not own"
+
+    M.apply_claims(meta, "implementing", {"files_declared": ["b.py"]})
+    assert meta["files_declared"] == ["a.py", "b.py"], "implementation may only add files"
+
+    M.apply_claims(meta, "planning", {"files_declared": ["c.py"]})
+    assert meta["files_declared"] == ["c.py"], "planning owns the declared set"
+
+
+def test_overlapping_tickets_do_not_run_together():
+    mine = {"files_declared": ["shared.py", "a.py"]}
+    assert M.files_conflict(mine, [{"files_declared": ["shared.py"]}])
+    assert not M.files_conflict(mine, [{"files_declared": ["b.py"]}])
+    assert not M.files_conflict(mine, []), "nothing in flight cannot conflict"
+    assert not M.files_conflict({"files_declared": []}, [{"files_declared": ["a.py"]}])
+
+
+def test_control_fields_are_the_dispatchers_alone():
+    assert {"stage", "counters", "branch", "id", "lease"} <= M.CONTROL_FIELDS
+    for field in ("test_file", "files_declared"):
+        assert field not in M.CONTROL_FIELDS, f"{field} is claimed via the sidecar"
+
+
+def test_escalated_tickets_keep_their_worktree():
+    assert "escalated" in M.TERMINAL
+    assert "escalated" not in M.CLEANUP_STAGES, \
+        "removing it destroys the uncommitted evidence a human was called for"
+    assert M.CLEANUP_STAGES == {"done", "rejected"}

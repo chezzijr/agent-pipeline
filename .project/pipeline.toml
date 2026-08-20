@@ -1,6 +1,6 @@
 # claude-setup dogfooding its own pipeline.
-# pytest collects the assert-based suite fine -- verified, 38 tests, node ids work.
-test_one               = "uv run --with pytest --with pyyaml python -m pytest -x {test}"
-test_suite             = "uv run --with pytest --with pyyaml python -m pytest && ./hooks/test_dangerous_commands.py"
-test_suite_without_new = "uv run --with pytest --with pyyaml python -m pytest --deselect {test}"
+# pytest collects the assert-based suite fine -- verified, node ids work.
+test_one               = "uv run --group dev pytest -x {test}"
+test_suite             = "uv run --group dev pytest && ./pipeline/hooks/test_dangerous_commands.py"
+test_suite_without_new = "uv run --group dev pytest --deselect {test}"
 base                   = "main"

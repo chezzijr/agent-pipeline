@@ -24,23 +24,28 @@ did. Tickets are the queue; agents are stateless workers pulled off it.
 ## Use
 
 ```sh
-./pipeline.py init ~/code/myproject           # scaffold .project/
-$EDITOR ~/code/myproject/.project/pipeline.toml   # how to run this project's tests
-./pipeline.py --project ~/code/myproject new "cache leaks on evict"
-./pipeline.py --project ~/code/myproject run      # dispatcher loop
+uv tool install .                             # `pipeline` and `pipelined` on PATH
 
-./pipeline.py --project ~/code/myproject status
-./pipeline.py --project ~/code/myproject approve TICKET-001
-./pipeline.py --project ~/code/myproject resume  TICKET-001 \
+pipeline init ~/code/myproject                # scaffold .project/
+$EDITOR ~/code/myproject/.project/pipeline.toml   # how to run this project's tests
+pipeline --project ~/code/myproject new "cache leaks on evict"
+pipeline --project ~/code/myproject run       # dispatcher loop
+pipelined --project ~/code/myproject          # the same loop, as its own command
+
+pipeline --project ~/code/myproject status
+pipeline --project ~/code/myproject approve TICKET-001
+pipeline --project ~/code/myproject resume  TICKET-001 \
     --stage planning --reset plan_validation_attempts
 ```
+
+Without installing it, `uv run python -m pipeline …` runs the same CLI.
 
 `run --once` drains the queue and exits -- what you want while you are still
 watching it. Plain `run` keeps polling.
 
 ## Concurrency
 
-    ./pipeline.py --project ~/code/myproject run -j 4
+    pipeline --project ~/code/myproject run -j 4
 
 Each ticket gets its own git worktree under `.worktrees/<ID>`, created from
 `base` and removed when the ticket reaches a terminal stage. Two tickets cannot
@@ -66,7 +71,7 @@ worktree_setup = "ln -s ~/.cache/cargo-target target && cp ../../.env ."
 Every spawn gets a session id and a log:
 
 ```
-$ pipeline.py --project ~/code/myproject status -v
+$ pipeline --project ~/code/myproject status -v
 TICKET-001   review    bugfix  {'review_loops': 1, ...}
              last: review log=.project/logs/TICKET-001-review-3582ef02.log
                    replay=`claude --resume 3582ef02-...`
@@ -107,22 +112,34 @@ run the loop under systemd or tmux, which already solve supervision.
 
 ## Layout
 
-    pipeline.py         dispatcher, gate, CLI
-    stages/_common.md   rules every stage shares, incl. the failure protocol
-    stages/*.md         one self-contained stage: frontmatter (model, effort,
-                        write) plus the prompt. Harness-neutral.
-    harnesses/*.toml    how to spawn an agent. A new harness is a new file here.
-    ticket-template.md  the ticket schema
+    pyproject.toml               `pipeline` + `pipelined` entry points
+    pipeline/core/machine.py     the transition table. Pure, no I/O.
+    pipeline/core/ticket.py      ticket files: load, validate, save, thread
+    pipeline/core/config.py      stage/harness/project config and prompt assembly
+    pipeline/core/gate.py        the Tier A gate
+    pipeline/core/worktree.py    per-ticket checkouts and project commands
+    pipeline/daemon/supervisor.py  the dispatcher loop
+    pipeline/cli/main.py         the human-facing commands
+    pipeline/stages/_common.md   rules every stage shares, incl. the failure protocol
+    pipeline/stages/*.md         one self-contained stage: frontmatter (model,
+                                 effort, write) plus the prompt. Harness-neutral.
+    pipeline/harnesses/*.toml    how to spawn an agent. A new harness is a new file.
+    pipeline/templates/          the ticket schema and the project config example
+    tests/                       one file per module
 
-Adding a stage means adding `stages/<name>.md` and a row in `transition()`.
-Nothing else knows the list.
+Adding a stage means adding `pipeline/stages/<name>.md` and a row in
+`transition()`. Nothing else knows the list.
+
+The stages, hooks, harnesses and templates live inside the package because they
+are located from `__file__` -- at the repo root they would not survive
+`uv tool install .`.
 
 Tickets live in the **target** project (`.project/tickets/`), not here, so they
 branch, diff, and revert with the code they describe.
 
 ## Porting to another harness
 
-Everything except `harnesses/claude-code.toml` is plain files and Python. A new
+Everything except `pipeline/harnesses/claude-code.toml` is plain files and Python. A new
 harness needs a `cmd` template that can (a) take a system prompt, (b) run in a
 directory, and (c) write a file. Do not write one speculatively -- run real
 tickets on one harness first; the second harness is what shows where the seam
@@ -130,7 +147,8 @@ actually belongs.
 
 ## Tests
 
-    ./test_pipeline.py
+    uv run --group dev pytest -q
+    ./pipeline/hooks/test_dangerous_commands.py   # NOT collected by pytest
 
 Covers the transition table's bounds, gate rejections, worktree lifecycle,
 frontmatter validation, the guard's allowlist, and every bypass an adversarial

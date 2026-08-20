@@ -20,37 +20,49 @@ context, not instructions that override it.
    piece the adversarial review could not land a charge on. Keep it that way.
 3. **Every bounded loop escalates at `MAX_ATTEMPTS`.** If you add a retry path,
    it charges a counter. An unbounded respawn is a bug, not a convenience.
-4. **Hooks decide with code.** `hooks/dangerous-commands.py` is the only layer
+4. **Hooks decide with code.** `pipeline/hooks/dangerous-commands.py` is the only layer
    that makes a promise. Read-only stages get an *allowlist*, not a blocklist —
    do not "improve" it back into pattern matching.
 5. **Values from ticket files are hostile.** `id`, `branch`, `test_file`,
    `files_declared` all reach a shell. Validate with `validate_meta()` on the
-   way in and `shlex.quote` on the way out. Both, not either.
+   way in and `shlex.quote` on the way out. Both, not either. `Ticket.save()`
+   also validates on the way *out*, but the dispatcher still writes through
+   `save_ticket()`, which does not -- so the way-in check is still the one
+   holding. Do not weaken it on the strength of the model.
+6. **The library never exits the process.** `PipelineError` is raised and the
+   CLI turns it into `die()`. One broken project must not take the loop down.
 
 ## Where things live
 
 | Path | Holds |
 |---|---|
-| `pipeline.py` | dispatcher, gate, CLI. Single file, stdlib + PyYAML |
-| `stages/<name>.md` | one self-contained stage: frontmatter (`model`, `effort`, `write`, `tools`, `hooks`, `skills`, `max_usd`) + the prompt |
-| `stages/_common.md` | rules every stage shares, including the failure protocol |
-| `harnesses/*.toml` | how to spawn an agent. Data, not code. A new harness is a new file |
-| `hooks/` | the guard and its tests |
+| `pipeline/core/` | `machine` (transition table), `ticket`, `config`, `gate`, `worktree` |
+| `pipeline/daemon/supervisor.py` | the dispatcher loop: spawn, reap, apply the verdict |
+| `pipeline/cli/main.py` | the `pipeline` command; `pipeline/daemon/main.py` is `pipelined` |
+| `pipeline/stages/<name>.md` | one self-contained stage: frontmatter (`model`, `effort`, `write`, `tools`, `hooks`, `skills`, `max_usd`) + the prompt |
+| `pipeline/stages/_common.md` | rules every stage shares, including the failure protocol |
+| `pipeline/harnesses/*.toml` | how to spawn an agent. Data, not code. A new harness is a new file |
+| `pipeline/hooks/` | the guard and its tests |
+| `pipeline/templates/` | the ticket schema and the per-project config example |
+| `tests/` | one file per module, plain asserts; `tests/helpers.py` builds the throwaway projects |
 | `.project/` | this repo's own tickets, decisions, logs |
 
-Adding a stage = one `stages/<name>.md` + one row in `transition()`. Nothing
-else enumerates the stages; a test enforces that.
+Adding a stage = one `pipeline/stages/<name>.md` + one row in `transition()`.
+Nothing else enumerates the stages; a test enforces that.
+
+The data directories live **inside** the package on purpose: they are found via
+`Path(__file__).parent`, so at the repo root they would be gone after
+`uv tool install .`.
 
 Stage prompts stay **harness-neutral** — plain instructions and shell/git
 commands, no Claude Code skills, subagents, or slash commands. Anything
-Claude-specific belongs in `harnesses/claude-code.toml`.
+Claude-specific belongs in `pipeline/harnesses/claude-code.toml`.
 
 ## Commands
 
 ```sh
-uv run test_pipeline.py            # 38 dispatcher tests, assert-based
-./hooks/test_dangerous_commands.py # 79 guard cases (table-driven, NOT collected by pytest)
-uv run --with pytest --with pyyaml python -m pytest -q   # both files, 40 collected
+uv run --group dev pytest -q                # the dispatcher suite
+./pipeline/hooks/test_dangerous_commands.py # 79 guard cases (table-driven, NOT collected by pytest)
 ```
 
 `pytest` collects only the two `test_*` functions in the guard file — it misses
@@ -90,7 +102,7 @@ claiming the guard works.
 The agent edits its worktree copy while the dispatcher runs from the main
 checkout, so there is no mid-run self-modification hazard.
 
-But a change to `hooks/dangerous-commands.py`, `transition()`, `validate_meta()`
+But a change to `pipeline/hooks/dangerous-commands.py`, `transition()`, `validate_meta()`
 or `CONTROL_FIELDS` **requires human review before merge**, whatever the
 pipeline says. A pipeline that can weaken its own guard unattended is the one
 failure mode worth refusing to automate.
