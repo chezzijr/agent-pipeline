@@ -14,8 +14,11 @@ Fill in these sections:
 
 - `## Digest` -- the files, key functions, entry points and gotchas the next
   stages need. This exists so nobody re-explores the codebase from scratch.
-- `## Decisions checked` -- grep `.project/decisions/` for anything constraining
-  this change and cite the decision IDs you consulted. If nothing is relevant,
+- `## Decisions checked` -- grep the decisions directory for anything
+  constraining this change. It sits next to the ticket file whose absolute path
+  you were given (`<that directory>/../decisions/`), **not** under your working
+  directory -- your cwd is a worktree created from the base branch and does not
+  contain it. and cite the decision IDs you consulted. If nothing is relevant,
   say "none relevant" and list the grep terms you used. Something in this
   codebase may exist deliberately (a workaround, a flush, an extra copy);
   removing it without knowing why is the failure this section prevents.

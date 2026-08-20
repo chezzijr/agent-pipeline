@@ -15,6 +15,7 @@ import argparse
 import os
 import re
 import shlex
+import signal
 import subprocess
 import sys
 import json
@@ -33,6 +34,11 @@ LEASE_MINUTES = 30
 STALE_HOURS = 4  # overlap ordering is silent; surface anything sitting still
 TERMINAL = {"done", "rejected", "escalated"}
 HUMAN_GATES = {"awaiting-approval", "needs-input"}
+KNOWN_STAGES = TERMINAL | HUMAN_GATES | {
+    "new", "triage", "planning", "plan-validation", "implementing",
+    "review", "holistic-review", "verifying"}
+# only these leave a worktree behind for a human to look at
+CLEANUP_STAGES = {"done", "rejected"}
 
 # `## Thread` is deliberately absent: it starts empty on every ticket and the
 # gate itself is what first writes to it.
@@ -63,6 +69,31 @@ def is_readonly(stage: str) -> bool:
 # --------------------------------------------------------------------------
 # ticket io
 # --------------------------------------------------------------------------
+
+SAFE_ID = re.compile(r"^TICKET-\d{1,6}$")
+SAFE_BRANCH = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,80}$")
+SAFE_TEST = re.compile(r"^[A-Za-z0-9._/-]{1,200}(::[A-Za-z0-9_\[\].-]{1,100})*$")
+SAFE_FILE = re.compile(r"^[A-Za-z0-9._/-]{1,200}$")
+
+
+def validate_meta(meta: dict) -> list[str]:
+    """Every one of these fields reaches a shell command or the state machine,
+    and every one of them sits in a file an agent can write. Validate on the way
+    in; do not rely on quoting alone."""
+    bad = []
+    if not SAFE_ID.match(str(meta.get("id", ""))):
+        bad.append(f"id {meta.get('id')!r} is not TICKET-<digits>")
+    if not SAFE_BRANCH.match(str(meta.get("branch", ""))):
+        bad.append(f"branch {meta.get('branch')!r} is not a plain branch name")
+    if meta.get("stage") is not None and meta["stage"] not in KNOWN_STAGES:
+        bad.append(f"stage {meta.get('stage')!r} is not a known stage")
+    if meta.get("test_file") and not SAFE_TEST.match(str(meta["test_file"])):
+        bad.append(f"test_file {meta['test_file']!r} contains shell metacharacters")
+    for f in meta.get("files_declared") or []:
+        if not SAFE_FILE.match(str(f)) or ".." in str(f) or str(f).startswith("/"):
+            bad.append(f"files_declared entry {f!r} is not a plain relative path")
+    return bad
+
 
 def split_frontmatter(path: Path) -> tuple[dict, str]:
     text = path.read_text()
@@ -234,7 +265,7 @@ def gate(project: Path, tid: str, workdir: Path | None = None) -> tuple[bool, li
         if not test_path.is_file():
             findings.append(f"test file {test_path} does not exist")
         else:
-            code, out = run_cmd(cfg["test_one"].format(test=test), wd)
+            code, out = run_cmd(cfg["test_one"].format(test=shlex.quote(test)), wd)
             node = test.split("::")[-1]
             if code == 0:
                 findings.append(f"`{test}` PASSES -- it must fail before implementation")
@@ -246,7 +277,7 @@ def gate(project: Path, tid: str, workdir: Path | None = None) -> tuple[bool, li
                     f"output -- it errored rather than failed\n```\n{out[-1200:]}\n```")
             else:
                 findings.append(f"ok: `{test}` fails as required\n```\n{out[-1200:]}\n```")
-            code, out = run_cmd(cfg["test_suite_without_new"].format(test=test), wd)
+            code, out = run_cmd(cfg["test_suite_without_new"].format(test=shlex.quote(test)), wd)
             if code != 0:
                 findings.append(
                     f"suite excluding `{test}` is RED -- pre-existing breakage, "
@@ -263,7 +294,8 @@ def gate(project: Path, tid: str, workdir: Path | None = None) -> tuple[bool, li
 
     crit = secs.get("Acceptance criteria", "")
     for line in [l for l in crit.splitlines() if l.strip().startswith(("-", "*"))]:
-        if not re.search(r"`[^`]+`|\btest_\w+", line):
+        # a backticked token is not enough -- "`10ms`" is a metric, not a test
+        if not re.search(r"\btest[_a-zA-Z0-9]*\b|::|\b\w+_test\b|\btests?/", line, re.I):
             findings.append(f"acceptance criterion names no test: {line.strip()}")
 
     failed = [f for f in findings if not f.startswith("ok:")]
@@ -290,9 +322,15 @@ def ensure_worktree(project: Path, meta: dict, cfg: dict) -> Path | None:
     if wt.is_dir():
         return wt
     wt.parent.mkdir(parents=True, exist_ok=True)
-    code, out = run_cmd(
-        f"git worktree add -B {meta['branch']} {shlex.quote(str(wt))} "
-        f"{cfg.get('base', 'main')}", project)
+    branch = shlex.quote(meta["branch"])
+    rc, _ = run_cmd(f"git rev-parse --verify --quiet {branch}", project)
+    branch_exists = rc == 0
+    # Never `-B`: it RESETS the branch to base, so re-creating a worktree after
+    # a resume would silently discard every commit the ticket already made.
+    add = (f"git worktree add {shlex.quote(str(wt))} {branch}" if branch_exists else
+           f"git worktree add -b {branch} {shlex.quote(str(wt))} "
+           f"{shlex.quote(str(cfg.get('base', 'main')))}")
+    code, out = run_cmd(add, project)
     if code:
         print(f"  worktree failed for {meta['id']}: {out.strip()[:300]}")
         return None
@@ -386,13 +424,29 @@ def spawn(project: Path, wt: Path, tid: str, stage: str, hcfg: dict) -> dict:
             "log": log, "stage": stage, "wt": wt}
 
 
-def read_result(project: Path, tid: str) -> dict | None:
-    p = tickets_dir(project) / f"{tid}.result"
+def result_file(project: Path, tid: str) -> Path:
+    return tickets_dir(project) / f"{tid}.result"
+
+
+def read_result(project: Path, tid: str, keep: bool = False) -> dict | None:
+    p = result_file(project, tid)
     if not p.is_file():
         return None
-    data = yaml.safe_load(p.read_text()) or {}
-    p.unlink()
+    try:
+        data = yaml.safe_load(p.read_text()) or {}
+    except yaml.YAMLError:
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    if not keep:
+        p.unlink()
+    # L7: the verdict stays on disk until it has actually been acted on, so a
+    # crash between reading and applying it does not lose the stage's work
     return data
+
+
+def drop_result(project: Path, tid: str) -> None:
+    result_file(project, tid).unlink(missing_ok=True)
 
 
 def tree_snapshot(project: Path) -> str:
@@ -459,6 +513,11 @@ def advance(project: Path, path: Path, meta: dict, body: str, result: str, note:
     print(f"  {path.stem}: -> {nxt} {counters}")
 
 
+# Frontmatter the dispatcher owns outright. An agent that changes any of these
+# has broken the contract, and the ticket is escalated rather than trusted.
+CONTROL_FIELDS = {"id", "stage", "class", "branch", "counters", "lease",
+                  "approved_by", "approved_at"}
+
 # Which stage is allowed to set which frontmatter field. Without this any
 # stage could rewrite `files_declared` -- a reviewer shrinking the set would
 # silently unblock a ticket that overlaps one already in flight.
@@ -483,45 +542,59 @@ def files_conflict(meta: dict, inflight_meta: list[dict]) -> bool:
     return any(mine & set(o.get("files_declared") or []) for o in inflight_meta)
 
 
-def start(project: Path, path: Path, hcfg: dict, inflight: dict) -> dict | None:
-    """Try to move one ticket forward. Returns an in-flight record if an agent
-    was launched, None if the ticket was handled synchronously or skipped."""
+def start(project: Path, path: Path, hcfg: dict, inflight: dict) -> tuple[bool, dict | None]:
+    """Try to move one ticket forward.
+
+    Returns (did_work, record). `did_work` is True for a synchronous advance as
+    well as a spawn -- `--once` drains the queue, and a pass that only advanced
+    `new -> triage` has still done work worth looping on.
+    """
     meta, body = load_ticket(path)
     stage = meta.get("stage", "new")
     tid = meta["id"]
 
+    bad = validate_meta(meta)
+    if bad and stage not in TERMINAL:
+        escalate(path, meta, body, "unusable frontmatter: " + "; ".join(bad))
+        return True, None
+
     if stage in HUMAN_GATES:
-        return None
+        return False, None
 
     if stage in TERMINAL:
-        if worktree(project, meta).is_dir():
+        # an escalated ticket keeps its worktree: the uncommitted state is the
+        # evidence the human was escalated to look at
+        if stage in CLEANUP_STAGES and worktree(project, meta).is_dir():
             drop_worktree(project, meta)
             print(f"  cleaned worktree for {tid} ({stage})")
-        return None
+            return True, None
+        return False, None
 
     if lease_active(meta):
-        return None
+        return False, None
 
     if (meta.get("lease") or {}).get("expires"):  # expired -> crash recovery
         n = meta.get("counters", {}).get("lease_expiries", 0) + 1
         meta.setdefault("counters", {})["lease_expiries"] = n
         if n >= MAX_ATTEMPTS:
             escalate(path, meta, body, "lease expired twice")
-            return None
+            return True, None
         body = append_thread(body, f"lease expired, respawning `{stage}` fresh (expiry {n})")
+        meta["lease"] = {"holder": None, "expires": None}
+        save_ticket(path, meta, body)  # persist now: later returns skip the save
 
     if stage == "new":
         advance(project, path, meta, body, "new", "dispatcher pickup")
-        return None
+        return True, None
 
     if files_conflict(meta, [r["meta"] for r in inflight.values()]):
-        return None  # wait, do not fail -- cheap ordering without a scheduler
+        return False, None  # wait, do not fail -- cheap ordering without a scheduler
 
     cfg = project_config(project)
     wt = ensure_worktree(project, meta, cfg)
     if wt is None:
         escalate(path, meta, body, "could not create a worktree")
-        return None
+        return True, None
 
     if stage == "verifying":
         # ponytail: run inline. A slow suite stalls the loop; move it to the
@@ -529,7 +602,7 @@ def start(project: Path, path: Path, hcfg: dict, inflight: dict) -> dict | None:
         code, out = run_cmd(cfg["test_suite"], wt)
         advance(project, path, meta, body, "ok" if code == 0 else "fail",
                 f"regression suite exit {code}\n```\n{out[-1500:]}\n```")
-        return None
+        return True, None
 
     if stage == "plan-validation":
         ok, failures = gate(project, tid, wt)
@@ -537,19 +610,21 @@ def start(project: Path, path: Path, hcfg: dict, inflight: dict) -> dict | None:
             meta, body = load_ticket(path)  # gate wrote its findings to the thread
             advance(project, path, meta, body, "fail",
                     "Tier A gate failed:\n" + "\n".join(f"- {f}" for f in failures))
-            return None
+            return True, None
         meta, body = load_ticket(path)
 
     meta["lease"] = {"holder": f"{stage}-{os.getpid()}",
                      "expires": (now() + timedelta(minutes=LEASE_MINUTES)).isoformat()}
     save_ticket(path, meta, body)
 
+    before = tree_snapshot(wt) if is_readonly(stage) else None  # before Popen
+    drop_result(project, tid)  # L3: never let a previous run's verdict be reused
     rec = spawn(project, wt, tid, stage, hcfg)
     rec["path"] = path
     rec["tid"] = tid
     rec["meta"] = meta
-    rec["before"] = tree_snapshot(wt) if is_readonly(stage) else None
-    return rec
+    rec["before"] = before
+    return True, rec
 
 
 def finish(project: Path, rec: dict) -> None:
@@ -560,13 +635,29 @@ def finish(project: Path, rec: dict) -> None:
     path, tid, stage = rec["path"], rec["tid"], rec["stage"]
     session, log, wt = rec["session"], rec["log"], rec["wt"]
 
-    res = read_result(project, tid)
-    meta, body = load_ticket(path)
+    res = read_result(project, tid, keep=True)
+    agent_meta, body = load_ticket(path)
+
+    # The agent had write access to this file. Its prose sections are its own;
+    # its frontmatter is not. Every control field is restored from the snapshot
+    # taken before the spawn, so "an agent never writes `stage`" is enforced by
+    # the dispatcher rather than requested in a prompt.
+    meta = dict(rec["meta"])
+    tampered = {k: v for k, v in agent_meta.items()
+                if k in CONTROL_FIELDS and v != meta.get(k)}
+
     body = append_thread(body, f"`{stage}` ran as session `{session}`\n"
                                f"- replay: `claude --resume {session}`\n"
                                f"- log: `{log.relative_to(project)}`")
     meta["last_session"] = {"stage": stage, "id": session,
                             "log": str(log.relative_to(project))}
+
+    if tampered:
+        drop_result(project, tid)
+        escalate(path, meta, body,
+                 f"`{stage}` edited dispatcher-owned frontmatter: "
+                 + ", ".join(f"{k}={v!r}" for k, v in tampered.items()))
+        return
 
     if rec["before"] is not None and tree_snapshot(wt) != rec["before"]:
         escalate(path, meta, body,
@@ -574,13 +665,29 @@ def finish(project: Path, rec: dict) -> None:
         return
 
     if res is None:
+        # L4: a harness that dies before writing a result must not respawn
+        # forever. Same budget as every other bounded loop.
+        n = (meta.get("counters") or {}).get("no_result", 0) + 1
+        meta.setdefault("counters", {})["no_result"] = n
+        if n >= MAX_ATTEMPTS:
+            escalate(path, meta, body,
+                     f"`{stage}` wrote no .result sidecar {n} times")
+            return
         meta["lease"] = {"holder": None, "expires": None}
         save_ticket(path, meta, append_thread(
-            body, f"`{stage}` wrote no .result sidecar -- will respawn"))
+            body, f"`{stage}` wrote no .result sidecar (attempt {n}) -- will respawn"))
         return
 
     apply_claims(meta, stage, res)
+    bad = validate_meta(meta)
+    if bad:
+        drop_result(project, tid)
+        escalate(path, meta, body, "`.result` claimed an unusable value: "
+                 + "; ".join(bad))
+        return
+    meta["counters"] = {**(meta.get("counters") or {}), "no_result": 0}
     save_ticket(path, meta, body)
+    drop_result(project, tid)
 
     advance(project, path, meta, body, res.get("result", "fail"), res.get("summary", ""))
 
@@ -588,8 +695,41 @@ def finish(project: Path, rec: dict) -> None:
 def reap(project: Path, inflight: dict) -> bool:
     done = [tid for tid, rec in inflight.items() if rec["proc"].poll() is not None]
     for tid in done:
-        finish(project, inflight.pop(tid))
+        rec = inflight.pop(tid)
+        try:
+            finish(project, rec)
+        except Exception as e:
+            # one unparseable ticket must not take the dispatcher down and
+            # strand every other agent's lease for 30 minutes
+            print(f"  {tid}: finish failed ({e.__class__.__name__}: {e})")
     return bool(done)
+
+
+def shut_down(project: Path, inflight: dict) -> None:
+    """Terminate children and release their leases. Without this an interrupted
+    dispatcher leaves agents writing into worktrees it no longer tracks, and the
+    lease expiry later spawns a SECOND agent onto the same stage."""
+    for tid, rec in list(inflight.items()):
+        proc = rec["proc"]
+        if proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+        rec["fh"].close()
+        rec["prompt"].unlink(missing_ok=True)
+        if rec.get("settings"):
+            rec["settings"].unlink(missing_ok=True)
+        try:
+            meta, body = load_ticket(rec["path"])
+            meta["lease"] = {"holder": None, "expires": None}
+            save_ticket(rec["path"], meta, append_thread(
+                body, f"`{rec['stage']}` was interrupted; lease released"))
+        except Exception:
+            pass
+        print(f"  stopped {tid} ({rec['stage']})")
+    inflight.clear()
 
 
 def run(project: Path, once: bool, interval: int, harness_name: str,
@@ -598,21 +738,37 @@ def run(project: Path, once: bool, interval: int, harness_name: str,
     anything except its own bounded stage."""
     hcfg = harness(harness_name)
     inflight: dict[str, dict] = {}
-    while True:
-        worked = reap(project, inflight)
-        for path in all_tickets(project):
-            if len(inflight) >= max_parallel:
-                break
-            meta, _ = load_ticket(path)
-            if meta["id"] in inflight:
-                continue
-            rec = start(project, path, hcfg, inflight)
-            worked = True if rec else worked
-            if rec:
-                inflight[rec["tid"]] = rec
-        if once and not inflight and not worked:
-            return  # --once drains the queue, it does not do a single pass
-        time.sleep(1 if inflight else interval)
+    stopping = False
+
+    def on_signal(signum, _frame):
+        nonlocal stopping
+        stopping = True
+        print(f"\n  signal {signum}: stopping, releasing {len(inflight)} lease(s)")
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        signal.signal(sig, on_signal)
+
+    try:
+        while not stopping:
+            worked = reap(project, inflight)
+            for path in all_tickets(project):
+                if stopping or len(inflight) >= max_parallel:
+                    break
+                try:
+                    meta, _ = load_ticket(path)
+                except Exception as e:
+                    print(f"  skipping {path.name}: {e}")  # loudly, not silently
+                    continue
+                if meta.get("id") in inflight:
+                    continue
+                did_work, rec = start(project, path, hcfg, inflight)
+                worked = worked or did_work
+                if rec:
+                    inflight[rec["tid"]] = rec
+            if once and not inflight and not worked:
+                return  # --once drains the queue, it does not do a single pass
+            time.sleep(1 if inflight else interval)
+    finally:
+        shut_down(project, inflight)
 
 
 # --------------------------------------------------------------------------
@@ -644,7 +800,12 @@ def cmd_new(args) -> None:
 
 
 def cmd_gate(args) -> None:
-    ok, failures = gate(Path(args.project).resolve(), args.id)
+    project = Path(args.project).resolve()
+    meta, _ = load_ticket(ticket_path(project, args.id))
+    wt = worktree(project, meta)
+    # the ticket's test lives on its branch; running in the main checkout would
+    # report a bogus "test file does not exist" straight into the thread
+    ok, failures = gate(project, args.id, wt if wt.is_dir() else None)
     for f in failures:
         print(f"FAIL: {f}")
     print("gate: PASS" if ok else "gate: FAIL")
@@ -680,6 +841,8 @@ def cmd_resume(args) -> None:
     project = Path(args.project).resolve()
     path = ticket_path(project, args.id)
     meta, body = load_ticket(path)
+    if args.stage not in KNOWN_STAGES:
+        die(f"`{args.stage}` is not a stage: {', '.join(sorted(KNOWN_STAGES))}")
     meta["stage"] = args.stage
     for key in args.reset or []:
         meta.setdefault("counters", {})[key] = 0

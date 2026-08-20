@@ -81,18 +81,28 @@ run the loop under systemd or tmux, which already solve supervision.
 0. **No agent waits on another agent.** The dispatcher launches and returns;
    `reap()` collects finished processes on the next tick. A stage that hangs
    burns its own lease and nothing else.
-1. **An agent never writes `stage`.** It writes `.project/tickets/<ID>.result`
-   with `result: ok|fail|blocked|rejected`; `transition()` maps that to the next
-   stage. An agent cannot skip a gate or escape a bound because it has no way to
-   name one. An unrecognised result escalates rather than guessing.
+1. **An agent never writes `stage` — enforced, not requested.** It writes
+   `.project/tickets/<ID>.result` with `result: ok|fail|blocked|rejected`;
+   `transition()` maps that to the next stage. The agent *can* edit the ticket
+   file, so the dispatcher restores every control field (`stage`, `counters`,
+   `branch`, `lease`, …) from a snapshot taken before the spawn, and escalates
+   the ticket if any of them changed. An unrecognised result escalates rather
+   than guessing.
    It also cannot rewrite a field it does not own: only `triage` sets
    `test_file`, only `planning` sets `files_declared` (implementation may add to
    it, never shrink it). Otherwise a reviewer could shrink the declared set and
    unblock a ticket that overlaps one already in flight.
 2. **Read-only stages are checked, not trusted.** The dispatcher snapshots the
-   tree before a review stage and escalates if it changed. This catches an edit
-   made through Bash, which a tool allowlist does not.
-3. **The regression suite is run by the dispatcher.** `verifying` has no agent
+   tree before starting the process and escalates if it changed. On top of that
+   the guard hook gives read-only stages an *allowlist* — git read subcommands,
+   test runners, grep and friends — so a bypass needs a hole in a short list of
+   permitted programs, not a gap between blocked patterns.
+3. **Every value that reaches a shell is validated and quoted.** `id`, `branch`,
+   `test_file` and `files_declared` all live in a file an agent can write and all
+   end up in shell commands, so they are pattern-checked on the way in
+   (`validate_meta`) and `shlex.quote`d on the way out. A ticket that fails
+   validation is escalated, never executed.
+4. **The regression suite is run by the dispatcher.** `verifying` has no agent
    at all -- a test result should never pass through a model's mouth.
 
 ## Layout
@@ -122,9 +132,18 @@ actually belongs.
 
     ./test_pipeline.py
 
-Covers the transition table's bounds, gate rejections, and the two traps found
-while building it: the dispatcher's own venv shadowing the project's, and a test
-that *errors* (missing dependency) being indistinguishable from one that fails.
+Covers the transition table's bounds, gate rejections, worktree lifecycle,
+frontmatter validation, the guard's allowlist, and every bypass an adversarial
+review found — including the two traps from the build itself: the dispatcher's
+own venv shadowing the project's, and a test that *errors* (missing dependency)
+being indistinguishable from one that fails.
+
+## Interrupting it
+
+`Ctrl-C` / `SIGTERM` terminates every in-flight agent, releases its lease, notes
+the interruption in the ticket, and cleans up temp files. Without that the
+orphaned agent keeps writing while its lease expires, and the dispatcher spawns a
+second agent onto the same stage in the same worktree.
 
 ## Not built yet
 

