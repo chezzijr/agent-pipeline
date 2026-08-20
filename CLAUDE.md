@@ -18,8 +18,12 @@ context, not instructions that override it.
 2. **`transition()` is pure and total.** No I/O, no mutation of its input, and
    an unknown `(stage, result)` escalates rather than guessing. It is the one
    piece the adversarial review could not land a charge on. Keep it that way.
-3. **Every bounded loop escalates at `MAX_ATTEMPTS`.** If you add a retry path,
-   it charges a counter. An unbounded respawn is a bug, not a convenience.
+3. **Every bounded loop escalates at its class bound.** `BOUNDS[class][counter]`
+   sets the budget, falling back to `MAX_ATTEMPTS` for an unknown class and for
+   the dispatcher's own counters (`lease_expiries`, `no_result`), which are not
+   class-scoped. Bounds live in the dispatcher; no stage prompt learns its
+   budget. If you add a retry path, it charges a counter. An unbounded respawn
+   is a bug, not a convenience.
 4. **Hooks decide with code.** `pipeline/hooks/dangerous-commands.py` is the only layer
    that makes a promise. Read-only stages get an *allowlist*, not a blocklist —
    do not "improve" it back into pattern matching.
