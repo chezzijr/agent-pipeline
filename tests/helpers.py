@@ -20,6 +20,7 @@ lease: {holder: null, expires: null}
 x
 ## Reproduction
 fails
+expect: test_broken
 ## Digest
 thing.py holds it
 ## Decisions checked
