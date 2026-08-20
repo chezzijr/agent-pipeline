@@ -28,9 +28,17 @@ Fill in these sections:
   say "none relevant" and list the grep terms you used. Something in this
   codebase may exist deliberately (a workaround, a flush, an extra copy);
   removing it without knowing why is the failure this section prevents.
-- `## Plan` -- ordered steps. Every step names its target files and concrete
-  functions. A step that says "investigate X" is a planning failure: do the
-  investigation now.
+- `## Plan` -- an ordered, numbered step list (`1.`, `2.`, ...; the gate parses
+  a leading `N.` or `N)`). Every step names its target files -- spell out the
+  path (e.g. `pipeline/core/machine.py`), not just the function -- and each
+  path must be one you also put in `files_declared`, since Tier A checks every
+  step cites at least one declared path by substring match. Write each step on
+  a single line -- do not let an editor or your own wrapping split a step, and
+  especially not a file path, across a line break; the gate only recognizes a
+  wrapped continuation if it is indented under the step it continues, and a
+  plain unindented wrap reads as prose and fails the step outright. A step
+  that says "investigate X" is a planning failure: do the investigation now.
+  Prose paragraphs instead of numbered steps fail Tier A outright.
 - `## Acceptance criteria` -- each one falsifiable and mapped to a named test.
 - `## Rollback` -- what to revert if this ships and breaks.
 

@@ -15,6 +15,15 @@ REQUIRED_SECTIONS = [
 ]
 
 
+def _cites(text: str, path: str) -> bool:
+    """Does `text` name `path`? Substring match, but anchored at a
+    non-path/non-word boundary on both sides -- a plain `path in text` lets a
+    short declared file (`io.py`) be "cited" by an unrelated one that merely
+    contains it (`ratio.py`, `delegate.py` for `gate.py`)."""
+    pat = r"(?<![\w./-])" + re.escape(path) + r"(?![\w-])"
+    return re.search(pat, text) is not None
+
+
 def gate(project: Path, tid: str, workdir: Path | None = None) -> tuple[bool, list[str]]:
     """Tier A checks, run in the ticket's checkout. Returns (passed, findings)."""
     path = ticket_path(project, tid)
@@ -93,6 +102,41 @@ def gate(project: Path, tid: str, workdir: Path | None = None) -> tuple[bool, li
 
     if not t.files_declared:
         findings.append("`files_declared` is empty")
+
+    # `## Plan` must be an ordered step list, not judgment-graded prose --
+    # `files_conflict()` trusts `files_declared`, and a plan that never says
+    # which file each step touches is the plan that produced an untrustworthy
+    # declaration in the first place. An empty `## Plan` is already caught by
+    # REQUIRED_SECTIONS above; skip this check rather than double-report it.
+    plan = secs.get("Plan", "")
+    if plan.strip():
+        steps: list[str] = []
+        in_step = False
+        for raw in plan.splitlines():
+            line = raw.rstrip()
+            if not line.strip():
+                continue
+            if re.match(r"^\s*\d+[.)]", line):
+                steps.append(line.strip())
+                in_step = True
+            elif in_step and re.match(r"^\s+\S", line):
+                # a continuation of the previous step, not a step of its own
+                steps[-1] += " " + line.strip()
+            else:
+                # body text an agent wrote -- repr(), not backtick-quoted, so a
+                # backtick or newline in it cannot corrupt the finding's fence
+                findings.append(
+                    "plan line is not a numbered step -- the plan reads as "
+                    f"prose: {line.strip()!r}")
+                if not any(_cites(line, p) for p in t.files_declared):
+                    findings.append(
+                        f"plan line names no declared file: {line.strip()!r}")
+                in_step = False
+        if not steps:
+            findings.append("`## Plan` has zero numbered steps")
+        for s in steps:
+            if not any(_cites(s, p) for p in t.files_declared):
+                findings.append(f"plan step names no declared file: {s!r}")
 
     crit = secs.get("Acceptance criteria", "")
     for line in [l for l in crit.splitlines() if l.strip().startswith(("-", "*"))]:

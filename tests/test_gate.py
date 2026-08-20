@@ -21,6 +21,37 @@ def test_gate_blocks_an_empty_digest():
     shutil.rmtree(d)
 
 
+def test_gate_blocks_a_plan_of_prose():
+    """Today this PASSES -- prose paragraphs sail through Tier A untouched."""
+    d = project(FIXTURE.replace(
+        "## Plan\n1. fix thing.py\n",
+        "## Plan\nWe will refactor the cache and then fix the eviction bug.\n"))
+    ok, failures = gate(d, "TICKET-001")
+    assert not ok
+    assert any("names no declared file" in f for f in failures), failures
+    shutil.rmtree(d)
+
+
+def test_gate_blocks_a_plan_step_citing_an_undeclared_path():
+    d = project(FIXTURE.replace("1. fix thing.py", "1. fix other.py"))
+    ok, failures = gate(d, "TICKET-001")
+    assert not ok
+    assert any("names no declared file" in f for f in failures), failures
+    shutil.rmtree(d)
+
+
+def test_gate_blocks_a_plan_step_whose_only_match_is_an_accidental_substring():
+    """`io.py` must not be satisfied by a step that only mentions `ratio.py`
+    -- a naive `path in step_text` lets an unrelated file "cite" a declared
+    one just because its name happens to contain it."""
+    d = project(FIXTURE.replace("files_declared: [thing.py]", "files_declared: [io.py]")
+                        .replace("1. fix thing.py", "1. fix ratio.py"))
+    ok, failures = gate(d, "TICKET-001")
+    assert not ok
+    assert any("names no declared file" in f for f in failures), failures
+    shutil.rmtree(d)
+
+
 def test_gate_blocks_a_test_that_already_passes():
     d = project(test_passes=True)
     ok, failures = gate(d, "TICKET-001")
