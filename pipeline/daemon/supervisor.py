@@ -6,7 +6,7 @@ import signal
 import subprocess
 import time
 import uuid
-from datetime import datetime, timedelta
+from dataclasses import replace
 from pathlib import Path
 
 from pipeline.core import PipelineError
@@ -16,41 +16,39 @@ from pipeline.core.gate import gate
 from pipeline.core.machine import (CLEANUP_STAGES, CONTROL_FIELDS, HUMAN_GATES,
                                    MAX_ATTEMPTS, TERMINAL, apply_claims,
                                    files_conflict, transition)
-from pipeline.core.ticket import (LEASE_MINUTES, all_tickets, append_thread,
-                                  drop_result, load_ticket, now, read_result,
-                                  record_decision, save_ticket, ticket_path,
+from pipeline.core.ticket import (Ticket, all_tickets, drop_result,
+                                  read_result, record_decision, ticket_path,
                                   tickets_dir, validate_meta)
 from pipeline.core.worktree import (drop_worktree, ensure_worktree,
                                     project_env, run_cmd, tree_snapshot,
                                     worktree)
 
 
-def lease_active(meta: dict) -> bool:
-    exp = (meta.get("lease") or {}).get("expires")
-    return bool(exp) and now() < datetime.fromisoformat(exp)
+def escalate(t: Ticket, reason: str) -> None:
+    t.append(t.stage, "escalation", reason)
+    t.stage = "escalated"
+    t.release_lease()  # a human must be able to resume
+    # the one unvalidated write: unusable frontmatter is itself a reason to
+    # escalate, and refusing that write would leave the ticket un-quarantined
+    t.save(validate=False)
+    print(f"  {t.path.stem}: -> escalated ({reason})")
 
 
-def escalate(path: Path, meta: dict, body: str, reason: str) -> None:
-    meta["stage"] = "escalated"
-    meta["lease"] = {"holder": None, "expires": None}  # a human must be able to resume
-    save_ticket(path, meta, append_thread(body, f"**escalated**: {reason}"))
-    print(f"  {path.stem}: -> escalated ({reason})")
-
-
-def advance(project: Path, path: Path, meta: dict, body: str, result: str, note: str) -> None:
-    nxt, counters = transition(meta["stage"], result, meta.get("counters") or {},
-                               meta.get("class", "bugfix"))
-    body = append_thread(body, f"**{meta['stage']} -> {nxt}** (result: `{result}`)\n\n{note}")
+def advance(project: Path, t: Ticket, result: str, note: str) -> None:
+    stage = t.stage
+    nxt, counters = transition(stage, result, t.counters, t.klass)
+    t.append(stage, "transition", f"**{stage} -> {nxt}** (result: `{result}`)\n\n{note}",
+             to=nxt, result=result)
     if nxt == "done":
-        did = record_decision(project, meta, body)
-        body = append_thread(body, f"decision recorded as `{did}`" if did else
-                             "no `## Decisions` section -- nothing recorded for "
-                             "future planning agents to find")
-    meta["counters"] = counters
-    meta["stage"] = nxt
-    meta["lease"] = {"holder": None, "expires": None}
-    save_ticket(path, meta, body)
-    print(f"  {path.stem}: -> {nxt} {counters}")
+        did = record_decision(project, t)
+        t.append(stage, "decision", f"decision recorded as `{did}`" if did else
+                 "no `## Decisions` section -- nothing recorded for "
+                 "future planning agents to find")
+    t.counters = counters
+    t.stage = nxt
+    t.release_lease()
+    t.save()
+    print(f"  {t.path.stem}: -> {nxt} {counters}")
 
 
 def spawn(project: Path, wt: Path, tid: str, stage: str, hcfg: dict) -> dict:
@@ -101,13 +99,12 @@ def start(project: Path, path: Path, hcfg: dict, inflight: dict) -> tuple[bool, 
     well as a spawn -- `--once` drains the queue, and a pass that only advanced
     `new -> triage` has still done work worth looping on.
     """
-    meta, body = load_ticket(path)
-    stage = meta.get("stage", "new")
-    tid = meta["id"]
+    t = Ticket.load(path)
+    stage, tid = t.stage, t.id
 
-    bad = validate_meta(meta)
+    bad = t.errors()
     if bad and stage not in TERMINAL:
-        escalate(path, meta, body, "unusable frontmatter: " + "; ".join(bad))
+        escalate(t, "unusable frontmatter: " + "; ".join(bad))
         return True, None
 
     if stage in HUMAN_GATES:
@@ -116,30 +113,31 @@ def start(project: Path, path: Path, hcfg: dict, inflight: dict) -> tuple[bool, 
     if stage in TERMINAL:
         # an escalated ticket keeps its worktree: the uncommitted state is the
         # evidence the human was escalated to look at
-        if stage in CLEANUP_STAGES and worktree(project, meta).is_dir():
-            drop_worktree(project, meta)
+        if stage in CLEANUP_STAGES and worktree(project, t.frontmatter()).is_dir():
+            drop_worktree(project, t.frontmatter())
             print(f"  cleaned worktree for {tid} ({stage})")
             return True, None
         return False, None
 
-    if lease_active(meta):
+    if t.lease_active():
         return False, None
 
-    if (meta.get("lease") or {}).get("expires"):  # expired -> crash recovery
-        n = meta.get("counters", {}).get("lease_expiries", 0) + 1
-        meta.setdefault("counters", {})["lease_expiries"] = n
+    if (t.lease or {}).get("expires"):  # expired -> crash recovery
+        n = t.counters.get("lease_expiries", 0) + 1
+        t.counters["lease_expiries"] = n
         if n >= MAX_ATTEMPTS:
-            escalate(path, meta, body, "lease expired twice")
+            escalate(t, "lease expired twice")
             return True, None
-        body = append_thread(body, f"lease expired, respawning `{stage}` fresh (expiry {n})")
-        meta["lease"] = {"holder": None, "expires": None}
-        save_ticket(path, meta, body)  # persist now: later returns skip the save
+        t.append(stage, "note", f"lease expired, respawning `{stage}` fresh (expiry {n})")
+        t.release_lease()
+        t.save()  # persist now: later returns skip the save
 
     if stage == "new":
-        advance(project, path, meta, body, "new", "dispatcher pickup")
+        advance(project, t, "new", "dispatcher pickup")
         return True, None
 
-    if files_conflict(meta, [r["meta"] for r in inflight.values()]):
+    if files_conflict(t.frontmatter(),
+                      [r["meta"].frontmatter() for r in inflight.values()]):
         return False, None  # wait, do not fail -- cheap ordering without a scheduler
 
     try:
@@ -147,40 +145,38 @@ def start(project: Path, path: Path, hcfg: dict, inflight: dict) -> tuple[bool, 
     except PipelineError as e:
         # one unconfigured project must not take the loop -- and every other
         # ticket's agent -- down with it
-        escalate(path, meta, body, str(e))
+        escalate(t, str(e))
         return True, None
-    wt = ensure_worktree(project, meta, cfg)
+    wt = ensure_worktree(project, t.frontmatter(), cfg)
     if wt is None:
-        escalate(path, meta, body, "could not create a worktree")
+        escalate(t, "could not create a worktree")
         return True, None
 
     if stage == "verifying":
         # ponytail: run inline. A slow suite stalls the loop; move it to the
         # in-flight table like an agent if that ever bites.
         code, out = run_cmd(cfg["test_suite"], wt)
-        advance(project, path, meta, body, "ok" if code == 0 else "fail",
+        advance(project, t, "ok" if code == 0 else "fail",
                 f"regression suite exit {code}\n```\n{out[-1500:]}\n```")
         return True, None
 
     if stage == "plan-validation":
         ok, failures = gate(project, tid, wt)
+        t = Ticket.load(path)  # the gate wrote its findings to the thread
         if not ok:
-            meta, body = load_ticket(path)  # gate wrote its findings to the thread
-            advance(project, path, meta, body, "fail",
+            advance(project, t, "fail",
                     "Tier A gate failed:\n" + "\n".join(f"- {f}" for f in failures))
             return True, None
-        meta, body = load_ticket(path)
 
-    meta["lease"] = {"holder": f"{stage}-{os.getpid()}",
-                     "expires": (now() + timedelta(minutes=LEASE_MINUTES)).isoformat()}
-    save_ticket(path, meta, body)
+    t.take_lease(f"{stage}-{os.getpid()}")
+    t.save()
 
     before = tree_snapshot(wt) if is_readonly(stage) else None  # before Popen
     drop_result(project, tid)  # L3: never let a previous run's verdict be reused
     rec = spawn(project, wt, tid, stage, hcfg)
     rec["path"] = path
     rec["tid"] = tid
-    rec["meta"] = meta
+    rec["meta"] = t   # the pre-spawn snapshot: control fields come back from here
     rec["before"] = before
     return True, rec
 
@@ -194,60 +190,63 @@ def finish(project: Path, rec: dict) -> None:
     session, log, wt = rec["session"], rec["log"], rec["wt"]
 
     res = read_result(project, tid, keep=True)
-    agent_meta, body = load_ticket(path)
+    agent = Ticket.load(path)
 
     # The agent had write access to this file. Its prose sections are its own;
-    # its frontmatter is not. Every control field is restored from the snapshot
-    # taken before the spawn, so "an agent never writes `stage`" is enforced by
-    # the dispatcher rather than requested in a prompt.
-    meta = dict(rec["meta"])
-    tampered = {k: v for k, v in agent_meta.items()
-                if k in CONTROL_FIELDS and v != meta.get(k)}
+    # its frontmatter is not. Every field is restored from the snapshot taken
+    # before the spawn, so "an agent never writes `stage`" is enforced by the
+    # dispatcher rather than requested in a prompt.
+    snap = rec["meta"]
+    owned = snap.frontmatter()
+    tampered = {k: v for k, v in agent.frontmatter().items()
+                if k in CONTROL_FIELDS and v != owned.get(k)}
+    t = replace(snap, body=agent.body)
 
-    body = append_thread(body, f"`{stage}` ran as session `{session}`\n"
+    t.append(stage, "session", f"`{stage}` ran as session `{session}`\n"
                                f"- replay: `claude --resume {session}`\n"
-                               f"- log: `{log.relative_to(project)}`")
-    meta["last_session"] = {"stage": stage, "id": session,
-                            "log": str(log.relative_to(project))}
+                               f"- log: `{log.relative_to(project)}`", session=session)
+    t.extra["last_session"] = {"stage": stage, "id": session,
+                               "log": str(log.relative_to(project))}
 
     if tampered:
         drop_result(project, tid)
-        escalate(path, meta, body,
-                 f"`{stage}` edited dispatcher-owned frontmatter: "
-                 + ", ".join(f"{k}={v!r}" for k, v in tampered.items()))
+        escalate(t, f"`{stage}` edited dispatcher-owned frontmatter: "
+                    + ", ".join(f"{k}={v!r}" for k, v in tampered.items()))
         return
 
     if rec["before"] is not None and tree_snapshot(wt) != rec["before"]:
-        escalate(path, meta, body,
-                 f"read-only stage `{stage}` modified the working tree")
+        escalate(t, f"read-only stage `{stage}` modified the working tree")
         return
 
     if res is None:
         # L4: a harness that dies before writing a result must not respawn
         # forever. Same budget as every other bounded loop.
-        n = (meta.get("counters") or {}).get("no_result", 0) + 1
-        meta.setdefault("counters", {})["no_result"] = n
+        n = t.counters.get("no_result", 0) + 1
+        t.counters["no_result"] = n
         if n >= MAX_ATTEMPTS:
-            escalate(path, meta, body,
-                     f"`{stage}` wrote no .result sidecar {n} times")
+            escalate(t, f"`{stage}` wrote no .result sidecar {n} times")
             return
-        meta["lease"] = {"holder": None, "expires": None}
-        save_ticket(path, meta, append_thread(
-            body, f"`{stage}` wrote no .result sidecar (attempt {n}) -- will respawn"))
+        t.release_lease()
+        t.append(stage, "note",
+                 f"`{stage}` wrote no .result sidecar (attempt {n}) -- will respawn")
+        t.save()
         return
 
-    apply_claims(meta, stage, res)
-    bad = validate_meta(meta)
+    # claims are validated BEFORE they are adopted: a hostile `test_file` in a
+    # sidecar must never reach the ticket file, escalated or not
+    claimed = t.frontmatter()
+    apply_claims(claimed, stage, res)
+    bad = validate_meta(claimed)
     if bad:
         drop_result(project, tid)
-        escalate(path, meta, body, "`.result` claimed an unusable value: "
-                 + "; ".join(bad))
+        escalate(t, "`.result` claimed an unusable value: " + "; ".join(bad))
         return
-    meta["counters"] = {**(meta.get("counters") or {}), "no_result": 0}
-    save_ticket(path, meta, body)
+    t.test_file, t.files_declared = claimed["test_file"], claimed["files_declared"]
+    t.counters["no_result"] = 0
+    t.save()
     drop_result(project, tid)
 
-    advance(project, path, meta, body, res.get("result", "fail"), res.get("summary", ""))
+    advance(project, t, res.get("result", "fail"), res.get("summary", ""))
 
 
 def reap(project: Path, inflight: dict) -> bool:
@@ -280,10 +279,11 @@ def shut_down(project: Path, inflight: dict) -> None:
         if rec.get("settings"):
             rec["settings"].unlink(missing_ok=True)
         try:
-            meta, body = load_ticket(rec["path"])
-            meta["lease"] = {"holder": None, "expires": None}
-            save_ticket(rec["path"], meta, append_thread(
-                body, f"`{rec['stage']}` was interrupted; lease released"))
+            t = Ticket.load(rec["path"])
+            t.release_lease()
+            t.append(rec["stage"], "note",
+                     f"`{rec['stage']}` was interrupted; lease released")
+            t.save()
         except Exception:
             pass
         print(f"  stopped {tid} ({rec['stage']})")
@@ -312,11 +312,11 @@ def run(project: Path, once: bool, interval: int, harness_name: str,
                 if stopping or len(inflight) >= max_parallel:
                     break
                 try:
-                    meta, _ = load_ticket(path)
+                    tid = Ticket.load(path).id
                 except Exception as e:
                     print(f"  skipping {path.name}: {e}")  # loudly, not silently
                     continue
-                if meta.get("id") in inflight:
+                if tid in inflight:
                     continue
                 did_work, rec = start(project, path, hcfg, inflight)
                 worked = worked or did_work

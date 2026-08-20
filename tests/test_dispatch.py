@@ -11,15 +11,13 @@ from pipeline.daemon import supervisor
 def test_escalation_clears_the_lease_so_a_human_can_resume():
     d = project()
     path = d / ".project/tickets/TICKET-001.md"
-    meta, body = T.load_ticket(path)
-    meta["lease"] = {"holder": "x", "expires": "2999-01-01T00:00:00+00:00"}
-    T.save_ticket(path, meta, body)
-    meta, body = T.load_ticket(path)
-    supervisor.escalate(path, meta, body, "test")
-    meta, _ = T.load_ticket(path)
-    assert meta["stage"] == "escalated"
-    assert not supervisor.lease_active(meta), \
-        "a leased escalated ticket cannot be resumed"
+    t = Ticket.load(path)
+    t.take_lease("x")
+    t.save()
+    supervisor.escalate(Ticket.load(path), "test")
+    t = Ticket.load(path)
+    assert t.stage == "escalated"
+    assert not t.lease_active(), "a leased escalated ticket cannot be resumed"
     shutil.rmtree(d)
 
 
@@ -61,4 +59,31 @@ def test_a_broken_project_config_escalates_one_ticket_not_the_process():
 
     assert did and rec is None
     assert Ticket.load(path).stage == "escalated"
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_an_agent_that_rewrote_stage_is_still_caught():
+    """Invariant 1 through the typed model: control fields come back from the
+    pre-spawn snapshot, and a ticket whose control fields moved is escalated."""
+    d = project()
+    path = d / ".project/tickets/TICKET-001.md"
+    snap = Ticket.load(path)                      # what the dispatcher spawned on
+
+    agent = Ticket.load(path)                     # what the agent left behind
+    agent.stage = "done"
+    agent.body += "\n(prose the agent wrote)\n"
+    agent.save()
+
+    log = d / ".project" / "logs" / "TICKET-001.log"
+    log.parent.mkdir(parents=True, exist_ok=True)
+    T.result_file(d, "TICKET-001").write_text("result: ok\nsummary: fine\n")
+    supervisor.finish(d, {"fh": log.open("w"), "prompt": d / "gone.md",
+                          "settings": None, "path": path, "tid": "TICKET-001",
+                          "stage": "plan-validation", "session": "s1", "log": log,
+                          "wt": d, "meta": snap, "before": None})
+
+    t = Ticket.load(path)
+    assert t.stage == "escalated", "a tampered `stage` was accepted"
+    assert "edited dispatcher-owned frontmatter" in t.thread()[-1].text
+    assert T.read_result(d, "TICKET-001") is None, "the verdict was still applied"
     shutil.rmtree(d, ignore_errors=True)

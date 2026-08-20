@@ -1,10 +1,14 @@
 """The ticket file: what survives a save, what is refused, and the thread."""
+import argparse
 import shutil
 
 from helpers import FIXTURE, project
+from pipeline.cli.main import cmd_approve
 from pipeline.core import PipelineError
 from pipeline.core import ticket as T
+from pipeline.core.gate import gate
 from pipeline.core.ticket import Ticket
+from pipeline.daemon import supervisor
 
 
 def test_unknown_frontmatter_survives_a_save():
@@ -106,8 +110,7 @@ def test_decision_is_recorded_when_a_ticket_lands():
         "## Decisions\nkeep the explicit flush; without it the buffer leaks\n"
         "## Rollback\nrevert"))
     path = d / ".project/tickets/TICKET-001.md"
-    meta, body = T.load_ticket(path)
-    did = T.record_decision(d, meta, body)
+    did = T.record_decision(d, Ticket.load(path))
     text = (d / ".project/decisions" / f"{did}.md").read_text()
     assert "buffer leaks" in text and "TICKET-001" in text, text
     shutil.rmtree(d)
@@ -115,18 +118,50 @@ def test_decision_is_recorded_when_a_ticket_lands():
 
 def test_no_decisions_section_records_nothing():
     d = project()
-    meta, body = T.load_ticket(d / ".project/tickets/TICKET-001.md")
-    assert T.record_decision(d, meta, body) is None
+    t = Ticket.load(d / ".project/tickets/TICKET-001.md")
+    assert T.record_decision(d, t) is None
     shutil.rmtree(d)
 
 
-def test_the_dict_path_still_round_trips():
-    """`load_ticket`/`save_ticket` are what the dispatcher itself writes
-    through; the typed model does not replace them yet."""
+def test_there_is_only_one_writer_path():
+    """Two writers meant validation-on-save was dead code. It is gone."""
+    for name in ("load_ticket", "save_ticket", "append_thread"):
+        assert not hasattr(T, name), f"`{name}` is a second, unvalidated writer path"
+
+
+def test_an_entry_lands_inside_the_thread_not_at_the_end_of_the_file():
+    """`## Thread` is last in today's template by luck, not by contract."""
+    d = project(FIXTURE + "\n## Notes\nhand-written, keep me\n")
+    p = d / ".project/tickets/TICKET-001.md"
+    t = Ticket.load(p)
+    t.append("review", "finding", "belongs in the thread", severity="minor")
+    t.save()
+
+    t = Ticket.load(p)
+    assert "belongs in the thread" in t.section("Thread")
+    assert t.section("Notes") == "hand-written, keep me", t.section("Notes")
+    assert len(t.thread()) == 1 and t.thread()[0].kind == "finding"
+    shutil.rmtree(d)
+
+
+def test_the_dispatcher_writes_typed_thread_entries():
+    """Every entry the dispatcher writes used to read back `note` / `""`, so a
+    later stage had nothing typed to receive."""
     d = project()
     p = d / ".project/tickets/TICKET-001.md"
-    meta, body = T.load_ticket(p)
-    T.save_ticket(p, meta, body)
-    assert T.load_ticket(p) == (meta, body)
-    assert T.sections(body)["Digest"] == "thing.py holds it"
+
+    assert gate(d, "TICKET-001")[0]
+    supervisor.advance(d, Ticket.load(p), "ok", "gate passed")
+    cmd_approve(argparse.Namespace(project=str(d), id="TICKET-001", by="chezzijr"))
+    supervisor.escalate(Ticket.load(p), "a human is needed")
+
+    entries = Ticket.load(p).thread()
+    kinds = {(e.stage, e.kind) for e in entries}
+    assert ("plan-validation", "gate") in kinds, kinds
+    assert ("plan-validation", "transition") in kinds, kinds
+    assert ("human", "approval") in kinds, kinds
+    assert ("implementing", "escalation") in kinds, kinds
+    assert all(e.stage and e.kind != "note" for e in entries), \
+        "a dispatcher write came back freeform"
+    assert next(e for e in entries if e.kind == "gate").attrs["verdict"] == "PASS"
     shutil.rmtree(d)

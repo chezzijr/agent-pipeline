@@ -10,10 +10,9 @@ from pipeline.core import PipelineError
 from pipeline.core.config import CONFIG_TEMPLATE, TICKET_TEMPLATE
 from pipeline.core.gate import gate
 from pipeline.core.machine import HUMAN_GATES, KNOWN_STAGES, TERMINAL
-from pipeline.core.ticket import (all_tickets, append_thread, load_ticket, now,
-                                  save_ticket, ticket_path, tickets_dir)
+from pipeline.core.ticket import Ticket, all_tickets, now, tickets_dir
 from pipeline.core.worktree import worktree
-from pipeline.daemon.supervisor import lease_active, run
+from pipeline.daemon.supervisor import run
 
 STALE_HOURS = 4  # overlap ordering is silent; surface anything sitting still
 
@@ -51,8 +50,7 @@ def cmd_new(args) -> None:
 
 def cmd_gate(args) -> None:
     project = Path(args.project).resolve()
-    meta, _ = load_ticket(ticket_path(project, args.id))
-    wt = worktree(project, meta)
+    wt = worktree(project, Ticket.find(project, args.id).frontmatter())
     # the ticket's test lives on its branch; running in the main checkout would
     # report a bogus "test file does not exist" straight into the thread
     ok, failures = gate(project, args.id, wt if wt.is_dir() else None)
@@ -64,58 +62,57 @@ def cmd_gate(args) -> None:
 
 def cmd_approve(args) -> None:
     project = Path(args.project).resolve()
-    path = ticket_path(project, args.id)
-    meta, body = load_ticket(path)
-    if meta["stage"] != "awaiting-approval":
-        die(f"{args.id} is in `{meta['stage']}`, not `awaiting-approval`")
-    meta["stage"] = "implementing"
-    meta["approved_by"] = args.by or os.environ.get("USER", "unknown")
-    meta["approved_at"] = now().isoformat()
-    save_ticket(path, meta, append_thread(body, f"**approved by {meta['approved_by']}**"))
+    t = Ticket.find(project, args.id)
+    if t.stage != "awaiting-approval":
+        die(f"{args.id} is in `{t.stage}`, not `awaiting-approval`")
+    t.stage = "implementing"
+    t.extra["approved_by"] = args.by or os.environ.get("USER", "unknown")
+    t.extra["approved_at"] = now().isoformat()
+    t.append("human", "approval", f"**approved by {t.extra['approved_by']}**",
+             by=t.extra["approved_by"])
+    t.save()
     print(f"{args.id}: -> implementing")
 
 
 def cmd_answer(args) -> None:
     project = Path(args.project).resolve()
-    path = ticket_path(project, args.id)
-    meta, body = load_ticket(path)
-    if meta["stage"] != "needs-input":
-        die(f"{args.id} is in `{meta['stage']}`, not `needs-input`")
-    meta["stage"] = "planning"
-    save_ticket(path, meta, append_thread(
-        body, f"**answer from {os.environ.get('USER', 'human')}**\n\n{args.text}"))
+    t = Ticket.find(project, args.id)
+    if t.stage != "needs-input":
+        die(f"{args.id} is in `{t.stage}`, not `needs-input`")
+    t.stage = "planning"
+    t.append("human", "answer",
+             f"**answer from {os.environ.get('USER', 'human')}**\n\n{args.text}")
+    t.save()
     print(f"{args.id}: -> planning")
 
 
 def cmd_resume(args) -> None:
     project = Path(args.project).resolve()
-    path = ticket_path(project, args.id)
-    meta, body = load_ticket(path)
     if args.stage not in KNOWN_STAGES:
         die(f"`{args.stage}` is not a stage: {', '.join(sorted(KNOWN_STAGES))}")
-    meta["stage"] = args.stage
+    t = Ticket.find(project, args.id)
+    t.stage = args.stage
     for key in args.reset or []:
-        meta.setdefault("counters", {})[key] = 0
-    meta["lease"] = {"holder": None, "expires": None}
-    save_ticket(path, meta, append_thread(
-        body, f"**resumed** by human -> `{args.stage}`, reset {args.reset or []}"))
+        t.counters[key] = 0
+    t.release_lease()
+    t.append("human", "note",
+             f"**resumed** by human -> `{args.stage}`, reset {args.reset or []}")
+    t.save()
     print(f"{args.id}: -> {args.stage}")
 
 
 def cmd_status(args) -> None:
     for p in all_tickets(Path(args.project).resolve()):
-        meta, _ = load_ticket(p)
-        c = meta.get("counters") or {}
+        t = Ticket.load(p)
         stale = ""
-        if (meta.get("stage") not in TERMINAL | HUMAN_GATES
-                and not lease_active(meta)
+        if (t.stage not in TERMINAL | HUMAN_GATES
+                and not t.lease_active()
                 and now() - datetime.fromtimestamp(p.stat().st_mtime, timezone.utc)
                 > timedelta(hours=STALE_HOURS)):
             stale = f"STALE>{STALE_HOURS}h"  # probably waiting behind an overlap
-        lease = "LEASED" if lease_active(meta) else stale
-        print(f"{meta['id']:<12} {meta.get('stage',''):<17} {meta.get('class',''):<9} "
-              f"{c} {lease}")
-        last = meta.get("last_session")
+        lease = "LEASED" if t.lease_active() else stale
+        print(f"{t.id:<12} {t.stage:<17} {t.klass:<9} {t.counters} {lease}")
+        last = t.extra.get("last_session")
         if last and args.verbose:
             print(f"{'':<12} last: {last['stage']} log={last['log']} "
                   f"replay=`claude --resume {last['id']}`")

@@ -57,10 +57,6 @@ def split_frontmatter(path: Path) -> tuple[dict, str]:
     return (yaml.safe_load(fm) or {}), body
 
 
-def load_ticket(path: Path) -> tuple[dict, str]:
-    return split_frontmatter(path)
-
-
 def render(meta: dict, body: str) -> str:
     fm = yaml.safe_dump(meta, sort_keys=False, default_flow_style=False)
     return f"---\n{fm}---\n{body}"
@@ -72,10 +68,6 @@ def write_atomic(path: Path, text: str) -> None:
     tmp = path.with_name(path.name + ".tmp")
     tmp.write_text(text)
     os.replace(tmp, path)
-
-
-def save_ticket(path: Path, meta: dict, body: str) -> None:
-    write_atomic(path, render(meta, body))
 
 
 def sections(body: str) -> dict[str, str]:
@@ -95,14 +87,20 @@ def sections(body: str) -> dict[str, str]:
 
 
 def append_entry(body: str, header: str, text: str) -> str:
+    """Append at the end of the `## Thread` SECTION, not the end of the body.
+    Today's template happens to put `## Thread` last; the moment anything
+    follows it -- a section a human added, a template that changes -- entries
+    written past it land outside the thread and `thread()` stops seeing them."""
     entry = f"\n### {header}\n\n{text.strip()}\n"
-    if "## Thread" in body:
-        return body.rstrip() + "\n" + entry
-    return body.rstrip() + "\n\n## Thread\n" + entry
-
-
-def append_thread(body: str, text: str) -> str:
-    return append_entry(body, now().strftime(TS_FMT), text)
+    lines = body.splitlines(keepends=True)
+    start = next((i for i, l in enumerate(lines)
+                  if re.match(r"^##\s+Thread\s*$", l)), None)
+    if start is None:
+        return body.rstrip() + "\n\n## Thread\n" + entry
+    end = next((i for i in range(start + 1, len(lines))
+                if re.match(r"^##\s+\S", lines[i])), len(lines))
+    rest = "".join(lines[end:])
+    return "".join(lines[:end]).rstrip() + "\n" + entry + (f"\n{rest}" if rest else "")
 
 
 def tickets_dir(project: Path) -> Path:
@@ -143,21 +141,21 @@ def drop_result(project: Path, tid: str) -> None:
     result_file(project, tid).unlink(missing_ok=True)
 
 
-def record_decision(project: Path, meta: dict, body: str) -> str | None:
+def record_decision(project: Path, t: "Ticket") -> str | None:
     """Copy the ticket's `## Decisions` into `.project/decisions/`. Planning
     greps that directory; until now nothing ever wrote to it, so the check that
     is supposed to stop you reverting a deliberate fix had no data."""
-    text = sections(body).get("Decisions", "").strip()
+    text = t.section("Decisions").strip()
     if not text:
         return None
     d = project / ".project" / "decisions"
     d.mkdir(parents=True, exist_ok=True)
-    did = f"DEC-{meta['id'].split('-')[-1]}"
+    did = f"DEC-{t.id.split('-')[-1]}"
     (d / f"{did}.md").write_text(
         f"# {did}\n\n"
-        f"- ticket: {meta['id']} ({meta.get('class', '')})\n"
-        f"- branch: {meta.get('branch')}\n"
-        f"- files: {', '.join(meta.get('files_declared') or []) or 'n/a'}\n"
+        f"- ticket: {t.id} ({t.klass})\n"
+        f"- branch: {t.branch}\n"
+        f"- files: {', '.join(t.files_declared) or 'n/a'}\n"
         f"- decided: {now().date().isoformat()}\n\n{text}\n")
     return did
 
@@ -254,10 +252,16 @@ class Ticket:
     def errors(self) -> list[str]:
         return validate_meta(self.frontmatter())
 
-    def save(self) -> None:
+    def save(self, validate: bool = True) -> None:
         """Validated on the way in, not only on the next load, and written
-        atomically -- something is always reading these files."""
-        bad = self.errors()
+        atomically -- something is always reading these files.
+
+        `validate=False` exists for exactly one caller: escalating a ticket
+        whose frontmatter is what is wrong. That write adds no hostile value --
+        it read one off disk -- and marking the ticket terminal is what stops
+        the value ever reaching a shell. Refusing it would refuse to quarantine.
+        """
+        bad = self.errors() if validate else []
         if bad:
             raise PipelineError(f"{self.path}: refusing to write: " + "; ".join(bad))
         write_atomic(self.path, render(self.frontmatter(), self.body))
