@@ -29,6 +29,7 @@ SAFE_BRANCH = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,80}$")
 SAFE_TEST = re.compile(r"^[A-Za-z0-9._/-]{1,200}(::[A-Za-z0-9_\[\].-]{1,100})*$")
 SAFE_FILE = re.compile(r"^[A-Za-z0-9._/-]{1,200}$")
 
+
 def validate_meta(meta: dict) -> list[str]:
     """Every one of these fields reaches a shell command or the state machine,
     and every one of them sits in a file an agent can write. Validate on the way
@@ -116,6 +117,7 @@ def all_tickets(project: Path) -> list[Path]:
     d = tickets_dir(project)
     return sorted(d.glob("*.md")) if d.is_dir() else []
 
+
 def result_file(project: Path, tid: str) -> Path:
     return tickets_dir(project) / f"{tid}.result"
 
@@ -139,6 +141,7 @@ def read_result(project: Path, tid: str, keep: bool = False) -> dict | None:
 
 def drop_result(project: Path, tid: str) -> None:
     result_file(project, tid).unlink(missing_ok=True)
+
 
 def record_decision(project: Path, meta: dict, body: str) -> str | None:
     """Copy the ticket's `## Decisions` into `.project/decisions/`. Planning

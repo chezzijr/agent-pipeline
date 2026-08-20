@@ -33,11 +33,13 @@ def agent_stages() -> list[str]:
 def is_readonly(stage: str) -> bool:
     return not stage_config(stage).get("write", False)
 
+
 def project_config(project: Path) -> dict:
     cfg = project / ".project" / "pipeline.toml"
     if not cfg.is_file():
         raise PipelineError(f"no {cfg} -- run `pipeline init {project}` first")
     return tomllib.loads(cfg.read_text())
+
 
 def harness(name: str = "claude-code") -> dict:
     p = HARNESSES_DIR / f"{name}.toml"

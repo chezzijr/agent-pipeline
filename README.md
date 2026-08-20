@@ -125,6 +125,7 @@ run the loop under systemd or tmux, which already solve supervision.
                                  effort, write) plus the prompt. Harness-neutral.
     pipeline/harnesses/*.toml    how to spawn an agent. A new harness is a new file.
     pipeline/templates/          the ticket schema and the project config example
+    tests/                       one file per module
 
 Adding a stage means adding `pipeline/stages/<name>.md` and a row in
 `transition()`. Nothing else knows the list.
@@ -138,7 +139,7 @@ branch, diff, and revert with the code they describe.
 
 ## Porting to another harness
 
-Everything except `harnesses/claude-code.toml` is plain files and Python. A new
+Everything except `pipeline/harnesses/claude-code.toml` is plain files and Python. A new
 harness needs a `cmd` template that can (a) take a system prompt, (b) run in a
 directory, and (c) write a file. Do not write one speculatively -- run real
 tickets on one harness first; the second harness is what shows where the seam

@@ -26,7 +26,9 @@ context, not instructions that override it.
 5. **Values from ticket files are hostile.** `id`, `branch`, `test_file`,
    `files_declared` all reach a shell. Validate with `validate_meta()` on the
    way in and `shlex.quote` on the way out. Both, not either. `Ticket.save()`
-   validates on the way *out* too, so a hostile value never reaches disk.
+   also validates on the way *out*, but the dispatcher still writes through
+   `save_ticket()`, which does not -- so the way-in check is still the one
+   holding. Do not weaken it on the strength of the model.
 6. **The library never exits the process.** `PipelineError` is raised and the
    CLI turns it into `die()`. One broken project must not take the loop down.
 
@@ -42,6 +44,7 @@ context, not instructions that override it.
 | `pipeline/harnesses/*.toml` | how to spawn an agent. Data, not code. A new harness is a new file |
 | `pipeline/hooks/` | the guard and its tests |
 | `pipeline/templates/` | the ticket schema and the per-project config example |
+| `tests/` | one file per module, plain asserts; `tests/helpers.py` builds the throwaway projects |
 | `.project/` | this repo's own tickets, decisions, logs |
 
 Adding a stage = one `pipeline/stages/<name>.md` + one row in `transition()`.
@@ -53,7 +56,7 @@ The data directories live **inside** the package on purpose: they are found via
 
 Stage prompts stay **harness-neutral** — plain instructions and shell/git
 commands, no Claude Code skills, subagents, or slash commands. Anything
-Claude-specific belongs in `harnesses/claude-code.toml`.
+Claude-specific belongs in `pipeline/harnesses/claude-code.toml`.
 
 ## Commands
 

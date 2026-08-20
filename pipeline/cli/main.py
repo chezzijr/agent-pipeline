@@ -120,6 +120,7 @@ def cmd_status(args) -> None:
             print(f"{'':<12} last: {last['stage']} log={last['log']} "
                   f"replay=`claude --resume {last['id']}`")
 
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--project", default=".", help="target project dir")

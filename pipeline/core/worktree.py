@@ -4,6 +4,7 @@ import shlex
 import subprocess
 from pathlib import Path
 
+
 def project_env() -> dict:
     """The dispatcher itself runs inside `uv run`'s venv. Left alone, that venv
     shadows the target project's interpreter and its test dependencies, so
@@ -22,6 +23,7 @@ def run_cmd(cmd: str, cwd: Path) -> tuple[int, str]:
     p = subprocess.run(cmd, shell=True, cwd=cwd, capture_output=True, text=True,
                        env=project_env())
     return p.returncode, (p.stdout + p.stderr)[-4000:]
+
 
 def worktree(project: Path, meta: dict) -> Path:
     return project / ".worktrees" / meta["id"]
@@ -57,6 +59,7 @@ def drop_worktree(project: Path, meta: dict) -> None:
     wt = worktree(project, meta)
     if wt.is_dir():
         run_cmd(f"git worktree remove --force {shlex.quote(str(wt))}", project)
+
 
 def tree_snapshot(project: Path) -> str:
     """What a read-only stage must not change. `.project/` is excluded: writing

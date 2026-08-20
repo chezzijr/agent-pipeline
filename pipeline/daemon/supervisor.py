@@ -6,7 +6,7 @@ import signal
 import subprocess
 import time
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from pipeline.core import PipelineError
@@ -24,6 +24,7 @@ from pipeline.core.worktree import (drop_worktree, ensure_worktree,
                                     project_env, run_cmd, tree_snapshot,
                                     worktree)
 
+
 def lease_active(meta: dict) -> bool:
     exp = (meta.get("lease") or {}).get("expires")
     return bool(exp) and now() < datetime.fromisoformat(exp)
@@ -34,6 +35,7 @@ def escalate(path: Path, meta: dict, body: str, reason: str) -> None:
     meta["lease"] = {"holder": None, "expires": None}  # a human must be able to resume
     save_ticket(path, meta, append_thread(body, f"**escalated**: {reason}"))
     print(f"  {path.stem}: -> escalated ({reason})")
+
 
 def advance(project: Path, path: Path, meta: dict, body: str, result: str, note: str) -> None:
     nxt, counters = transition(meta["stage"], result, meta.get("counters") or {},
@@ -90,6 +92,7 @@ def spawn(project: Path, wt: Path, tid: str, stage: str, hcfg: dict) -> dict:
     return {"proc": proc, "fh": fh, "prompt": prompt, "settings": settings,
             "session": session,
             "log": log, "stage": stage, "wt": wt}
+
 
 def start(project: Path, path: Path, hcfg: dict, inflight: dict) -> tuple[bool, dict | None]:
     """Try to move one ticket forward.
