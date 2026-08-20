@@ -39,6 +39,16 @@ def gate(project: Path, tid: str, workdir: Path | None = None) -> tuple[bool, li
         if not secs.get(name):
             findings.append(f"section `## {name}` missing or empty")
 
+    # The gate proves a bug exists by running a test that fails; it must also
+    # prove that failure is the *reported* one, or a test failing for an
+    # unrelated reason sails through looking like evidence.
+    repro = secs.get("Reproduction", "")
+    expect_m = re.search(r"^expect:\s*(.*)$", repro, re.M)
+    expect = expect_m.group(1).strip() if expect_m else ""
+    if repro.strip() and not expect:
+        findings.append(
+            "`## Reproduction` has no `expect:` line recording the expected failure string")
+
     test = t.test_file
     if not test:
         findings.append("no `test_file` recorded in frontmatter")
@@ -57,6 +67,16 @@ def gate(project: Path, tid: str, workdir: Path | None = None) -> tuple[bool, li
                 findings.append(
                     f"`{test}` exited non-zero but its name never appears in the "
                     f"output -- it errored rather than failed\n```\n{out[-1200:]}\n```")
+            elif expect and expect not in out:
+                # a red test proves nothing if it is red for a different reason
+                # than the one reported -- that looks like evidence but isn't.
+                # `expect` is body text an agent wrote, not frontmatter -- it
+                # never passes validate_meta -- so it is shown via repr(), not
+                # backtick-quoted, or a backtick/newline in it would corrupt the
+                # markdown fence this finding gets written into.
+                findings.append(
+                    f"`{test}` fails, but its output does not mention the expected "
+                    f"string {expect!r}\n```\n{out[-1200:]}\n```")
             else:
                 findings.append(f"ok: `{test}` fails as required\n```\n{out[-1200:]}\n```")
             code, out = run_cmd(cfg["test_suite_without_new"].format(test=shlex.quote(test)), wd)

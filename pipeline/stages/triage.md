@@ -19,7 +19,10 @@ proof rather than a sentence.
    reported symptom rather than a setup error.
 4. Commit the test on the ticket branch.
 5. Write `## Reproduction`: the test's path, the exact failure output, and the
-   command that produces it.
+   command that produces it. Also record, verbatim, the assertion or error
+   text you actually saw, on a line of the form `expect: <text>` (e.g.
+   `expect: KeyError: 'evict'`) -- the gate checks the test fails with this
+   text, not just that it fails.
 
 Put the test's id in your result file as `test_file:` (e.g.
 `test_file: tests/test_cache.py::test_evicts`). The dispatcher copies it into

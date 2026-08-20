@@ -66,6 +66,41 @@ def test_an_acceptance_criterion_must_name_something_test_shaped():
     shutil.rmtree(d)
 
 
+def test_gate_blocks_a_failure_that_is_not_the_reported_one():
+    """A red test proves nothing if it is red for the wrong reason."""
+    d = project(FIXTURE.replace("expect: test_broken", "expect: KeyError: 'evict'"))
+    (d / ".project" / "pipeline.toml").write_text(
+        'test_one = "echo test_broken: AssertionError: boom; exit 1"\n'
+        'test_suite = "true"\ntest_suite_without_new = "true"\n')
+    ok, failures = gate(d, "TICKET-001")
+    assert not ok
+    assert any("does not mention" in f for f in failures), failures
+    shutil.rmtree(d)
+
+
+def test_gate_passes_a_failure_that_matches_the_reported_one():
+    d = project(FIXTURE.replace("expect: test_broken", "expect: AssertionError: boom"))
+    (d / ".project" / "pipeline.toml").write_text(
+        'test_one = "echo test_broken: AssertionError: boom; exit 1"\n'
+        'test_suite = "true"\ntest_suite_without_new = "true"\n')
+    ok, failures = gate(d, "TICKET-001")
+    assert ok, failures
+    shutil.rmtree(d)
+
+
+def test_expect_containing_a_backtick_does_not_corrupt_the_thread_entry():
+    """`expect:` is unvalidated body text an agent wrote -- a backtick in it
+    must not break out of the markdown fence the finding is written into."""
+    d = project(FIXTURE.replace("expect: test_broken", "expect: `evict`"))
+    (d / ".project" / "pipeline.toml").write_text(
+        'test_one = "echo test_broken: nope; exit 1"\n'
+        'test_suite = "true"\ntest_suite_without_new = "true"\n')
+    ok, failures = gate(d, "TICKET-001")
+    assert not ok
+    assert any(repr("`evict`") in f for f in failures), failures
+    shutil.rmtree(d)
+
+
 def test_shell_injection_through_test_file_is_dead():
     """The gate runs the project's test command; test_file comes from an agent."""
     d = project()
