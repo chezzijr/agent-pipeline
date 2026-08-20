@@ -130,3 +130,16 @@ def test_escalated_tickets_keep_their_worktree():
     assert "escalated" not in M.CLEANUP_STAGES, \
         "removing it destroys the uncommitted evidence a human was called for"
     assert M.CLEANUP_STAGES == {"done", "rejected"}
+
+
+def test_an_approved_plan_is_re_gated_before_it_is_implemented():
+    """A bounce off the re-gate is staleness, not a bad plan: charging
+    `plan_validation_attempts` would escalate a good plan for waiting, and
+    corrupt the escalation rate the whole system is measured by."""
+    assert t("revalidating", "ok")[0] == "implementing"
+    nxt, c = t("revalidating", "fail")
+    assert nxt == "plan-validation", f"a stale plan must replan, got {nxt}"
+    assert c["stale_regate"] == 1
+    assert "plan_validation_attempts" not in c, "waiting for a human was charged to the plan"
+    assert t("revalidating", "fail", c)[0] == "escalated", "an unbounded stale loop"
+    assert "revalidating" in M.DISPATCHER_STAGES and "revalidating" in M.KNOWN_STAGES

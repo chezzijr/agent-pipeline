@@ -274,7 +274,7 @@ def test_the_dispatcher_writes_typed_thread_entries():
     assert ("plan-validation", "gate") in kinds, kinds
     assert ("plan-validation", "transition") in kinds, kinds
     assert ("human", "approval") in kinds, kinds
-    assert ("implementing", "escalation") in kinds, kinds
+    assert ("revalidating", "escalation") in kinds, kinds  # approval lands here now
     assert all(e.stage and e.kind != "note" for e in entries), \
         "a dispatcher write came back freeform"
     assert next(e for e in entries if e.kind == "gate").attrs["verdict"] == "PASS"

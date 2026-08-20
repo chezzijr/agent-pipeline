@@ -211,6 +211,12 @@ def start(project: Path, path: Path, hcfg: dict, inflight: dict) -> tuple[bool, 
     if stage == "merging":
         return child(merge_cmd(project, t, cfg), "merge")
 
+    if stage == "revalidating":
+        # the Tier A facts were recorded before the ticket sat at the human
+        # gate; base has moved since. Rebase first, re-gate in finish().
+        return child(f"git rebase {shlex.quote(str(cfg.get('base', 'main')))}",
+                     "regate")
+
     if stage == "plan-validation":
         ok, failures = gate(project, tid, wt)
         t = Ticket.load(path)  # the gate wrote its findings to the thread
@@ -240,6 +246,25 @@ def finish_child(project: Path, rec: dict, label: str) -> None:
             f"{label} exit {code}\n```\n{rec['log'].read_text()[-1500:]}\n```")
 
 
+def finish_regate(project: Path, rec: dict) -> None:
+    """A rebase onto current base, then the Tier A gate again -- an approval is
+    only as good as the tree it was given against."""
+    rec["fh"].close()
+    code = rec["proc"].returncode
+    t = Ticket.load(rec["path"])
+    if code != 0:
+        # same rule as a merge conflict: never auto-resolved, never retried.
+        # The half-rebased worktree stays -- `escalated` is not in CLEANUP_STAGES.
+        escalate(t, f"rebase onto base conflicted (exit {code})\n```\n"
+                    f"{rec['log'].read_text()[-1500:]}\n```")
+        return
+    ok, failures = gate(project, rec["tid"], rec["wt"])
+    t = Ticket.load(rec["path"])  # the gate wrote its findings to the thread
+    advance(project, t, "ok" if ok else "fail",
+            "re-gated after rebasing onto base:\n"
+            + ("- clean" if ok else "\n".join(f"- {f}" for f in failures)))
+
+
 def finish(project: Path, rec: dict) -> None:
     # BEFORE anything agent-specific: the suite's verdict is its exit code, and
     # falling through to read_result() would let a `.result` an earlier stage's
@@ -252,6 +277,10 @@ def finish(project: Path, rec: dict) -> None:
     # stays -- `escalated` is not in CLEANUP_STAGES.
     if rec.get("kind") == "merge":
         return finish_child(project, rec, "merge")
+    # a re-gate is two steps, so its verdict is not the exit code alone: the
+    # rebase only has to succeed for the gate to have a tree worth judging
+    if rec.get("kind") == "regate":
+        return finish_regate(project, rec)
 
     rec["fh"].close()
     if rec.get("prompt"):
