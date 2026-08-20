@@ -121,3 +121,17 @@ def test_verifying_runs_as_a_tracked_child():
     assert t.counters["review_loops"] == 1
     assert not t.lease_active()
     shutil.rmtree(d, ignore_errors=True)
+
+
+def test_ctrl_c_during_a_suite_does_not_crash_on_its_missing_prompt():
+    """`shut_down` unlinked `rec["prompt"]` unconditionally; a suite record has
+    none, so Ctrl-C during `verifying` raised and left every lease held."""
+    d, _ = git_project()
+    path = d / ".project/tickets/TICKET-001.md"
+    path.write_text(FIXTURE.replace("stage: plan-validation", "stage: verifying"))
+    _, rec = supervisor.start(d, path, harness("fake"), {})
+
+    supervisor.shut_down(d, {"TICKET-001": rec})
+
+    assert not Ticket.load(path).lease_active(), "an interrupted suite kept its lease"
+    shutil.rmtree(d, ignore_errors=True)
