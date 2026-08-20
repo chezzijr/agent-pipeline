@@ -20,8 +20,7 @@ from pipeline.core.ticket import (Ticket, all_tickets, drop_result,
                                   read_result, record_decision, ticket_path,
                                   tickets_dir, validate_meta)
 from pipeline.core.worktree import (drop_worktree, ensure_worktree,
-                                    project_env, run_cmd, tree_snapshot,
-                                    worktree)
+                                    project_env, tree_snapshot, worktree)
 
 
 def escalate(t: Ticket, reason: str) -> None:
@@ -92,6 +91,26 @@ def spawn(project: Path, wt: Path, tid: str, stage: str, hcfg: dict) -> dict:
             "log": log, "stage": stage, "wt": wt}
 
 
+def spawn_suite(project: Path, wt: Path, tid: str, cfg: dict) -> dict:
+    """Start the regression suite as a tracked child, shaped like `spawn()`'s
+    record so `reap()` collects it with everything else. Run inline it stalled
+    the loop: no other ticket advanced and no finished agent was reaped while a
+    real project's suite took its minutes."""
+    stage, cmd = "verifying", cfg["test_suite"]
+    logs = project / ".project" / "logs"
+    logs.mkdir(parents=True, exist_ok=True)
+    log = logs / f"{tid}-{stage}-{uuid.uuid4().hex[:8]}.log"
+    fh = log.open("w")
+    fh.write(f"$ {cmd}\n\n")
+    fh.flush()
+    proc = subprocess.Popen(cmd, shell=True, cwd=wt, stdout=fh,
+                            stderr=subprocess.STDOUT, env=project_env())
+    print(f"  start {tid}: {stage} (script) pid {proc.pid} -> {log.name}")
+    return {"kind": "suite", "proc": proc, "fh": fh, "prompt": None,
+            "settings": None, "session": None,
+            "log": log, "stage": stage, "wt": wt}
+
+
 def start(project: Path, path: Path, hcfg: dict, inflight: dict) -> tuple[bool, dict | None]:
     """Try to move one ticket forward.
 
@@ -153,12 +172,13 @@ def start(project: Path, path: Path, hcfg: dict, inflight: dict) -> tuple[bool, 
         return True, None
 
     if stage == "verifying":
-        # ponytail: run inline. A slow suite stalls the loop; move it to the
-        # in-flight table like an agent if that ever bites.
-        code, out = run_cmd(cfg["test_suite"], wt)
-        advance(project, t, "ok" if code == 0 else "fail",
-                f"regression suite exit {code}\n```\n{out[-1500:]}\n```")
-        return True, None
+        # a child that outlives the tick must lease exactly like an agent, or a
+        # crash mid-suite leaves nothing for the expiry path to recover
+        t.take_lease(f"{stage}-{os.getpid()}")
+        t.save()
+        rec = spawn_suite(project, wt, tid, cfg)
+        rec["path"], rec["tid"], rec["meta"], rec["before"] = path, tid, t, None
+        return True, rec
 
     if stage == "plan-validation":
         ok, failures = gate(project, tid, wt)
@@ -182,8 +202,21 @@ def start(project: Path, path: Path, hcfg: dict, inflight: dict) -> tuple[bool, 
 
 
 def finish(project: Path, rec: dict) -> None:
+    # BEFORE anything agent-specific: the suite's verdict is its exit code, and
+    # falling through to read_result() would let a `.result` an earlier stage's
+    # agent left behind speak for the test run. It also skips the tamper check,
+    # the tree snapshot and apply_claims -- none of which have an agent to check.
+    if rec.get("kind") == "suite":
+        rec["fh"].close()
+        code = rec["proc"].returncode
+        advance(project, Ticket.load(rec["path"]), "ok" if code == 0 else "fail",
+                f"regression suite exit {code}\n```\n"
+                f"{rec['log'].read_text()[-1500:]}\n```")
+        return
+
     rec["fh"].close()
-    rec["prompt"].unlink(missing_ok=True)
+    if rec.get("prompt"):
+        rec["prompt"].unlink(missing_ok=True)
     if rec.get("settings"):
         rec["settings"].unlink(missing_ok=True)
     path, tid, stage = rec["path"], rec["tid"], rec["stage"]
@@ -275,7 +308,8 @@ def shut_down(project: Path, inflight: dict) -> None:
             except subprocess.TimeoutExpired:
                 proc.kill()
         rec["fh"].close()
-        rec["prompt"].unlink(missing_ok=True)
+        if rec.get("prompt"):
+            rec["prompt"].unlink(missing_ok=True)
         if rec.get("settings"):
             rec["settings"].unlink(missing_ok=True)
         try:
