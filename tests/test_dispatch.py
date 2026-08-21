@@ -589,3 +589,25 @@ def test_a_missing_marker_changes_no_transition_and_no_counter():
     shutil.rmtree(d, ignore_errors=True)
     assert t.stage == "awaiting-approval"
     assert t.counters == {}
+
+
+def test_a_rebase_conflict_at_revalidating_leaves_a_way_back():
+    """TICKET-029: a conflict at `revalidating` is terminal, so a ticket whose
+    triage test collided with a sibling's costs a full re-triage by hand.
+    `finish_regate()` calls `escalate()` directly -- `transition()` never sees
+    the conflict, so no counter is charged and no stage can fix it."""
+    d, sh, path, wt = _ticket_awaiting_approval()
+    (wt / "f.py").write_text("branch side\n")
+    _commit(wt, "'ticket commit'")
+    (d / "f.py").write_text("base side\n")
+    sh("git add f.py && git commit -qm 'base moved'")
+
+    did, rec = supervisor.start(d, path, harness("fake"), {})
+    assert did and rec and rec["kind"] == "regate"
+    rec["proc"].wait()
+    supervisor.finish(d, rec)
+
+    t = Ticket.load(path)
+    shutil.rmtree(d, ignore_errors=True)
+    assert t.stage not in M.TERMINAL, \
+        f"a rebase conflict parked the ticket at {t.stage} with no way back"
