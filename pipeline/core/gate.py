@@ -5,7 +5,8 @@ import shutil
 from pathlib import Path
 
 from pipeline.core.config import project_config
-from pipeline.core.ticket import Ticket, ticket_path
+from pipeline.core.ticket import (Ticket, active_decisions, decisions_dir,
+                                  ticket_path)
 from pipeline.core.worktree import base_checkout, base_ref, run_cmd
 
 # `## Thread` is deliberately absent: it starts empty on every ticket and the
@@ -14,6 +15,16 @@ REQUIRED_SECTIONS = [
     "Summary", "Reproduction", "Digest", "Decisions checked",
     "Plan", "Acceptance criteria", "Rollback",
 ]
+
+# A digest exists so the next stage does not re-explore the codebase, and
+# "non-empty" is satisfied by one word. Three lines is a floor, not a quality
+# bar -- a digest that is genuinely shorter says so out loud in a line a human
+# can see in review, rather than being padded to hit a number.
+MIN_DIGEST_ENTRIES = 3
+DIGEST_SHORT_RE = re.compile(r"^\s*digest-short:\s*\S", re.M)
+# Only `DEC-<digits>` is resolvable: that is what `record_decision()` writes and
+# all `SAFE_DEC_ID` allows. A `TICKET-012` in this section is prose, not a citation.
+DEC_ID_RE = re.compile(r"\bDEC-\d{1,6}\b")
 
 
 def _cites(text: str, path: str) -> bool:
@@ -90,6 +101,16 @@ def gate(project: Path, tid: str, workdir: Path | None = None) -> tuple[bool, li
         if not secs.get(name):
             findings.append(f"section `## {name}` missing or empty")
 
+    # An empty `## Digest` is already reported above; skip rather than double-report.
+    dig = secs.get("Digest", "")
+    if dig.strip() and not DIGEST_SHORT_RE.search(dig):
+        entries = [l for l in dig.splitlines() if l.strip()]
+        if len(entries) < MIN_DIGEST_ENTRIES:
+            findings.append(
+                f"`## Digest` has {len(entries)} non-empty line(s); want at least "
+                f"{MIN_DIGEST_ENTRIES} (files touched, key functions, entry points, "
+                f"gotchas) or one `digest-short: <why fewer>` line")
+
     # The gate proves a bug exists by running a test that fails; it must also
     # prove that failure is the *reported* one, or a test failing for an
     # unrelated reason sails through looking like evidence.
@@ -139,9 +160,26 @@ def gate(project: Path, tid: str, workdir: Path | None = None) -> tuple[bool, li
                 )
 
     dec = secs.get("Decisions checked", "")
-    if dec and "none relevant" not in dec.lower() and not re.search(r"\b[A-Z]+-\d+\b|DEC-", dec):
+    cited = sorted(set(DEC_ID_RE.findall(dec)))
+    if dec and "none relevant" not in dec.lower() and not cited:
         findings.append("`## Decisions checked` cites no decision IDs and no explicit "
                         "'none relevant' + grep terms")
+    if cited:
+        ddir = decisions_dir(project)
+        # A symlinked record is not a record -- active_decisions() skips it, so
+        # counting it as on-disk would report a planted link as merely superseded.
+        on_disk = ({p.stem for p in ddir.glob("DEC-*.md") if not p.is_symlink()}
+                   if ddir.is_dir() else set())
+        active = {d.id for d in active_decisions(project)}
+        for cid in cited:
+            if cid not in on_disk:
+                findings.append(
+                    f"`## Decisions checked` cites {cid}, which is not a record in "
+                    f"{ddir} -- a citation nobody can resolve is not a check")
+            elif cid not in active:
+                # a superseded record stays on disk as history; citing one is fine,
+                # treating it as binding is the thing the plan must not do
+                findings.append(f"ok: {cid} is superseded -- history, not binding")
 
     if not t.files_declared:
         findings.append("`files_declared` is empty")

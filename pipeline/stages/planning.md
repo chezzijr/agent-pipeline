@@ -21,6 +21,9 @@ Fill in these sections:
 
 - `## Digest` -- the files, key functions, entry points and gotchas the next
   stages need. This exists so nobody re-explores the codebase from scratch.
+  Tier A counts the section's non-empty lines and wants at least three (files
+  touched, key functions, entry points, gotchas); if this change genuinely needs
+  fewer, write one `digest-short: <why fewer>` line and the count is waived.
 - `## Decisions checked` -- grep the decisions directory for anything
   constraining this change. It sits next to the ticket file whose absolute path
   you were given (`<that directory>/../decisions/`), **not** under your working
@@ -36,6 +39,9 @@ Fill in these sections:
   the plan genuinely needs to contradict a still-active record (no
   `superseded-by:` line), do not silently diverge from it -- open your own
   `## Decisions` section with `supersedes: DEC-<n> -- reason`, below.
+  Tier A resolves every `DEC-<n>` you cite against that directory: an id with no
+  record there fails the gate, and a superseded one is recorded as history rather
+  than as a constraint.
 - `## Plan` -- an ordered, numbered step list (`1.`, `2.`, ...; the gate parses
   a leading `N.` or `N)`). Every step names its target files -- spell out the
   path (e.g. `pipeline/core/machine.py`), not just the function -- and each

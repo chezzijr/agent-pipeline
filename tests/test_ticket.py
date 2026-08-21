@@ -19,7 +19,7 @@ def test_unknown_frontmatter_survives_a_save():
     p = d / ".project/tickets/TICKET-001.md"
     t = Ticket.load(p)
     assert t.extra["approved_by"] == "chezzijr"
-    assert t.klass == "bugfix" and t.section("Digest") == "thing.py holds it"
+    assert t.klass == "bugfix" and t.section("Digest").startswith("- thing.py holds it")
     t.save()
     assert Ticket.load(p).extra["approved_by"] == "chezzijr"
     assert "class: bugfix" in p.read_text(), "the YAML key is `class`, not `klass`"

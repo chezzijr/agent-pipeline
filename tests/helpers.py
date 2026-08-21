@@ -22,7 +22,9 @@ x
 fails
 expect: test_broken
 ## Digest
-thing.py holds it
+- thing.py holds it
+- cache() is the entry point
+- eviction runs on write, not read
 ## Decisions checked
 none relevant (grepped: cache, evict)
 ## Plan
