@@ -283,6 +283,74 @@ def test_the_dispatcher_writes_typed_thread_entries():
     shutil.rmtree(d)
 
 
+def test_a_heading_inside_a_fenced_block_is_not_a_section():
+    """The gate and `verifying` embed raw test output inside ``` fences. A
+    `## ` line in that output must not open a section: it truncates the thread
+    and every later entry becomes unreachable to a stage reading it as data."""
+    thread = ("\n### entry one\n\n"
+              "```\n## Acceptance criteria\ncaptured output, not a heading\n```\n"
+              "\n### entry two\n\nmust stay reachable\n")
+    s = T.sections("## Summary\nx\n## Thread\n" + thread)
+    assert "Acceptance criteria" not in s, "a fenced `## ` line opened a section"
+    assert "must stay reachable" in s["Thread"], "the thread was truncated"
+
+    d = project(FIXTURE + thread)
+    t = Ticket.load(d / ".project/tickets/TICKET-001.md")
+    assert len(t.thread()) == 2, [e.text for e in t.thread()]
+    shutil.rmtree(d)
+
+
+def test_append_entry_is_not_fooled_by_a_fenced_heading():
+    """`append_entry` finds the end of `## Thread` the same way `sections()`
+    finds its start -- a fenced `## ` line in the last entry must not look
+    like the section boundary, or the new entry lands inside the fence."""
+    body = ("## Summary\nx\n\n## Thread\n\n### entry one\n\n"
+            "```\n## fake heading\ncaptured\n```\n")
+    out = T.append_entry(body, "2026-01-01 · planning · note", "landed")
+    assert set(T.sections(out)) == {"Summary", "Thread"}
+    thread = T.sections(out)["Thread"]
+    assert "captured" in thread, "the fenced text was lost"
+    assert "landed" in thread, "the new entry did not land in Thread"
+    entries = Ticket(path=Path("x"), id="TICKET-001", body=out).thread()
+    assert len(entries) == 2, "the new entry landed inside the fence, not after it"
+
+    out2 = T.append_entry(body + "\n## After\ntail\n", "2026-01-01 · planning · note", "landed")
+    assert T.sections(out2)["After"] == "tail", "a real section after Thread must still bound it"
+    assert "landed" in T.sections(out2)["Thread"]
+
+
+def test_a_thread_entry_is_not_split_by_a_fenced_heading():
+    """`Ticket.thread()` splits entries on `### `, the same fence-blind bug
+    one level down -- a fenced `### ` line inside an entry must not start a
+    phantom second entry."""
+    thread = "\n### entry one\n\n```\n### captured\nfake\n```\n"
+    d = project(FIXTURE + thread)
+    t = Ticket.load(d / ".project/tickets/TICKET-001.md")
+    entries = t.thread()
+    assert len(entries) == 1, [e.text for e in entries]
+    assert "captured" in entries[0].text
+    shutil.rmtree(d)
+
+
+def test_a_fence_closes_only_on_its_own_terms():
+    """The closing rule is CommonMark's, not toggle-on-every-fence: same
+    character, at least as long as the opener, no info string."""
+    tilde = "## Summary\nx\n## Thread\n~~~\n## fake\n~~~\n"
+    assert "fake" not in T.sections(tilde)
+
+    nested = ("## Summary\nx\n## Thread\n````\n```\n## fake heading\n```\n"
+              "still fenced\n````\n## After\ntail\n")
+    s = T.sections(nested)
+    assert "fake heading" not in s, "a shorter inner fence closed the outer one"
+    assert s["After"] == "tail"
+
+    info_string = ("## Summary\nx\n## Thread\n```\n## still fenced\n```py\n"
+                   "end now\n```\n## After\ntail\n")
+    s = T.sections(info_string)
+    assert "still fenced" not in s, "a closing candidate with an info string closed the fence"
+    assert s["After"] == "tail"
+
+
 def test_a_lease_nobody_can_read_escalates_instead_of_crashing():
     """`lease.expires` is the field `validate_meta` never checked. Unquoted,
     YAML hands back a `datetime` and `fromisoformat` raised TypeError; a naive
