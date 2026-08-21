@@ -204,6 +204,15 @@ class Server(Poller):
         a daemon that is already gone -- so it is safe to unlink. The connect
         probe stays as a belt-and-braces check for a daemon predating the lock
         file."""
+        # AF_UNIX caps the path at ~108 bytes, and the failure is an opaque
+        # OSError from bind() rather than anything naming the cause. Check it
+        # up front: a long $XDG_RUNTIME_DIR is a plausible thing to have, and
+        # `--socket` is the way out.
+        if len(str(self.path).encode()) >= 108:
+            raise PipelineError(
+                f"socket path is too long for AF_UNIX ({len(str(self.path).encode())} "
+                f"bytes, limit 107): {self.path}\n"
+                f"pass a shorter --socket, or set $XDG_RUNTIME_DIR")
         if self.path.exists():
             probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             try:

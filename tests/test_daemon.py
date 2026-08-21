@@ -6,6 +6,7 @@ assertion is against the real code rather than a timing window.
 """
 import json
 import os
+import shutil
 import socket
 import sqlite3
 import subprocess
@@ -467,3 +468,23 @@ def test_ls_with_no_project_covers_every_registered_project():
     finally:
         registry.unregister(a)
         registry.unregister(b)
+
+
+def test_a_too_long_socket_path_says_so_instead_of_raising_oserror():
+    """AF_UNIX caps the path at ~108 bytes and bind() reports it as a bare
+    OSError naming nothing. A long $XDG_RUNTIME_DIR is a plausible thing to
+    have, so the limit is checked up front and the error names the way out."""
+    d = Path(tempfile.mkdtemp())
+    long_path = d / ("x" * 200) / "daemon.sock"
+    store = Store(d / "events.db")
+    try:
+        Server(store, long_path)
+        assert False, "bound a socket path AF_UNIX cannot hold"
+    except PipelineError as e:
+        assert "too long for AF_UNIX" in str(e), e
+        assert "--socket" in str(e), "the error does not name the way out"
+    except OSError as e:
+        assert False, f"leaked a bare OSError instead of explaining: {e}"
+    finally:
+        store.close()
+        shutil.rmtree(d, ignore_errors=True)
