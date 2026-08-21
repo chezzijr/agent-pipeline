@@ -1,5 +1,8 @@
 ---
 model: opus
+# high: the stage least worth making cheaper. It caught two vacuous tests that
+# a green 167-test suite hid.
+effort: high
 write: false
 max_usd: 4
 hooks: [dangerous-commands]

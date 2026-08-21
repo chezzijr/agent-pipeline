@@ -118,3 +118,13 @@ def test_every_stage_declares_the_effort_its_job_needs():
     spawn command entirely and runs at whatever the harness defaults to."""
     missing = [s for s in C.agent_stages() if not C.stage_config(s).get("effort")]
     assert not missing, f"stages with no effort in frontmatter: {missing}"
+
+
+def test_effort_values_are_ones_the_harness_accepts():
+    """`claude --help`: `--effort <level>  (low, medium, high, xhigh, max)`.
+    A typo here is not caught by the declaration test above -- it renders into
+    the spawn command verbatim and kills the stage at startup."""
+    allowed = {"low", "medium", "high", "xhigh", "max"}
+    for stage in C.agent_stages():
+        effort = C.stage_config(stage).get("effort")
+        assert effort in allowed, f"{stage}: effort {effort!r} not in {sorted(allowed)}"
