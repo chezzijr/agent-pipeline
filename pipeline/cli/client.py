@@ -51,6 +51,17 @@ class Client:
             raise PipelineError(f"daemon: {e}") from e
         raise PipelineError("daemon closed the connection without replying")
 
+    def clone(self, timeout: float | None = None) -> "Client":
+        """A second connection to the same daemon.
+
+        A subscription owns its connection: `lines()` blocks until the daemon
+        speaks, so a `request()` on the same socket would consume the
+        subscription's frames. The default `timeout=None` is what a subscriber
+        wants -- an idle pipeline is not a dead one, and a 5s deadline would
+        end the stream every time nothing happened.
+        """
+        return Client(self.path, timeout)
+
     def close(self) -> None:
         self.fh.close()
         self.sock.close()

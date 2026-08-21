@@ -3,7 +3,10 @@ name = "pipeline"
 version = "0.1.0"
 description = "Ticket-driven agent pipeline dispatcher"
 requires-python = ">=3.11"
-dependencies = ["pyyaml>=6"]
+dependencies = [
+    "pyyaml>=6",
+    "textual>=8.2.8",
+]
 
 [project.scripts]
 pipeline  = "pipeline.cli.main:main"
