@@ -311,6 +311,8 @@ def test_append_entry_is_not_fooled_by_a_fenced_heading():
     thread = T.sections(out)["Thread"]
     assert "captured" in thread, "the fenced text was lost"
     assert "landed" in thread, "the new entry did not land in Thread"
+    entries = Ticket(path=Path("x"), id="TICKET-001", body=out).thread()
+    assert len(entries) == 2, "the new entry landed inside the fence, not after it"
 
     out2 = T.append_entry(body + "\n## After\ntail\n", "2026-01-01 · planning · note", "landed")
     assert T.sections(out2)["After"] == "tail", "a real section after Thread must still bound it"
