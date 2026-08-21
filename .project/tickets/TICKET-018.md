@@ -21,8 +21,10 @@ lease:
   expires: null
 last_session:
   stage: planning
-  id: d1e42539-c068-4c28-93d7-4c16583269f9
-  log: .project/logs/TICKET-018-planning-d1e42539.log
+  id: 75b23189-48a0-4b93-bc71-bb6fdaa60e76
+  log: .project/logs/TICKET-018-planning-75b23189.log
+approved_by: chezzijr
+approved_at: '2026-08-21T05:11:33.055090+00:00'
 ---
 
 ## Summary
@@ -52,28 +54,37 @@ and a superseded one is noted rather than treated as binding.
 the digest is only checked by `REQUIRED_SECTIONS` (non-empty string), and
 `## Decisions checked` is only regex-matched for something ID-shaped
 (`\b[A-Z]+-\d+\b|DEC-`) -- the ID is never resolved against `.project/decisions/`.
-`active_decisions(project)` in `pipeline/core/ticket.py:224` already returns the
-active records (superseded ones drop out, carrying `SUPERSEDED_MARKER`), so the
-lookup is available. Failing test committed on `ticket/018` as 2e908e9; see
-`## Reproduction`.
+Failing test re-committed on `ticket/018` as `6738a26` (the earlier `2e908e9` was
+lost when a rebase onto main conflicted and was aborted); see `## Reproduction`.
 
-**Plan (2026-08-21):** two checks added to `pipeline/core/gate.py`. (1) `## Digest`
-must have at least `MIN_DIGEST_ENTRIES = 3` non-empty lines, waived by one
-`digest-short: <why fewer>` line -- the escape hatch the design conversation asked
-for. (2) Every `DEC-<n>` cited in `## Decisions checked` is resolved against
-`.project/decisions/` via the existing `active_decisions()`: an id with no record
-is a finding, a superseded one is an `ok:` note (informational, does not fail).
-The count check forces `tests/helpers.py:FIXTURE` to grow a real three-entry
-digest, which drags three string-matching call sites with it -- that coupling, and
-the order that keeps the reproduction test honestly red until the fix lands, is the
-main thing to get right. Nine steps, five files, one commit.
+**Plan (2026-08-21, rewritten): two checks added to `pipeline/core/gate.py`.**
+(1) `## Digest` must have at least `MIN_DIGEST_ENTRIES = 3` non-empty lines,
+waived by one `digest-short: <why fewer>` line -- the escape hatch the design
+conversation asked for. (2) Every `DEC-<n>` cited in `## Decisions checked` is
+resolved against `.project/decisions/` via the existing `active_decisions()`: an
+id with no record is a finding, a superseded one is an `ok:` note that does not
+fail. The count check forces `tests/helpers.py:FIXTURE` to grow a real
+three-entry digest, which drags three digest-matching call sites with it. Nine
+steps, five files, one commit.
 
-**Verified 2026-08-21:** every step was executed in the worktree and then
-reverted, so the code in `## Digest` is transcribed from a run, not drafted.
+**This plan replaces an earlier one that DEC-017 forbids.** `main` moved while
+this ticket sat at the human gate: the decisions directory went from one record
+to five, and one of the new ones -- **DEC-017**, active -- says a test file the
+gate copies onto base "may only import what base has". The earlier plan added
+`from helpers import DIGEST, FIXTURE, project` to `tests/test_gate.py`, which is
+precisely the banned move. It is replaced by a file-local `_set_digest()` helper
+that derives the substitution from `FIXTURE` itself, needs no new import, and
+asserts when it matches nothing -- which also kills the silent-stale-`.replace()`
+hazard the earlier plan called its one gotcha. See `## Digest` for the measured
+proof of both halves.
+
+**Verified 2026-08-21 (this planning run):** every step below was executed in the
+worktree and then reverted, so the code is transcribed from a run, not drafted.
 Observed: step 4 leaves exactly the reproduction test red with the reported
-`AssertionError`; step 9 gives `36 passed` and the whole suite `164 passed`; the
-new test dies under three separate mutations. The worktree is clean again and
-the reproduction test is red, which is what the plan-validation gate requires.
+`AssertionError`; step 9 gives `42 passed` on the two files and `176 passed` on
+the whole suite; the guard script passes; the new test dies under three separate
+mutations. The worktree is clean again and the reproduction test is red, which is
+what the plan-validation gate requires.
 
 ## Reproduction
 
@@ -94,150 +105,179 @@ then asserts the gate rejects it. It does not:
 E       AssertionError: one-word digest and unresolvable DEC-999 both passed the gate
 E       assert not True
 
-tests/test_gate.py:159: AssertionError
+tests/test_gate.py:212: AssertionError
 ```
 
 expect: one-word digest and unresolvable DEC-999 both passed the gate
 
 ## Digest
 
+### Line numbers in this section were re-read on 2026-08-21 after main moved
+
+The previous plan's line refs were stale (triage flagged this). Every number
+below was re-read against `ticket/018` at `6738a26`. `pipeline/core/gate.py` grew
+a base-check path (`_base_findings`) and `tests/test_gate.py` grew
+`_git_ticket_project` plus two base-check tests, which is what moved everything.
+
 ### Where the two weak checks live
 
-`pipeline/core/gate.py` -- the whole Tier A gate, one function, ~150 lines.
+`pipeline/core/gate.py` -- the whole Tier A gate, ~196 lines.
 
-- `REQUIRED_SECTIONS` (line 12) is the only thing that looks at `## Digest`:
-  `if not secs.get(name)`. One word passes.
-- The decisions check is lines 98-101: `re.search(r"\b[A-Z]+-\d+\b|DEC-", dec)`
+- `REQUIRED_SECTIONS` (line 13) is the only thing that looks at `## Digest`. The
+  loop is lines 89-91: `if not secs.get(name)`. One word passes.
+- The decisions check is lines 141-144: `re.search(r"\b[A-Z]+-\d+\b|DEC-", dec)`
   after an early-out on `"none relevant"`. A *shape* match -- `DEC-999` and even
   `TICKET-012` satisfy it. Nothing opens `.project/decisions/`.
-- Findings whose text starts with `ok:` are informational: line 147 computes
+- Findings whose text starts with `ok:` are informational: **line 190** computes
   `failed = [f for f in findings if not f.startswith("ok:")]`, and only `failed`
   decides the verdict. That is the mechanism for "note it, do not fail it".
-- `_cites()` (line 18) is the existing path-citation helper used by the `## Plan`
+- The `pipeline.core.ticket` import is line 8.
+- `_cites()` (line 19) is the existing path-citation helper used by the `## Plan`
   check. Not used by this change -- see `## Decisions`.
 
 ### What already exists to resolve a decision id
 
-`pipeline/core/ticket.py`:
+`pipeline/core/ticket.py` (all re-read, all moved from the old plan's numbers):
 
-- `decisions_dir(project) -> project/.project/decisions` (line 209).
-- `active_decisions(project) -> list[Decision]` (line 224): every `DEC-*.md` in
-  that directory that does not contain `SUPERSEDED_MARKER`, skipping symlinks.
-  `Decision.id` is the file stem (`DEC-003`). Returns `[]` when the directory
-  does not exist -- no exception, which is what the new test's fixture relies on.
-- `SUPERSEDED_MARKER` (line 197) is the HTML comment `record_decision()` appends
-  to a superseded record. Grep for the marker, never for `- superseded-by:`.
-- `SAFE_DEC_ID = ^DEC-\d{1,6}$` (line 189) -- ids are always `DEC-<digits>`, so
-  the new regex resolves only those.
+- `SAFE_DEC_ID = ^DEC-\d{1,6}$` (line 223) -- ids are always `DEC-<digits>`.
+- `SUPERSEDED_MARKER` (line 231) is the HTML comment `record_decision()` appends
+  to a superseded record. Grep for the marker, never for `- superseded-by:`;
+  `tests/test_ticket.py::test_active_decisions_ignores_a_coincidental_superseded_by_line_in_body_text`
+  exists because a loose scan drops an active record on a coincidence.
+- `Decision` dataclass (line 235): `id`, `path`, `text`. `id` is the file stem.
+- `decisions_dir(project) -> project/.project/decisions` (line 243).
+- `active_decisions(project) -> list[Decision]` (line 256): every `DEC-*.md` in
+  that directory that does not contain `SUPERSEDED_MARKER`, **skipping
+  symlinks**. Returns `[]` when the directory does not exist -- no exception,
+  which is what the reproduction test's fixture relies on (it has no
+  `.project/decisions/` at all).
 
 Resolve against `project`, not `workdir`: `gate()` already reads the ticket from
-`ticket_path(project, tid)`, and `record_decision()` writes records to the
-project root. The worktree copy is a checkout of the base branch and can be
+`ticket_path(project, tid)` (line 71), and `record_decision()` writes records to
+the project root. The worktree copy is a checkout of the base branch and can be
 stale.
 
-### The fixture coupling -- the one gotcha in this ticket
+### The DEC-017 constraint -- the thing that changed this plan
+
+`pipeline/core/gate.py:_base_findings` (lines 28-66) copies **only the test
+file** onto a throwaway checkout of base and runs it there:
+
+```python
+rel = test.split("::")[0]          # "tests/test_gate.py"
+dst = base_wt / rel
+shutil.copy2(wd / rel, dst)        # the branch's test, base's everything-else
+```
+
+`tests/helpers.py` is **not** copied. So a `from helpers import <new name>` added
+to `tests/test_gate.py` on the branch raises `ImportError` on base, pytest exits
+non-zero with a collection error, the node name never appears in the output, and
+the `node not in out` guard (line 59) reports "errored rather than failed on
+base". DEC-017 states this rule and names it as the reason `_git_ticket_project`
+lives inside `tests/test_gate.py` rather than in `tests/helpers.py`.
+
+Measured both ways during planning, by writing base's `tests/helpers.py` next to
+the branch's `tests/test_gate.py` and importing:
+
+| form | result |
+|---|---|
+| `_set_digest()` local to `tests/test_gate.py`, imports only `re` | `IMPORT OK`, and it works on base's one-line `FIXTURE` too |
+| `from helpers import DIGEST, FIXTURE, project` | `ImportError: cannot import name 'DIGEST' from 'helpers'` |
+
+The gate does not run again after `implementing` (`transition()` reaches the gate
+only at `plan-validation` and `revalidating`), so the banned form would probably
+not have bitten *this* ticket -- except via `("implementing", "blocked")`, which
+routes back to `plan-validation` and re-gates a branch that already has the new
+import. Either way DEC-017 is active and binding, so the plan complies rather
+than gambling on the path not being taken.
+
+### The fixture coupling
 
 `tests/helpers.py:FIXTURE` is the canonical "complete ticket" and its `## Digest`
-is a single line, `thing.py holds it`. A minimum-entry-count check fails it, so
-`test_gate_passes_a_complete_ticket`, `test_an_acceptance_criterion_must_name_something_test_shaped`,
+is a single line, `thing.py holds it` (line 25). A minimum-entry-count check
+fails it, so `test_gate_passes_a_complete_ticket`,
+`test_an_acceptance_criterion_must_name_something_test_shaped`,
 `test_gate_passes_a_failure_that_matches_the_reported_one` and
-`tests/test_ticket.py::test_the_dispatcher_writes_typed_thread_entries` (line 269,
-`assert gate(d, "TICKET-001")[0]`) all go red unless the fixture grows a real digest.
+`tests/test_ticket.py::test_the_dispatcher_writes_typed_thread_entries` (line
+269, `assert gate(d, "TICKET-001")[0]`) all go red unless the fixture grows a
+real digest.
 
-Three places string-match that digest text and must move with it:
+Three places match that digest text and must move with it (re-grepped; these
+three are the only ones):
 
 | file:line | today |
 |---|---|
-| `tests/test_gate.py:18` | `.replace("## Digest\nthing.py holds it\n", "## Digest\n")` |
-| `tests/test_gate.py:156` | `.replace("## Digest\nthing.py holds it\n", "## Digest\nx\n")` |
+| `tests/test_gate.py:49` | `.replace("## Digest\nthing.py holds it\n", "## Digest\n")` |
+| `tests/test_gate.py:209` | `.replace("## Digest\nthing.py holds it\n", "## Digest\nx\n")` |
 | `tests/test_ticket.py:22` | `t.section("Digest") == "thing.py holds it"` |
 
-**A stale `.replace()` here is silent** -- it no-ops and the test then runs against
-an unmodified fixture. Step 1 introduces a `DIGEST` constant in `tests/helpers.py`
-so the replacement text has exactly one definition; steps 2 and 3 switch the call
-sites to it. Do the fixture steps *before* the `gate.py` steps: after step 4 the
-reproduction test must still be red for the reported reason, which proves the
-replace strings still bite.
+A stale `.replace()` here is **silent** -- it no-ops and the test then runs
+against an unmodified fixture. `_set_digest()` (step 3) removes the hazard rather
+than documenting it: it derives the span from `FIXTURE` and asserts `n == 1`, so
+drift is loud. Do the fixture steps *before* the `gate.py` steps -- after step 4
+the reproduction test must still be red for the reported reason, which proves the
+substitution still bites.
 
 ### Code for each step
 
-Step 1 -- `tests/helpers.py`. Replace lines 6-35 (from `ROOT = ...` through the
-closing `"""` of `FIXTURE`) with exactly this.
-
-**The block below is indented by 4 spaces. De-indent every line by exactly 4
-before writing the file.** The indent exists only so that this ticket's own
-`sections()` parser -- `^##\s+(.+?)\s*$`, which does not respect markdown
-fences -- does not read the fixture's `## Digest` as a section of *this* ticket.
+**Step 1** -- `tests/helpers.py`, line 25. Replace the single digest line with
+three entries. This is the only edit to this file; no new export, so DEC-017 is
+not engaged.
 
 ```python
-    ROOT = Path(__file__).resolve().parent.parent
-
-    DIGEST = ("- thing.py holds it\n"
-              "- cache() is the entry point\n"
-              "- eviction runs on write, not read\n")
-
-    FIXTURE = """---
-    id: TICKET-001
-    stage: plan-validation
-    class: bugfix
-    branch: ticket/001
-    test_file: test_thing.py::test_broken
-    files_declared: [thing.py]
-    counters: {}
-    lease: {holder: null, expires: null}
-    ---
-
-    ## Summary
-    x
-    ## Reproduction
-    fails
-    expect: test_broken
-    ## Digest
-    """ + DIGEST + """## Decisions checked
-    none relevant (grepped: cache, evict)
-    ## Plan
-    1. fix thing.py
-    ## Acceptance criteria
-    - `test_broken` passes
-    ## Rollback
-    revert
-    ## Thread
-    """
+## Digest
+- thing.py holds it
+- cache() is the entry point
+- eviction runs on write, not read
+## Decisions checked
 ```
 
-Concatenation, not an f-string: the fixture contains
-`lease: {holder: null, expires: null}`, whose braces an f-string would try to
-interpolate. `DIGEST` already ends in a newline, so no blank line appears between
-the three entries and the decisions header, and the reopened literal must keep
-`## Decisions checked` hard against the closing `"""` on the same source line.
+(the `## Digest` and `## Decisions checked` lines already exist and are unchanged;
+only `thing.py holds it` becomes the three `- ` entries)
 
-This exact splice was executed and diffed during planning: the resulting
-`FIXTURE` differs from `git show HEAD:tests/helpers.py`'s in the digest body and
-nowhere else (`-thing.py holds it` -> the three `- ` entries). To re-check after
-editing, run from the repo root:
-
-```sh
-uv run --group dev python -c "import sys; sys.path.insert(0,'tests'); from helpers import FIXTURE; print(FIXTURE)"
-```
-
-Step 2 -- `tests/test_ticket.py:22`:
+**Step 2** -- `tests/test_ticket.py:22`:
 
 ```python
     assert t.klass == "bugfix" and t.section("Digest").startswith("- thing.py holds it")
 ```
 
-Step 3 -- `tests/test_gate.py`, import line 4 and the two call sites:
+**Step 3** -- `tests/test_gate.py`. Add `import re` above `import shutil` (line 2),
+and insert this helper after the `from pipeline.core.gate import gate` import,
+above `_git_ticket_project`:
 
 ```python
-from helpers import DIGEST, FIXTURE, project
-...
-    d = project(FIXTURE.replace(DIGEST, ""))                      # line 18
-...
-    d = project(FIXTURE.replace(DIGEST, "x\n")                    # line 156
-                       .replace("none relevant (grepped: cache, evict)", "DEC-999"))
+def _set_digest(body: str) -> str:
+    """FIXTURE with its `## Digest` content replaced by `body`.
+
+    Derived from the fixture rather than matched against a copy of its digest
+    text: a `.replace()` of a literal that has drifted no-ops *silently* and
+    leaves the test asserting against an unmodified fixture. The assert below
+    is what makes that drift loud.
+
+    Deliberately local to this file, and stdlib-only, rather than a constant
+    imported from `helpers`: DEC-017 -- the gate copies THIS file onto a
+    checkout of base and imports it there, so a name that exists only on the
+    branch turns the base run into a collection error."""
+    out, n = re.subn(r"(?<=^## Digest\n).*?(?=^## Decisions checked$)",
+                     body, FIXTURE, flags=re.S | re.M)
+    assert n == 1, "FIXTURE's `## Digest` section moved -- _set_digest is stale"
+    return out
 ```
 
-Step 5 -- `pipeline/core/gate.py`, module level, under `REQUIRED_SECTIONS`:
+Then the two call sites. `tests/test_gate.py:49` becomes:
+
+```python
+    d = project(_set_digest(""))
+```
+
+and `tests/test_gate.py:209` becomes:
+
+```python
+    d = project(_set_digest("x\n")
+                .replace("none relevant (grepped: cache, evict)", "DEC-999"))
+```
+
+**Step 5** -- `pipeline/core/gate.py`, module level, appended under the
+`REQUIRED_SECTIONS` list (after line 16):
 
 ```python
 # A digest exists so the next stage does not re-explore the codebase, and
@@ -251,8 +291,7 @@ DIGEST_SHORT_RE = re.compile(r"^\s*digest-short:\s*\S", re.M)
 DEC_ID_RE = re.compile(r"\bDEC-\d{1,6}\b")
 ```
 
-Step 5 -- `pipeline/core/gate.py`, immediately after the `REQUIRED_SECTIONS` loop
-(after line 49's `findings.append(f"section `## {name}` missing or empty")` block):
+and, in `gate()`, immediately after the `REQUIRED_SECTIONS` loop (after line 91):
 
 ```python
     # An empty `## Digest` is already reported above; skip rather than double-report.
@@ -266,11 +305,16 @@ Step 5 -- `pipeline/core/gate.py`, immediately after the `REQUIRED_SECTIONS` loo
                 f"gotchas) or one `digest-short: <why fewer>` line")
 ```
 
-Step 6 -- `pipeline/core/gate.py`, import on line 7 and the block replacing lines 98-101:
+**Step 6** -- `pipeline/core/gate.py`, the import on line 8 becomes:
 
 ```python
-from pipeline.core.ticket import Ticket, active_decisions, decisions_dir, ticket_path
-...
+from pipeline.core.ticket import (Ticket, active_decisions, decisions_dir,
+                                  ticket_path)
+```
+
+and lines 141-144 are replaced by:
+
+```python
     dec = secs.get("Decisions checked", "")
     cited = sorted(set(DEC_ID_RE.findall(dec)))
     if dec and "none relevant" not in dec.lower() and not cited:
@@ -294,20 +338,23 @@ from pipeline.core.ticket import Ticket, active_decisions, decisions_dir, ticket
                 findings.append(f"ok: {cid} is superseded -- history, not binding")
 ```
 
-Step 7 -- `tests/test_gate.py`, appended at the end of the file:
+**Step 7** -- `tests/test_gate.py`, appended at the end of the file (after
+`test_gate_blocks_a_one_word_digest_and_an_unresolvable_decision_id`, which is
+currently last). `shutil` and `T` are already imported at lines 2 and 8:
 
 ```python
 def test_gate_notes_a_superseded_decision_and_accepts_a_justified_short_digest():
     """A cited id that resolves must not fail; a superseded one is history, not
     a finding; and a short digest passes only when it says why it is short."""
-    d = project(FIXTURE.replace(DIGEST, "digest-short: one file, one line\n"
-                                        "- thing.py holds it\n")
-                       .replace("none relevant (grepped: cache, evict)",
-                                "checked DEC-002 (superseded) and DEC-003"))
+    d = project(_set_digest("digest-short: one file, one line\n"
+                            "- thing.py holds it\n")
+                .replace("none relevant (grepped: cache, evict)",
+                         "checked DEC-002 (superseded) and DEC-003"))
     dec = d / ".project" / "decisions"
     dec.mkdir()
     (dec / "DEC-002.md").write_text(
-        "# DEC-002\n\nold\n\n%s\n- superseded-by: DEC-003 (2026-08-21)\n" % T.SUPERSEDED_MARKER)
+        "# DEC-002\n\nold\n\n%s\n- superseded-by: DEC-003 (2026-08-21)\n"
+        % T.SUPERSEDED_MARKER)
     (dec / "DEC-003.md").write_text("# DEC-003\n\nstill binding\n")
     ok, failures = gate(d, "TICKET-001")
     assert ok, failures
@@ -326,17 +373,17 @@ turned it red:
 | `elif cid not in active:` -> `elif True:` **and** drop the `ok:` prefix | FAIL -- `ok` goes false |
 
 The third mutation is stated precisely because the obvious version of it does
-not work: changing only `elif cid not in active:` to `elif True:` leaves the
-test **green**, since the extra finding still carries the `ok:` prefix that line
-147 excludes from the verdict. Dropping the prefix is what makes a resolvable id
+not work: changing only `elif cid not in active:` to `elif True:` leaves the test
+**green**, since the extra finding still carries the `ok:` prefix that line 190
+excludes from the verdict. Dropping the prefix is what makes a resolvable id
 fail. Anyone re-deriving this list will hit the same trap.
 
-Step 8 -- `pipeline/stages/planning.md`. Two continuation lines, each appended to
-the **end** of a bullet, not after the bullet's first line. Indent both by 2
-spaces so they stay part of the bullet:
+**Step 8** -- `pipeline/stages/planning.md`. Two continuation lines, each appended
+to the **end** of a bullet, not after the bullet's first line, indented by 2
+spaces so they stay part of the bullet. Line numbers re-read and still current:
 
-- the `## Digest` bullet spans lines 22-23 and ends `...re-explores the
-  codebase from scratch.` -- insert after line 23;
+- the `## Digest` bullet spans lines 22-23 and ends `...re-explores the codebase
+  from scratch.` -- insert after line 23;
 - the `## Decisions checked` bullet spans lines 24-38 and ends ``...with
   `supersedes: DEC-<n> -- reason`, below.`` -- insert after line 38, before the
   `- ## Plan` bullet that starts on line 39.
@@ -353,41 +400,72 @@ spaces so they stay part of the bullet:
   than as a constraint.
 ```
 
+### Gotchas the implementer will otherwise hit
+
+- **The dangerous-commands guard blocks heredocs and `python -c` with complex
+  quoting** from a stage prompt ("command does not parse as a shell command").
+  Both triage and this stage hit it. Use the file-edit tool for every edit below.
+- **`pytest` does not collect the guard's tables.** Run
+  `./pipeline/hooks/test_dangerous_commands.py` directly. This change does not
+  touch the guard, but the repo's rule stands; it passed during planning.
+- **`tests/test_ticket.py` has four pre-existing Pyright complaints** at lines
+  367-383 (`Argument of type "None" ... parameter "path"`). They are not from
+  this change and are out of scope -- do not "fix" them in this commit.
+
 ### Commands
 
 ```sh
 uv run --group dev pytest -q tests/test_gate.py tests/test_ticket.py
-./pipeline/hooks/test_dangerous_commands.py    # untouched here, but it is not collected by pytest
+uv run --group dev pytest -q
+./pipeline/hooks/test_dangerous_commands.py
 ```
 
 ## Decisions checked
 
-`.project/decisions/` holds exactly one record: **DEC-011** (the daemon's
-cross-agent contract). Read in full.
+`.project/decisions/` now holds **five** records: DEC-011, DEC-016, DEC-017,
+DEC-019, DEC-020. None carries the `<!-- pipeline:superseded-by -->` marker
+(`grep -c` returns 0 for all five), so all five are active and binding. The
+previous plan's claim that this directory held only DEC-011 was written before
+main moved and was stale; all five were re-read for this plan.
 
-- **DEC-011 -- consulted, complies.** It freezes the event vocabulary, and the
-  `gate` kind carries `{verdict, findings:[...]}`. This change only adds new
-  strings to `findings`, which DEC-011 calls out as additive and fine ("Adding a
-  `kind` or a field inside `data` is additive and fine"). No column, kind name or
-  field meaning changes, so no superseding record is needed.
-- Not superseded (no `superseded-by:` footer), so it binds; nothing here
-  contradicts it.
+- **DEC-017 -- consulted, and it changed this plan.** "Test files that the gate
+  copies onto base may only import what base has." The previous plan added
+  `from helpers import DIGEST, ...` to `tests/test_gate.py`, which is exactly the
+  banned move; measured, it raises `ImportError` against base's `tests/helpers.py`.
+  Replaced with the file-local `_set_digest()` (stdlib `re` only). DEC-017 also
+  requires the base run and the `node not in out` guard to stay -- this change
+  touches neither `_base_findings` nor `base_ref`. **Complies; nothing superseded.**
+- **DEC-016 -- consulted, complies, and it simplifies the plan.** Fence state is
+  parsed once in `_fenced()` and every heading scan consults it, so
+  `sections()` (`pipeline/core/ticket.py:139`) does not read a `##` line inside a
+  fenced block as a heading. That is why this ticket's `## Digest` can show the
+  fixture's own `## Digest` line verbatim inside a ```` ```python ```` fence with
+  no indent dodge. This change adds no fourth heading scan and keeps storage as
+  plain markdown.
+- **DEC-011 -- consulted, complies.** It freezes the event vocabulary; the `gate`
+  kind carries `{verdict, findings:[...]}`. This change only adds new strings to
+  `findings`, which DEC-011 calls out as additive and fine. No column, kind name
+  or field meaning changes.
+- **DEC-019 -- read, not relevant.** TUI resize/writer semantics
+  (`pipeline/tui/app.py`); no overlap.
+- **DEC-020 -- read, not relevant.** Stdout line buffering in the two entry
+  points; no overlap.
 
 Grep terms used across `.project/decisions/`: `gate`, `digest`,
-`Decisions checked`, `Tier A`, `DEC-`. Only the DEC-011 hits above, all about the
-daemon's `gate` *event*, not the gate's checks.
+`Decisions checked`, `Tier A`, `DEC-`, `decision`, `helpers`, `import`,
+`superseded`, `symlink`.
 
 ## Plan
 
-1. In `tests/helpers.py`, replace lines 6-35 with the de-indented block shown under "Step 1" in `## Digest`, adding the `DIGEST` constant and splicing it into `FIXTURE` so the fixture's digest is three entries with one definition.
-2. In `tests/test_ticket.py`, change the exact-equality digest assertion on line 22 to the `startswith` form shown under "Step 2" in `## Digest`.
-3. In `tests/test_gate.py`, import `DIGEST` from helpers and switch both digest `.replace(...)` call sites (lines 18 and 156) to it, per "Step 3" in `## Digest`.
-4. Run `uv run --group dev pytest -q tests/test_gate.py tests/test_ticket.py` and confirm the only red is `tests/test_gate.py::test_gate_blocks_a_one_word_digest_and_an_unresolvable_decision_id`, still failing with `AssertionError: one-word digest and unresolvable DEC-999 both passed the gate` -- a different message means a `.replace()` in `tests/test_gate.py` went stale and step 3 is wrong.
-5. In `pipeline/core/gate.py`, add `MIN_DIGEST_ENTRIES`, `DIGEST_SHORT_RE` and `DEC_ID_RE` under `REQUIRED_SECTIONS`, and insert the digest entry-count check right after the `REQUIRED_SECTIONS` loop, both verbatim from "Step 5" in `## Digest`.
-6. In `pipeline/core/gate.py`, widen the line-7 import to `active_decisions, decisions_dir` and replace the `## Decisions checked` block (lines 98-101) with the resolution block verbatim from "Step 6" in `## Digest`.
-7. In `tests/test_gate.py`, append `test_gate_notes_a_superseded_decision_and_accepts_a_justified_short_digest` verbatim from "Step 7" in `## Digest`.
+1. In `tests/helpers.py`, replace the single digest line `thing.py holds it` (line 25) with the three `- ` entries shown under "Step 1" in `## Digest`, leaving the surrounding `## Digest` and `## Decisions checked` header lines untouched and adding no new module-level name.
+2. In `tests/test_ticket.py`, change the exact-equality digest assertion on line 22 to the `startswith("- thing.py holds it")` form shown under "Step 2" in `## Digest`.
+3. In `tests/test_gate.py`, add `import re` at line 2 and insert the `_set_digest()` helper verbatim from "Step 3" in `## Digest` after the `gate` import, then switch the two digest call sites (lines 49 and 209) to it; do NOT add any new name to the `from helpers import` line, per DEC-017.
+4. Run `uv run --group dev pytest -q tests/test_gate.py tests/test_ticket.py` and confirm the only red is `tests/test_gate.py::test_gate_blocks_a_one_word_digest_and_an_unresolvable_decision_id`, still failing with `AssertionError: one-word digest and unresolvable DEC-999 both passed the gate` -- any other message means step 3's helper in `tests/test_gate.py` is wrong, and its own `assert n == 1` should have said so.
+5. In `pipeline/core/gate.py`, add `MIN_DIGEST_ENTRIES`, `DIGEST_SHORT_RE` and `DEC_ID_RE` after the `REQUIRED_SECTIONS` list (line 16), and insert the digest entry-count check right after the `REQUIRED_SECTIONS` loop (line 91), both verbatim from "Step 5" in `## Digest`.
+6. In `pipeline/core/gate.py`, widen the line-8 import to bring in `active_decisions` and `decisions_dir`, and replace the `## Decisions checked` block at lines 141-144 with the resolution block verbatim from "Step 6" in `## Digest`.
+7. In `tests/test_gate.py`, append `test_gate_notes_a_superseded_decision_and_accepts_a_justified_short_digest` verbatim from "Step 7" in `## Digest` to the end of the file.
 8. In `pipeline/stages/planning.md`, insert the two 2-space-indented continuation lines from "Step 8" in `## Digest` after line 23 and after line 38 respectively, so the agent that must satisfy these checks is told the rule.
-9. Run `uv run --group dev pytest -q tests/test_gate.py tests/test_ticket.py` and confirm every test passes, including the reproduction test that was red at step 4, then commit `pipeline/core/gate.py`, `tests/helpers.py`, `tests/test_gate.py`, `tests/test_ticket.py` and `pipeline/stages/planning.md` in one commit.
+9. Run `uv run --group dev pytest -q tests/test_gate.py tests/test_ticket.py`, then `uv run --group dev pytest -q`, then `./pipeline/hooks/test_dangerous_commands.py`, confirm all three are green, and commit `pipeline/core/gate.py`, `tests/helpers.py`, `tests/test_gate.py`, `tests/test_ticket.py` and `pipeline/stages/planning.md` in one commit.
 
 ## Acceptance criteria
 
@@ -399,18 +477,22 @@ daemon's `gate` *event*, not the gate's checks.
   the entry count.
 - `tests/test_gate.py::test_gate_passes_a_complete_ticket` still passes -- the
   three-entry fixture digest clears `MIN_DIGEST_ENTRIES`.
-- `tests/test_gate.py::test_gate_blocks_an_empty_digest` still passes -- an empty
-  digest is reported once, by `REQUIRED_SECTIONS`, not twice.
+- `tests/test_gate.py::test_gate_blocks_an_empty_digest` still passes via the
+  rewritten `_set_digest("")` call site -- the `assert n == 1` inside
+  `_set_digest` is what fails loudly if the fixture's digest span ever moves,
+  which is the check no test previously had.
 - `tests/test_ticket.py::test_unknown_frontmatter_survives_a_save` and
   `tests/test_ticket.py::test_the_dispatcher_writes_typed_thread_entries` still
   pass -- the fixture change did not break the round-trip or the `gate()` call at
   `tests/test_ticket.py:269`.
 - Whole run of `uv run --group dev pytest -q tests/test_gate.py tests/test_ticket.py`
-  is green at step 9 -- observed during planning as `36 passed`.
+  is green at step 9 -- observed during planning as `42 passed`.
 - The whole `tests/` suite, `uv run --group dev pytest -q`, is green -- observed
-  during planning as `164 passed`. Seven files import `tests/helpers.py`, so the
-  fixture change is not confined to `tests/test_gate.py` and `tests/test_ticket.py`
-  even though only those three call sites string-match its digest.
+  during planning as `176 passed`. Seven files import `tests/helpers.py`, so the
+  fixture change is not confined to the two files that match its digest.
+- `./pipeline/hooks/test_dangerous_commands.py` still exits 0 -- observed during
+  planning as `guard: all passed`. Not collected by pytest, so the suite run
+  above does not cover it.
 
 ## Decisions
 
@@ -421,16 +503,35 @@ a checkout of the base branch and its `.project/decisions/` can be stale, while
 there. Resolving against `workdir` would let a plan cite a record that was
 superseded after the branch was cut.
 
+**`tests/test_gate.py` must never grow a new `from helpers import` name.** This is
+DEC-017's rule and it is why `_set_digest()` is a file-local function rather than
+a `DIGEST` constant in `tests/helpers.py`, which is the obvious and wrong
+refactor. The gate copies only the test file onto a checkout of base
+(`pipeline/core/gate.py:_base_findings`, `shutil.copy2(wd / rel, dst)`);
+`tests/helpers.py` stays at base's version, so a branch-only name is an
+`ImportError` there, which the gate reports as "errored rather than failed on
+base" -- blocking the very ticket that added it. Measured, not assumed: the
+banned form raises `ImportError: cannot import name 'DIGEST' from 'helpers'`
+against base's helpers, and `_set_digest()` imports clean. If a later change
+wants to share digest-editing with another test file, copy the function; do not
+hoist it into `tests/helpers.py`.
+
+`_set_digest()` asserts `n == 1` on its own `re.subn`, and that assert is the
+point of the function, not decoration. The pattern it replaces -- a
+`.replace("## Digest\nthing.py holds it\n", ...)` literal -- fails *silently*
+when the fixture drifts: the replace no-ops and the test then asserts against an
+unmodified fixture, passing vacuously. Do not simplify the assert away.
+
 Three rules that look arbitrary and are not:
 
 - **A cited id with no record fails; a superseded one is a note, not a failure.**
   Superseded records stay on disk on purpose (they are still why something was
   once done that way), so citing one is legitimate; only treating it as *binding*
   is wrong, and that is Tier B judgment, not a deterministic check. The note is
-  emitted with the `ok:` prefix, which line 147 of `pipeline/core/gate.py`
-  excludes from the verdict. **Do not "fix" that prefix away** -- it is load
-  bearing, and dropping it is exactly what turns a resolvable citation into a
-  gate failure. Confirmed by mutation during planning: remove the prefix and
+  emitted with the `ok:` prefix, which `pipeline/core/gate.py:190` excludes from
+  the verdict. **Do not "fix" that prefix away** -- it is load bearing, and
+  dropping it is exactly what turns a resolvable citation into a gate failure.
+  Confirmed by mutation during planning: remove the prefix and
   `test_gate_notes_a_superseded_decision_and_accepts_a_justified_short_digest`
   goes red, so the test does defend it.
 - **A symlinked `DEC-*.md` counts as absent, not as superseded.** `active_decisions()`
@@ -440,7 +541,8 @@ Three rules that look arbitrary and are not:
 - **`DEC_ID_RE` is `DEC-<digits>` only**, deliberately narrower than the old
   `\b[A-Z]+-\d+\b`, which accepted `TICKET-012` as a decision citation. Every id
   `record_decision()` can produce matches `SAFE_DEC_ID`; anything else in that
-  section is prose.
+  section is prose. Consequence, intended: a `## Decisions checked` whose only
+  citation is `TICKET-<n>`-shaped now fails where it used to pass.
 
 `MIN_DIGEST_ENTRIES = 3` counts non-empty lines and is a floor, not a quality bar
 -- three empty bullets still pass it. Its job is to kill the degenerate one-word
@@ -449,22 +551,20 @@ digest; judging whether a digest is *useful* is the plan-validation stage's.
 ("minimum N entries or explicit justification for fewer"): an agent that needs
 fewer says why in a line a human can grep, instead of padding to a number.
 
-`tests/helpers.py:FIXTURE` now carries a three-entry digest, and `DIGEST` exists so
-the replacement text has one definition. Every `.replace()` against the fixture's
-digest must go through that constant: a stale literal no-ops silently and leaves a
-test asserting against an unmodified fixture.
-
 ## Rollback
 
 Revert the single commit from step 9. It is self-contained: `pipeline/core/gate.py`
 returns to the two non-emptiness checks, `tests/helpers.py` to the one-line digest,
-and the three test files to matching it. Nothing else imports `MIN_DIGEST_ENTRIES`,
-`DIGEST_SHORT_RE` or `DEC_ID_RE`, no on-disk format changes, and no ticket already
-merged becomes invalid -- the checks only run when a ticket passes the gate again.
-Partial rollback is not safe: reverting `pipeline/core/gate.py` alone leaves
+`tests/test_gate.py` loses `_set_digest` and the new test, and
+`tests/test_ticket.py` returns to exact equality. Nothing else imports
+`MIN_DIGEST_ENTRIES`, `DIGEST_SHORT_RE` or `DEC_ID_RE`, no on-disk format
+changes, and no ticket already merged becomes invalid -- the checks only run when
+a ticket passes the gate again. Partial rollback is not safe: reverting
+`pipeline/core/gate.py` alone leaves
 `tests/test_gate.py::test_gate_notes_a_superseded_decision_and_accepts_a_justified_short_digest`
-red, and reverting `tests/helpers.py` alone turns every fixture `.replace()` into
-a no-op.
+red, and reverting `tests/helpers.py` alone trips `_set_digest`'s own
+`assert n == 1` only if the headers move -- otherwise it silently restores the
+one-line digest that `MIN_DIGEST_ENTRIES` rejects, turning four tests red.
 
 ## Thread
 
@@ -630,7 +730,7 @@ ______ test_gate_blocks_a_one_word_digest_and_an_unresolvable_decision_id ______
 E       AssertionError: one-word digest and unresolvable DEC-999 both passed the gate
 E       assert not True
 
-tests/test_gate.py:159: AssertionError
+tests/test_gate.py:212: AssertionError
 =========================== short test summary info ============================
 FAILED tests/test_gate.py::test_gate_blocks_a_one_word_digest_and_an_unresolvable_decision_id
 !!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -639,5 +739,282 @@ FAILED tests/test_gate.py::test_gate_blocks_a_one_word_digest_and_an_unresolvabl
 ```
 
 ### 2026-08-21 04:37:46Z · plan-validation · note
+
+`plan-validation` was interrupted; lease released
+
+### 2026-08-21 05:06:10Z · plan-validation · gate · verdict=PASS
+
+**Tier A gate: PASS**
+
+- ok: `tests/test_gate.py::test_gate_blocks_a_one_word_digest_and_an_unresolvable_decision_id` fails as required
+```
+==== FAILURES ===================================
+______ test_gate_blocks_a_one_word_digest_and_an_unresolvable_decision_id ______
+
+    def test_gate_blocks_a_one_word_digest_and_an_unresolvable_decision_id():
+        """Both Tier A content checks are non-emptiness only: a digest of one word
+        passes, and a cited `DEC-999` passes though no such record exists in
+        `.project/decisions/`."""
+        d = project(FIXTURE.replace("## Digest\nthing.py holds it\n", "## Digest\nx\n")
+                           .replace("none relevant (grepped: cache, evict)", "DEC-999"))
+        ok, failures = gate(d, "TICKET-001")
+>       assert not ok, "one-word digest and unresolvable DEC-999 both passed the gate"
+E       AssertionError: one-word digest and unresolvable DEC-999 both passed the gate
+E       assert not True
+
+tests/test_gate.py:212: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_gate.py::test_gate_blocks_a_one_word_digest_and_an_unresolvable_decision_id
+!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!!
+============================== 1 failed in 0.03s ===============================
+
+```
+
+### 2026-08-21 · plan-validation · note
+
+**Tier B: PASS.** Every claim of position and content in the plan was re-read
+against the worktree, not taken on trust. Item by item:
+
+- **Root cause, stated independently.** `gate()` never inspects the *content* of
+  the two sections it names. `## Digest` is reached only by the `REQUIRED_SECTIONS`
+  loop (`gate.py:47-49`, `if not secs.get(name)`), so any single character passes;
+  `## Decisions checked` is a shape match (`gate.py:99`,
+  `re.search(r"\b[A-Z]+-\d+\b|DEC-", dec)`) that never opens
+  `.project/decisions/`. Both checks answer "is there text here", and the design
+  asked "is there a check here". The plan changes the two checks in `gate.py`,
+  which is where the wrong question is asked -- it does not special-case the
+  reproduction ticket, and the new checks bite on any ticket, so this is the root
+  cause and not the symptom.
+- **Decision conflict: none.** `.project/decisions/` holds exactly one record and
+  it is `DEC-011` (verified by `ls`; `pipeline:superseded-by` marker count is 0,
+  so it is active and binding). Read it: it freezes the SQLite schema, the event
+  kind vocabulary and the socket protocol, and states in the record itself that
+  "Adding a `kind` or a field inside `data` is additive and fine". This change
+  adds only new strings to the existing `gate` event's `findings` list -- no
+  column, no kind, no changed field meaning. Complies; no superseding record
+  needed. The plan's citation is accurate, not decorative.
+- **Scope: one step is not covered by a criterion, and it should not be dropped.**
+  Steps 1-3 (the `DIGEST` constant and the three call sites) are forced by the
+  count check and are covered by the "still passes" criteria; steps 5-7 map to the
+  two behavioural criteria; steps 4 and 9 are the two verification runs. Step 8
+  (`pipeline/stages/planning.md`) has no acceptance criterion and cannot have one
+  -- no test in `tests/` reads that file (grepped: zero hits). It is the wiring
+  half of the change: a gate rule the planning stage is never told about would
+  bounce every future plan for a rule it was never given. Documentation-only, two
+  continuation lines, no code path. Kept.
+- **Criteria are falsifiable.** The reproduction test fails today with the quoted
+  `AssertionError`, and the new
+  `test_gate_notes_a_superseded_decision_and_accepts_a_justified_short_digest`
+  carries three executed mutations, including the trap that the obvious mutation
+  (`elif cid not in active:` -> `elif True:`) leaves it *green* because the `ok:`
+  prefix is filtered at `gate.py:147`. That is the opposite of a vacuous test.
+  One criterion overstates slightly: `test_gate_blocks_an_empty_digest` asserts
+  `any("Digest" in f ...)` and so would still pass if an empty digest were
+  reported twice -- the `if dig.strip()` guard is what prevents the double report,
+  and no test pins it. Not worth a bounce; noted for review.
+- **No research left.** Every step names a file, a line range and verbatim code.
+  Spot-checked every position: `REQUIRED_SECTIONS` is `gate.py:12`, the decisions
+  block is `gate.py:98-101`, the `ok:` filter is `gate.py:147`, the import is
+  `gate.py:7`; `decisions_dir` `ticket.py:209`, `active_decisions` `ticket.py:224`,
+  `SUPERSEDED_MARKER` `ticket.py:197`, `SAFE_DEC_ID` `ticket.py:189`;
+  `helpers.py` lines 6-35 are exactly `ROOT` through the close of `FIXTURE`;
+  `planning.md`'s `## Digest` bullet is lines 22-23 and the `## Decisions checked`
+  bullet is 24-38 with `- ## Plan` starting at 39. All correct.
+- **Riskiest step: the fixture splice (step 1), and its tripwire is step 4.**
+  A stale `.replace()` no-ops silently, leaving a test asserting against an
+  unmodified fixture -- the failure mode that looks green. The plan names it,
+  routes all three call sites through one `DIGEST` constant, orders the fixture
+  edits before `gate.py`, and states the fallback: at step 4 the reproduction test
+  must still be red with the *reported* message, and any other message means step 3
+  is wrong. A print-the-fixture command is given as the second check. Adequate.
+- **Regression surface, independently enumerated.** Grepped for the digest text:
+  exactly three string-match sites exist (`test_gate.py:18`, `test_gate.py:156`,
+  `test_ticket.py:22`), matching the plan's table -- no fourth. `test_ticket.py:269`
+  calls `gate()` on the default fixture, whose `## Decisions checked` says "none
+  relevant", so it never reaches the new lookup and only needs the three-entry
+  digest. Seven test files import `helpers`; the whole-suite criterion covers them.
+  One behaviour change is wider than the tests: `DEC_ID_RE` is narrower than the old
+  `\b[A-Z]+-\d+\b`, so a `## Decisions checked` whose only citation is
+  `TICKET-012`-shaped now fails where it passed. No existing test covers that
+  branch, and the plan argues the narrowing deliberately in `## Decisions`. It is
+  a tightening of a gate, applied to tickets that re-enter the gate -- intended,
+  not collateral.
+- **Blast radius matches `bugfix`.** Five files, one commit: one production file
+  (`pipeline/core/gate.py`), three test files dragged in by the fixture coupling,
+  one prompt file for the rule text. No new module, no dependency, no format change.
+
+Verdict: pass. Nothing here needs the plan reworked.
+
+### 2026-08-21 05:10:07Z · plan-validation · session · session=83d75974-3658-44e9-8ddd-cff49532461c
+
+`plan-validation` ran as session `83d75974-3658-44e9-8ddd-cff49532461c`
+- replay: `claude --resume 83d75974-3658-44e9-8ddd-cff49532461c`
+- log: `.project/logs/TICKET-018-plan-validation-83d75974.log`
+
+### 2026-08-21 05:10:07Z · plan-validation · transition · to=awaiting-approval · result=ok
+
+**plan-validation -> awaiting-approval** (result: `ok`)
+
+plan validated on all eight items -- root cause is gate.py's content-blind checks, DEC-011 complies, line refs and the three digest call sites verified against the worktree; step 8 (planning.md) has no criterion by design and is kept as wiring
+
+### 2026-08-21 05:11:33Z · human · approval · by=chezzijr
+
+**approved by chezzijr**
+
+### 2026-08-21 05:24:24Z · revalidating · escalation
+
+rebase onto base conflicted (exit 1)
+```
+$ git rebase main
+
+Rebasing (1/1)
+Auto-merging tests/test_gate.py
+CONFLICT (content): Merge conflict in tests/test_gate.py
+error: could not apply 2e908e9... test: gate accepts a one-word digest and an unresolvable decision id
+hint: Resolve all conflicts manually, mark them as resolved with
+hint: "git add/rm <conflicted_files>", then run "git rebase --continue".
+hint: You can instead skip this commit: run "git rebase --skip".
+hint: To abort and get back to the state before "git rebase", run "git rebase --abort".
+hint: Disable this message with "git config set advice.mergeConflict false"
+Could not apply 2e908e9... # test: gate accepts a one-word digest and an unresolvable decision id
+
+```
+
+### 2026-08-21 05:56:30Z · human · note
+
+**resumed** by human -> `triage`, reset ['plan_validation_attempts', 'review_loops', 'blocked_count', 'no_result', 'lease_expiries']
+
+### 2026-08-21 · triage · re-reproduced
+
+The test from the first triage (2e908e9) was not on `ticket/018` any more -- the
+aborted rebase left the branch at the ticket/019 merge (4ed4307). Cherry-picked
+it back; the conflict was a pure append collision with main's two new base-check
+tests, resolved by keeping both. Committed as `6738a26`.
+
+Still red for the reported reason:
+`AssertionError: one-word digest and unresolvable DEC-999 both passed the gate`
+(now at `tests/test_gate.py:212`).
+
+Outside this stage, for whoever implements: `main` has moved since `## Digest`
+was written (a base-check path was added to `gate.py`, and `tests/test_gate.py`
+grew `_git_ticket_project` plus two base-check tests). The digest's *line
+numbers* for `gate.py` are stale; the named symbols and the three fixture call
+sites still hold -- re-grep before trusting a line ref.
+
+### 2026-08-21 05:57:49Z · triage · session · session=f25e5b92-08ff-4c45-827f-14371241d5a5
+
+`triage` ran as session `f25e5b92-08ff-4c45-827f-14371241d5a5`
+- replay: `claude --resume f25e5b92-08ff-4c45-827f-14371241d5a5`
+- log: `.project/logs/TICKET-018-triage-f25e5b92.log`
+
+### 2026-08-21 05:57:49Z · triage · transition · to=planning · result=ok
+
+**triage -> planning** (result: `ok`)
+
+reproduction test restored on ticket/018 as 6738a26 (lost to an aborted rebase) and confirmed red with the reported AssertionError
+
+### 2026-08-21 · planning · note
+
+Re-planned after triage restored the reproduction test (`6738a26`). No
+`rejection` entries in the thread, so nothing to answer; this run existed because
+the ticket came back to `planning` from the aborted rebase, and triage warned
+that main had moved under the previous plan's line references.
+
+**The previous plan was not merely stale -- one step is forbidden by an active
+decision record.** Re-grepping `.project/decisions/` found five records, not the
+one the old plan cited. **DEC-017** (added by TICKET-017 while this ticket waited
+at the human gate) says a test file the gate copies onto base "may only import
+what base has". The old step 3 added `from helpers import DIGEST, FIXTURE,
+project` to `tests/test_gate.py`. Measured against base's `tests/helpers.py`:
+`ImportError: cannot import name 'DIGEST' from 'helpers'` -- which the gate
+reports as "errored rather than failed on base". Replaced with a file-local
+`_set_digest()` using stdlib `re` only, which imports clean against base and, as
+a bonus, `assert`s when its substitution matches nothing -- removing the silent
+stale-`.replace()` hazard the old plan called its one gotcha rather than just
+documenting it.
+
+Other corrections to the previous plan:
+
+1. **Every line number was stale.** `gate.py`'s `REQUIRED_SECTIONS` is line 13
+   not 12, its loop 89-91 not 47-49, the decisions block 141-144 not 98-101, the
+   `ok:` filter **190** not 147, the import 8 not 7. `ticket.py`'s helpers moved
+   too: `decisions_dir` 243, `active_decisions` 256, `SUPERSEDED_MARKER` 231,
+   `SAFE_DEC_ID` 223. The digest call sites are `tests/test_gate.py:49` and
+   `:209`, not 18 and 156. `tests/test_ticket.py:22`, `tests/test_ticket.py:269`
+   and `pipeline/stages/planning.md`'s bullets (22-23, 24-38, 39) were the only
+   references that still held.
+2. **The old step 1's "indent by 4, de-indent before writing" dodge is obsolete.**
+   DEC-016 made `sections()` consult `_fenced()`, so a `##` line inside a fenced
+   block is no longer read as a heading. The plan now shows the fixture hunk
+   plainly inside a fence. That also let step 1 shrink from a 30-line block
+   replacement to a one-line-to-three-lines edit, which is a smaller thing to get
+   wrong.
+3. **The decisions citation was wrong on its face.** The old `## Decisions
+   checked` asserted the directory held "exactly one record: DEC-011". It holds
+   five. All five re-read; DEC-017 and DEC-016 are the two that bite, DEC-011
+   still complies, DEC-019 and DEC-020 are unrelated.
+
+Verified by executing all nine steps in the worktree and then reverting:
+
+- step 4 leaves exactly one red, the reproduction test, with the reported
+  `AssertionError: one-word digest and unresolvable DEC-999 both passed the gate`;
+- step 9 gives `42 passed` on the two files, `176 passed` on the whole suite, and
+  `guard: all passed` on `./pipeline/hooks/test_dangerous_commands.py`;
+- the new test dies under all three mutations tabulated in `## Digest`,
+  including the trap one (`elif True:` alone leaves it **green** -- the `ok:`
+  prefix must also be dropped).
+
+The worktree is clean again and the reproduction test is red on purpose: leaving
+the verification edits in place would make it PASS at the plan-validation gate
+and the gate would reject the plan for it.
+
+Out of scope, noted not fixed: `tests/test_ticket.py` lines 367-383 carry four
+pre-existing Pyright `Argument of type "None" ... parameter "path"` complaints,
+untouched by this ticket. Also re-hit the guard gotcha triage flagged -- a
+`python -c` with nested quoting was blocked as "command does not parse as a shell
+command"; used the file-edit tool throughout, and the implementer will need to as
+well.
+
+### 2026-08-21 06:06:15Z · planning · session · session=75b23189-48a0-4b93-bc71-bb6fdaa60e76
+
+`planning` ran as session `75b23189-48a0-4b93-bc71-bb6fdaa60e76`
+- replay: `claude --resume 75b23189-48a0-4b93-bc71-bb6fdaa60e76`
+- log: `.project/logs/TICKET-018-planning-75b23189.log`
+
+### 2026-08-21 06:06:15Z · planning · transition · to=plan-validation · result=ok
+
+**planning -> plan-validation** (result: `ok`)
+
+plan rewritten after re-reading the decisions dir (now 5 records, not 1) -- the previous plan's step 3 is forbidden by active DEC-017 (a test file the gate copies onto base may only import what base has); replaced the helpers `DIGEST` constant with a file-local `_set_digest()` and refreshed every stale line ref; all 9 steps executed in the worktree then reverted (176 passed, guard passed, new test dies under 3 mutations)
+
+### 2026-08-21 06:06:24Z · plan-validation · gate · verdict=PASS
+
+**Tier A gate: PASS**
+
+- ok: `tests/test_gate.py::test_gate_blocks_a_one_word_digest_and_an_unresolvable_decision_id` fails as required
+```
+==== FAILURES ===================================
+______ test_gate_blocks_a_one_word_digest_and_an_unresolvable_decision_id ______
+
+    def test_gate_blocks_a_one_word_digest_and_an_unresolvable_decision_id():
+        """Both Tier A content checks are non-emptiness only: a digest of one word
+        passes, and a cited `DEC-999` passes though no such record exists in
+        `.project/decisions/`."""
+        d = project(FIXTURE.replace("## Digest\nthing.py holds it\n", "## Digest\nx\n")
+                           .replace("none relevant (grepped: cache, evict)", "DEC-999"))
+        ok, failures = gate(d, "TICKET-001")
+>       assert not ok, "one-word digest and unresolvable DEC-999 both passed the gate"
+E       AssertionError: one-word digest and unresolvable DEC-999 both passed the gate
+E       assert not True
+
+tests/test_gate.py:212: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_gate.py::test_gate_blocks_a_one_word_digest_and_an_unresolvable_decision_id
+!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!!
+============================== 1 failed in 0.03s ===============================
+
+```
+
+### 2026-08-21 06:06:32Z · plan-validation · note
 
 `plan-validation` was interrupted; lease released

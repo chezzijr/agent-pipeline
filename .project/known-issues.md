@@ -122,6 +122,32 @@ reap and escalates as `wrote-in-readonly`. Regression test asserts every stage's
 rendered toolset contains a file tool — `tests/test_harness.py::
 test_every_stage_can_write_its_result_sidecar`.
 
+### B5. A colon in a stage's summary destroyed its verdict — FIXED
+
+TICKET-021 escalated twice in ten minutes with a correct `result: ok`, a committed
+failing test, a written plan, and an empty reason in the thread. The sidecar it wrote:
+
+```
+result: ok
+summary: reproduced; fails with "raw mode never reached the pty: b'\r'"
+```
+
+```
+$ yaml.safe_load(sidecar)
+ScannerError: mapping values are not allowed here
+```
+
+`read_result` caught `YAMLError`, set `data = {}`, and unlinked the file — so the
+verdict read as `fail` and the evidence was deleted in the same breath. A stage's job
+is to report what it saw, and what it saw is error text; error text has colons in it.
+
+Fix: `loose_result()` — on a YAML failure, a line-based parse of `result`, `summary`,
+`test_file` and the `files_declared` list. Nothing is trusted differently:
+`apply_claims()` and `validate_meta()` check every value exactly as on the YAML path,
+which is what makes a looser parser a fallback rather than a second front door.
+Regression test feeds it that exact summary —
+`tests/test_ticket.py::test_a_colon_in_the_summary_does_not_destroy_the_verdict`.
+
 ### What did work, and still does
 
 The daemon supervised a real multi-ticket run; `--add-dir`'s `--` fix means stages spawn

@@ -192,16 +192,56 @@ def result_file(project: Path, tid: str) -> Path:
     return tickets_dir(project) / f"{tid}.result"
 
 
+SIDECAR_KEYS = ("result", "summary", "test_file")
+
+
+def loose_result(text: str) -> dict:
+    """The sidecar when YAML will not read it.
+
+    A stage's job is to report what it saw, and what it saw is error text:
+    `AssertionError: raw mode never reached the pty: b'\\r'`. Written as a
+    plain scalar that is a ScannerError -- "mapping values are not allowed
+    here" -- and the whole verdict used to become `{}`, which reads as `fail`.
+    A correct `result: ok` with a committed test escalated twice in ten minutes
+    that way, with an empty reason in the thread, because the summary contained
+    a colon.
+
+    So: line-based, first `key: rest-of-line` wins, `- item` collects under
+    `files_declared`. Nothing here is trusted -- `apply_claims()` and
+    `validate_meta()` check every value exactly as they do for the YAML path,
+    which is what makes a looser parser safe rather than a second front door.
+    """
+    data: dict = {}
+    files: list[str] = []
+    in_files = False
+    for line in text.splitlines():
+        if line.startswith("- ") or line.startswith("  - "):
+            if in_files:
+                files.append(line.split("- ", 1)[1].strip())
+            continue
+        key, sep, rest = line.partition(":")
+        if not sep:
+            continue
+        key = key.strip()
+        in_files = key == "files_declared"
+        if key in SIDECAR_KEYS and key not in data:
+            data[key] = rest.strip()
+    if files:
+        data["files_declared"] = files
+    return data
+
+
 def read_result(project: Path, tid: str, keep: bool = False) -> dict | None:
     p = result_file(project, tid)
     if not p.is_file():
         return None
+    text = p.read_text()
     try:
-        data = yaml.safe_load(p.read_text()) or {}
+        data = yaml.safe_load(text) or {}
     except yaml.YAMLError:
-        data = {}
+        data = loose_result(text)
     if not isinstance(data, dict):
-        data = {}
+        data = loose_result(text)
     if not keep:
         p.unlink()
     # L7: the verdict stays on disk until it has actually been acted on, so a

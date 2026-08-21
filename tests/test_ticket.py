@@ -106,6 +106,27 @@ def test_a_corrupt_result_file_does_not_crash_the_dispatcher():
     shutil.rmtree(d)
 
 
+def test_a_colon_in_the_summary_does_not_destroy_the_verdict():
+    """What a stage reports is error text, and error text has colons in it.
+    `summary: fails with "... the pty: b'\\r'"` is a YAML ScannerError, and the
+    whole verdict used to become `{}` -- which reads as `fail`. TICKET-021
+    escalated twice in ten minutes that way, each time with a correct
+    `result: ok`, a committed test, and an empty reason in the thread."""
+    d = project()
+    T.result_file(d, "TICKET-001").write_text(
+        "result: ok\n"
+        "summary: reproduced; fails with \"raw mode never reached the pty: b'\\r'\"\n"
+        "files_declared:\n- pipeline/tui/app.py\n- tests/test_tui.py\n"
+        "test_file: tests/test_tui.py::test_raw_mode\n")
+    got = T.read_result(d, "TICKET-001")
+    assert got["result"] == "ok", f"a colon lost the verdict: {got}"
+    assert got["files_declared"] == ["pipeline/tui/app.py", "tests/test_tui.py"]
+    assert got["test_file"] == "tests/test_tui.py::test_raw_mode"
+    assert got["summary"].endswith('b\'\\r\'"'), \
+        f"the summary was truncated at the colon: {got['summary']!r}"
+    shutil.rmtree(d)
+
+
 def test_decision_is_recorded_when_a_ticket_lands():
     d = project(FIXTURE.replace(
         "## Rollback\nrevert",
