@@ -26,6 +26,15 @@ DIGEST_SHORT_RE = re.compile(r"^\s*digest-short:\s*\S", re.M)
 # all `SAFE_DEC_ID` allows. A `TICKET-012` in this section is prose, not a citation.
 DEC_ID_RE = re.compile(r"\bDEC-\d{1,6}\b")
 
+# The next two constants paraphrase `## Plan` in `pipeline/stages/planning.md`
+# and must be changed together.
+PLAN_STEP_RULE = (
+    "a step starts with `N.` or `N)`, and a line that continues a step must "
+    "be indented under it -- an unindented line reads as prose")
+PLAN_FILE_RULE = (
+    "spell the path out in the step (e.g. `pipeline/core/machine.py`) and "
+    "declare that same path in `files_declared`")
+
 
 def _cites(text: str, path: str) -> bool:
     """Does `text` name `path`? Substring match, but anchored at a
@@ -208,16 +217,19 @@ def gate(project: Path, tid: str, workdir: Path | None = None) -> tuple[bool, li
                 # backtick or newline in it cannot corrupt the finding's fence
                 findings.append(
                     "plan line is not a numbered step -- the plan reads as "
-                    f"prose: {line.strip()!r}")
+                    f"prose: {line.strip()!r} -- {PLAN_STEP_RULE}")
                 if not any(_cites(line, p) for p in t.files_declared):
                     findings.append(
-                        f"plan line names no declared file: {line.strip()!r}")
+                        f"plan line names no declared file: {line.strip()!r} "
+                        f"-- {PLAN_FILE_RULE}")
                 in_step = False
         if not steps:
-            findings.append("`## Plan` has zero numbered steps")
+            findings.append(
+                f"`## Plan` has zero numbered steps -- {PLAN_STEP_RULE}")
         for s in steps:
             if not any(_cites(s, p) for p in t.files_declared):
-                findings.append(f"plan step names no declared file: {s!r}")
+                findings.append(
+                    f"plan step names no declared file: {s!r} -- {PLAN_FILE_RULE}")
 
     crit = secs.get("Acceptance criteria", "")
     for line in [l for l in crit.splitlines() if l.strip().startswith(("-", "*"))]:
