@@ -9,6 +9,7 @@ import sys
 import time
 from pathlib import Path
 
+from pipeline.cli import metrics
 from pipeline.cli.client import connect
 from pipeline.core import PipelineError
 from pipeline.core.config import CONFIG_TEMPLATE, TICKET_TEMPLATE
@@ -340,6 +341,37 @@ def cmd_logs(args) -> None:
         return
 
 
+def _metrics_project(args) -> str | None:
+    """`--project` here is `PATH|name`: a bare name matches a registered
+    project's directory basename, so `--project claude-setup` works from
+    anywhere without typing the absolute path events are stored under.
+    `--project` is a filter everywhere in this CLI, never a target -- omit
+    it and every project's events count."""
+    value = getattr(args, "project", None)
+    if not value:
+        return None
+    p = Path(value)
+    if p.is_absolute():
+        return str(p)
+    for r in registry.projects():
+        if r.name == value:
+            return str(r)
+    return str(p.resolve())
+
+
+def cmd_metrics(args) -> None:
+    try:
+        since = metrics.parse_since(args.since) if args.since else 0.0
+    except ValueError:
+        die(f"--since {args.since!r} is not `\\d+[hdw]` or an ISO date")
+    conn = metrics.connect(args.db)
+    try:
+        data = metrics.collect(conn, since, _metrics_project(args))
+    finally:
+        conn.close()
+    print(json.dumps(data, default=str, indent=2) if args.json else metrics.render(data))
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--project", help="project dir; a filter for `ls`, "
@@ -362,6 +394,15 @@ def main() -> None:
     p = sub.add_parser("start", help="start the one daemon"); p.add_argument("--interval", type=int, default=10); p.add_argument("--harness", default="claude-code"); p.add_argument("-j", "--max-parallel", type=int, default=3); p.set_defaults(fn=cmd_start)
     p = sub.add_parser("stop"); p.set_defaults(fn=cmd_stop)
     p = sub.add_parser("run", help="one project, no daemon, no socket"); p.add_argument("--once", action="store_true"); p.add_argument("--interval", type=int, default=10); p.add_argument("--harness", default="claude-code"); p.add_argument("-j", "--max-parallel", type=int, default=3); p.set_defaults(fn=None)
+    p = sub.add_parser("metrics", help="six views over the event log")
+    p.add_argument("--since", help="7d|24h|2w|<ISO date> (default: all history)")
+    # SUPPRESS: a bare `pipeline metrics` must not clobber a `--project`
+    # already parsed off the top-level `ap` with this subparser's own None
+    # default -- argparse writes both into the same namespace.
+    p.add_argument("--project", default=argparse.SUPPRESS, help="PATH|name (default: every project)")
+    p.add_argument("--db", help="override ~/.local/state/pipeline/events.db")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(fn=cmd_metrics)
 
     args = ap.parse_args()
     try:
