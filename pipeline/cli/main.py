@@ -11,7 +11,7 @@ from pathlib import Path
 
 from pipeline.cli import metrics
 from pipeline.cli.client import connect
-from pipeline.core import PipelineError
+from pipeline.core import PipelineError, line_buffer_stdout
 from pipeline.core.config import CONFIG_TEMPLATE, TICKET_TEMPLATE
 from pipeline.core.gate import gate
 from pipeline.core.machine import KNOWN_STAGES
@@ -421,6 +421,7 @@ def cmd_tui(args) -> None:
 
 
 def main() -> None:
+    line_buffer_stdout()
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--project", help="project dir; a filter for `ls`, "
                     "the target for everything else (default: cwd)")

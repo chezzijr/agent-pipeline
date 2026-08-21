@@ -733,3 +733,36 @@ def test_the_daemon_log_is_readable_while_the_daemon_runs():
     # and once it is dead the whole buffer lands at once -- proof the line was
     # written, just not where anyone could read it
     assert b"pipelined" in log.read_bytes(), log.read_bytes()
+
+
+def test_pipeline_run_log_is_readable_while_it_runs():
+    """The daemon is not the only entry point with a redirectable stdout:
+    `pipeline run > run.log` block-buffers identically, so a fix confined to
+    `pipeline start`'s redirect would leave `run` blank. A malformed ticket
+    is the cheapest line the loop prints on its very first tick."""
+    tmp = Path(tempfile.mkdtemp())
+    proj = tmp / "proj"
+    (proj / ".project" / "tickets").mkdir(parents=True)
+    (proj / ".project" / "pipeline.toml").write_text('test_one = "true"\n')
+    (proj / ".project" / "tickets" / "BAD.md").write_text("no frontmatter\n")
+    env = dict(os.environ, PYTHONPATH=str(ROOT))
+    for var in ("XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_RUNTIME_DIR"):
+        env[var] = str(tmp)
+    log = tmp / "run.log"
+    fh = log.open("wb")
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "pipeline", "--project", str(proj), "run",
+         "--interval", "60"],
+        stdout=fh, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+        env=env, cwd=ROOT)
+    try:
+        for _ in range(100):        # 5s, and it lands in well under one
+            if b"skipping BAD.md" in log.read_bytes():
+                break
+            time.sleep(0.05)
+        assert b"skipping BAD.md" in log.read_bytes(), \
+            "`pipeline run` printed a line but its redirected log is empty"
+    finally:
+        proc.terminate()            # it holds a flock on the project
+        proc.wait(10)
+        fh.close()
