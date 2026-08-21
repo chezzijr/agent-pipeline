@@ -428,6 +428,15 @@ def test_resizing_the_terminal_resizes_the_child():
             assert app.stream.ops().count("resize") == 2, \
                 "the same size was re-sent"
 
+            app.on_frame({"sub": app.pty_id, "dropped": 3})
+            await pilot.pause()
+            app.on_frame({"id": app.pty_id, "ok": True,
+                          "data": {"screen": ["Allow Bash?"], "rows": 58,
+                                   "cols": 266, "writer": True}})
+            await pilot.pause()
+            assert app.stream.ops().count("resize") == 2, \
+                "re-attaching re-sent a size the daemon already has"
+
     asyncio.run(go())
 
 
