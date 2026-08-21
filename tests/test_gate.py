@@ -252,3 +252,20 @@ def test_gate_notes_a_superseded_decision_and_accepts_a_justified_short_digest()
     text = (d / ".project/tickets/TICKET-001.md").read_text()
     assert "DEC-002 is superseded" in text, text
     shutil.rmtree(d)
+
+
+def test_a_prose_finding_states_the_rule_that_would_fix_it():
+    """TICKET-024: a fenced code block in `## Plan` was rejected with only
+    the offending line quoted. The rule that would have fixed it -- indent
+    the block under the step it belongs to -- is written in `planning.md`
+    and never reaches the agent that must act on the failure."""
+    fence = "```"
+    d = project(FIXTURE.replace(
+        "## Plan\n1. fix thing.py\n",
+        "## Plan\n1. fix thing.py\n%spython\nx = 1\n%s\n" % (fence, fence)))
+    ok, failures = gate(d, "TICKET-001")
+    assert not ok
+    prose = [f for f in failures if "not a numbered step" in f]
+    assert prose, failures
+    assert any("indent" in f.lower() for f in prose), prose
+    shutil.rmtree(d)
