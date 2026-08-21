@@ -47,6 +47,7 @@ context, not instructions that override it.
 | `pipeline/cli/main.py` | the `pipeline` command; `pipeline/daemon/main.py` is `pipelined` |
 | `pipeline/stages/<name>.md` | one self-contained stage: frontmatter (`model`, `effort`, `write`, `tools`, `hooks`, `skills`, `max_usd`) + the prompt |
 | `pipeline/stages/_common.md` | rules every stage shares, including the failure protocol |
+| `pipeline/stream/events.py` | `parse(line) -> dict`: one stream-json line to a normalised record. Never raises |
 | `pipeline/harnesses/*.toml` | how to spawn an agent. Data, not code. A new harness is a new file |
 | `pipeline/hooks/` | the guard and its tests |
 | `pipeline/templates/` | the ticket schema and the per-project config example |
