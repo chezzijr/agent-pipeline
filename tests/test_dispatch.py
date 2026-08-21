@@ -2,8 +2,12 @@
 import argparse
 import shutil
 import subprocess
+import tempfile
+from pathlib import Path
 
 from helpers import FIXTURE, git_project, project
+from pipeline.cli import metrics
+from pipeline.daemon.store import Store
 from pipeline.core import ticket as T
 from pipeline.core import config
 from pipeline.core import machine as M
@@ -308,4 +312,64 @@ def test_a_rebase_conflict_on_approval_escalates_and_keeps_the_worktree():
         "the conflict was resolved instead of left for the human"
     assert t.counters.get("stale_regate", 0) == 0, "a conflict is not a stale plan"
     assert not t.lease_active(), "an escalated ticket a human cannot resume"
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_a_bound_escalation_emits_an_escalated_event():
+    """`escalate()` emits for the paths it owns -- a crash, a tamper, an
+    unusable ticket. The OTHER route into `escalated` is `transition()`
+    returning it because `charge()` hit the class bound, and that route wrote
+    only a `transition` row. View 1, the headline, therefore reported
+    `plan-validation runs 0 escalated 0 rate -` for a ticket that had just
+    escalated out of plan-validation: a miscalibrated prompt was invisible
+    while a crashed harness was loud.
+
+    The gate's own `stage_end` is the other half of the same number -- with no
+    agent spawned, nothing else records that the stage ran at all.
+    """
+    d, _ = git_project()
+    path = d / ".project/tickets/TICKET-001.md"
+    # one attempt already spent; `bugfix` has a bound of 2
+    path.write_text(FIXTURE.replace("counters: {}",
+                                    "counters: {plan_validation_attempts: 1}"))
+    s = Store(Path(tempfile.mkdtemp()) / "events.db")
+    # the gate fails: FIXTURE's `test_file` does not exist in this checkout
+    supervisor.start(d, path, harness("fake"), {}, None, s.emitter(str(d)))
+
+    assert Ticket.load(path).stage == "escalated"
+    esc = [e for e in s.since(0) if e["kind"] == "escalated"]
+    assert [e["stage"] for e in esc] == ["plan-validation"], \
+        [(e["kind"], e["stage"]) for e in s.since(0)]
+    assert "plan_validation_attempts" in esc[0]["data"]["reason"], esc
+    assert "2" in esc[0]["data"]["reason"], "the reason does not name the bound"
+
+    conn = metrics.connect(s.path)
+    try:
+        assert metrics.escalation_rate(conn, "plan-validation") == 1.0, \
+            [(r["stage"], r["runs"], r["escalated"])
+             for r in metrics.escalation_rates(conn)]
+        # and the gate's verdict is readable by view 4 whatever its case
+        assert metrics.gate_failure_reasons(conn), "view 4 sees no gate failure"
+    finally:
+        conn.close()
+    s.close()
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_escalate_and_advance_do_not_both_emit_for_one_ticket():
+    """Two emit sites for one kind is one double-count away from a metric that
+    reads 200%. `escalate()` sets the stage itself and never routes through
+    `advance()`; this pins that."""
+    d = project()
+    seen = []
+    t = Ticket.load(d / ".project/tickets/TICKET-001.md")
+    supervisor.escalate(t, "boom", lambda kind, **kw: seen.append(kind))
+    assert seen == ["escalated"], seen
+
+    t = Ticket.load(d / ".project/tickets/TICKET-001.md")
+    t.stage = "merging"
+    seen.clear()
+    supervisor.advance(d, t, "fail", "conflict",
+                       lambda kind, **kw: seen.append(kind))
+    assert seen == ["transition", "escalated"], seen
     shutil.rmtree(d, ignore_errors=True)

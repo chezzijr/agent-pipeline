@@ -1,6 +1,7 @@
 """The dispatcher loop: claim a ticket, spawn one stateless agent per stage,
 reap it, apply its verdict. The state machine decides; this only obeys."""
 import fcntl
+import json
 import os
 import re
 import shlex
@@ -16,9 +17,9 @@ from pipeline.core.config import (compose_prompt, harness, is_readonly,
                                   project_config, render, stage_config,
                                   stage_settings)
 from pipeline.core.gate import gate
-from pipeline.core.machine import (CLEANUP_STAGES, CONTROL_FIELDS, HUMAN_GATES,
-                                   MAX_ATTEMPTS, TERMINAL, apply_claims,
-                                   files_conflict, transition)
+from pipeline.core.machine import (BOUNDS, CLEANUP_STAGES, CONTROL_FIELDS,
+                                   HUMAN_GATES, MAX_ATTEMPTS, TERMINAL,
+                                   apply_claims, files_conflict, transition)
 from pipeline.core.ticket import (Ticket, all_tickets, drop_result,
                                   read_result, record_decision, ticket_path,
                                   tickets_dir, validate_meta)
@@ -74,6 +75,20 @@ def advance(project: Path, t: Ticket, result: str, note: str, emit=noop) -> None
     nxt, counters = transition(stage, result, t.counters, t.klass)
     emit("transition", ticket=t.id, stage=stage, **{"from": stage, "to": nxt,
          "result": result, "counters": counters})
+    if nxt == "escalated":
+        # The other route into `escalated`. `escalate()` covers the paths it
+        # owns -- a crash, a tamper, an unusable ticket -- and it sets the
+        # stage itself, so it never reaches here and the two cannot
+        # double-emit. Without this, a ticket that escalated by burning a loop
+        # bound left only a `transition` row, and "escalation rate per stage"
+        # -- the view that exists to catch a miscalibrated prompt -- read zero
+        # for exactly the stage the prompt was miscalibrated in.
+        charged = next((k for k, v in counters.items()
+                        if v != t.counters.get(k, 0)), None)
+        emit("escalated", ticket=t.id, stage=stage, reason=(
+            f"`{charged}` reached its bound "
+            f"({counters[charged]}/{BOUNDS.get(t.klass, {}).get(charged, MAX_ATTEMPTS)})"
+            if charged else f"`{stage}` escalated on result `{result}`"))
     t.append(stage, "transition", f"**{stage} -> {nxt}** (result: `{result}`)\n\n{note}",
              to=nxt, result=result)
     if nxt == "done":
@@ -146,6 +161,76 @@ def pump(rec: dict) -> None:
         rec["fh"].flush()
         for ev in rec["reader"].feed(chunk):
             rec["sink"](ev)
+
+
+# What a parsed stream event may be stored as. DEC-011 froze the vocabulary
+# and `other` is not in it: an unknown or truncated line is noise, and a row
+# per line of it would be the log file again, in SQLite.
+STREAM_KINDS = {"init", "assistant", "tool_result", "hook_started",
+                "hook_response", "rate_limit", "result"}
+
+
+def event_sink(tid: str, stage: str, session: str, emit):
+    """TICKET-012's parser -> TICKET-011's event log. This is the seam: `pump`
+    hands every parsed record to `rec["sink"]`, which used to drop it, so
+    `result` and `hook_response` never reached the store and the metrics views
+    built on them read "no data" against a live system.
+
+    Wrapped, because the event log is observability and the dispatcher is the
+    product: a full disk or a locked database costs history, never the lease
+    of every stage in flight.
+    """
+    def sink(ev: dict) -> None:
+        kind = ev.get("kind")
+        if kind not in STREAM_KINDS:
+            return
+        try:
+            emit(kind, ticket=tid, stage=stage, session=session,
+                 # `session` is the column, not payload -- `init` carries the
+                 # harness's copy of it and would collide with the keyword
+                 **{k: v for k, v in ev.items() if k not in ("kind", "session")})
+        except Exception as e:
+            print(f"  {tid}: event not recorded ({e.__class__.__name__}: {e})")
+    return sink
+
+
+def usage_events(session: str) -> list[dict]:
+    """One interactive stage's token usage, summed per model, off its session
+    transcript.
+
+    A PTY stage never produces a `result` event, and there is no cost to read
+    anywhere else: `claude agents --json` carries none and a transcript has no
+    `cost`/`usd` key at any depth. What every `type:"assistant"` line does
+    have is `message.model` and a full `message.usage`.
+
+    Glob on the uuid rather than reimplementing the cwd-to-slug rule -- a
+    worktree path contains dots and `.worktrees`, and getting that rule subtly
+    wrong reads exactly like a stage that cost nothing. No transcript (a stage
+    that died early) is not an error: no events.
+    """
+    totals: dict[str, dict] = {}
+    for path in Path.home().glob(f".claude/projects/*/{session}.jsonl"):
+        for line in path.read_text(errors="replace").splitlines():
+            try:
+                ev = json.loads(line)
+                msg = ev.get("message") or {}
+                u = msg.get("usage") or {}
+            except Exception:
+                continue            # same rule as the parser: never raise on a line
+            if ev.get("type") != "assistant" or not isinstance(u, dict) or not u:
+                continue
+            t = totals.setdefault(msg.get("model") or "unknown",
+                                  {"input_tokens": 0, "output_tokens": 0,
+                                   "cache_read": 0, "cache_creation": 0})
+            for key, src in (("input_tokens", "input_tokens"),
+                             ("output_tokens", "output_tokens"),
+                             ("cache_read", "cache_read_input_tokens"),
+                             ("cache_creation", "cache_creation_input_tokens")):
+                try:
+                    t[key] += int(u.get(src) or 0)
+                except (TypeError, ValueError):
+                    pass
+    return [{"model": m, **t} for m, t in totals.items()]
 
 
 def close_child(rec: dict) -> None:
@@ -229,7 +314,7 @@ def spawn(project: Path, wt: Path, tid: str, stage: str, hcfg: dict,
            "log": log, "stage": stage, "wt": wt,
            "poller": poller, "pipe": None, "reader": None,
            "screen": None, "writer": None,
-           "sink": lambda ev: None}
+           "sink": event_sink(tid, stage, session, emit)}
     if interactive or poller:
         # `Screen` is shaped like `StreamReader`, so pump() tees the raw bytes
         # to the log and feeds this with no PTY branch of its own.
@@ -399,6 +484,11 @@ def start(project: Path, path: Path, hcfg: dict, inflight: dict,
             advance(project, t, "fail",
                     "Tier A gate failed:\n" + "\n".join(f"- {f}" for f in failures),
                     emit)
+            # a failed gate IS this stage's run: no agent is spawned, so
+            # `finish()` never fires and view 1 would divide an escalation by
+            # zero runs and report no rate for the stage that escalated
+            emit("stage_end", ticket=tid, stage=stage, result="fail",
+                 next_stage=t.stage, exit_code=None)
             return True, None
 
     t.take_lease(f"{stage}-{os.getpid()}")
@@ -463,6 +553,18 @@ def finish(project: Path, rec: dict, emit=noop) -> None:
     emit("stage_end", ticket=rec["tid"], stage=rec["stage"],
          session=rec.get("session"), result=result, next_stage=nxt,
          exit_code=proc.returncode if proc is not None else None)
+    if rec.get("mode") == "interactive" and rec.get("session"):
+        # a headless stage's `result` event is authoritative and already in
+        # the log; an interactive one has no such event, so its cost comes
+        # from the transcript here -- and only here, or every merged ticket
+        # would be billed twice. Wrapped for the same reason `event_sink` is.
+        try:
+            for u in usage_events(rec["session"]):
+                emit("usage", ticket=rec["tid"], stage=rec["stage"],
+                     session=rec["session"], **u)
+        except Exception as e:
+            print(f"  {rec['tid']}: usage not recorded "
+                  f"({e.__class__.__name__}: {e})")
 
 
 def _finish(project: Path, rec: dict, emit=noop) -> str:

@@ -4,12 +4,15 @@
 async thing in the repo and it is not worth a dependency.
 """
 import asyncio
+import base64
 
 from textual.widgets import Tree
 
 from helpers import project as make_project
 from pipeline.core import PipelineError
 from pipeline.core.ticket import Ticket
+from pipeline.daemon.server import PTY_INPUT
+from pipeline.pty.host import Screen
 from pipeline.tui.app import PipelineApp, event_line, marker
 
 APPROVABLE = """---
@@ -182,3 +185,132 @@ def test_marker_is_one_glyph():
     assert marker({"stage": "needs-input"}) == "!"
     assert marker({"stage": "planning", "stale": True}) == "?"
     assert marker({"stage": "planning"}) == ""
+
+
+class FakeStream:
+    """The subscription connection. `send` records and hands back the id the
+    daemon will tag its frames with; frames come back through `on_frame`
+    exactly as the reader thread delivers them."""
+
+    def __init__(self):
+        self.sent = []
+        self._id = 0
+
+    def send(self, op, **kw):
+        self._id += 1
+        self.sent.append((op, kw))
+        return self._id
+
+    def ops(self):
+        return [op for op, _ in self.sent]
+
+
+def pty_pane(app) -> str:
+    return str(app.query_one("#pty").render())
+
+
+def test_an_interactive_stage_attaches_and_a_dropped_frame_reattaches():
+    """The seam TICKET-015 left and TICKET-013 filled the protocol for.
+
+    A `dropped` marker means the daemon binned part of our pty backlog, so our
+    emulator is now desynced from its authoritative pyte screen. Painting
+    forward across that gap renders a corrupted terminal indefinitely; the fix
+    is one round trip -- attach again and take the fresh snapshot.
+    """
+    async def go():
+        d = "/tmp/alpha"
+        fake = FakeClient([row(d, "TICKET-001", "planning", running=True,
+                               mode="interactive")])
+        app = PipelineApp(client=fake)
+        async with app.run_test() as pilot:
+            app.stream = FakeStream()          # the worker thread's socket
+            app.query_one(Tree).focus()
+            await pilot.press("down", "down")
+            await pilot.pause()
+
+            assert app.attached == (d, "TICKET-001"), app.attached
+            assert app.stream.ops() == ["attach"], app.stream.sent
+            app.on_frame({"id": app.pty_id, "ok": True,
+                          "data": {"screen": ["Allow Bash?", "> "], "rows": 4,
+                                   "cols": 24, "writer": True}})
+            await pilot.pause()
+            assert "Allow Bash?" in pty_pane(app), pty_pane(app)
+
+            # a live frame paints through our own emulator, not a re-request
+            app.on_frame({"sub": app.pty_id,
+                          "pty": base64.b64encode(b"\x1b[3;1Hyes").decode()})
+            await pilot.pause()
+            assert "yes" in pty_pane(app), pty_pane(app)
+            assert "Allow Bash?" in pty_pane(app), \
+                "the pre-attach screen was lost: the emulator started blank"
+            assert app.stream.ops() == ["attach"], app.stream.sent
+
+            app.on_frame({"sub": app.pty_id, "dropped": 3})
+            await pilot.pause()
+            assert app.stream.ops() == ["attach", "attach"], \
+                "a dropped frame left a silent gap instead of re-attaching"
+            assert app.dropped == 3
+
+    asyncio.run(go())
+
+
+def test_keystrokes_are_chunked_and_a_short_write_is_resent():
+    """`input` is capped at 4096 bytes per op and reports what actually landed
+    in the pty's buffer. A client that ignores either loses keystrokes in the
+    middle of the prompt it attached to answer."""
+    async def go():
+        app = PipelineApp(client=FakeClient([]))
+        async with app.run_test():
+            app.stream = FakeStream()
+            app.attached = ("/tmp/alpha", "TICKET-001")
+            app.pty_screen = Screen(4, 24)
+
+            app._send_keys(b"y" * 5000)
+            op, kw = app.stream.sent[-1]
+            first = base64.b64decode(kw["data"])
+            assert op == "input" and len(first) == PTY_INPUT, len(first)
+
+            # the daemon took only two bytes: the rest must not vanish
+            app.on_frame({"id": app.stream._id, "ok": True,
+                          "data": {"written": 2, "short": True}})
+            assert app.stream.ops() == ["input"], "a full buffer was hammered"
+            app.on_frame({"sub": 1, "pty": base64.b64encode(b".").decode()})
+            resent = base64.b64decode(app.stream.sent[-1][1]["data"])
+            assert resent.startswith(first[2:]), "the short write's tail was dropped"
+            assert len(resent) == PTY_INPUT, "the refill is not capped"
+
+            app.on_frame({"id": app.stream._id, "ok": True,
+                          "data": {"written": len(resent), "short": False}})
+            # 5000 sent, 2 + 4096 acknowledged: the rest, and nothing lost
+            assert base64.b64decode(app.stream.sent[-1][1]["data"]) == b"y" * 902
+            app.on_frame({"id": app.stream._id, "ok": True,
+                          "data": {"written": 902, "short": False}})
+            assert app.keys_out == b"" and app.keys_flight is None
+
+    asyncio.run(go())
+
+
+def test_the_pane_stops_claiming_to_be_live_when_the_stage_ends():
+    """A frozen last screen that still looks live is the one way this pane can
+    lie. `stage_end` for the attached ticket drops it back to the log."""
+    async def go():
+        d = "/tmp/alpha"
+        fake = FakeClient([row(d, "TICKET-001", "planning", running=True,
+                               mode="interactive")])
+        app = PipelineApp(client=fake)
+        async with app.run_test() as pilot:
+            app.stream = FakeStream()
+            app.query_one(Tree).focus()
+            await pilot.press("down", "down")
+            await pilot.pause()
+            assert app.attached == (d, "TICKET-001")
+
+            fake.rows = [row(d, "TICKET-001", "review")]        # mode: batch
+            app.on_frame({"sub": 1, "event": {"project": d, "ticket": "TICKET-001",
+                                              "kind": "stage_end", "data": {}}})
+            await pilot.pause()
+            assert app.attached is None, "the pane kept a finished session"
+            assert app.stream.ops()[-1] == "detach", app.stream.sent
+            assert app.query_one("#pty").display is False
+
+    asyncio.run(go())

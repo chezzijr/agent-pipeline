@@ -130,8 +130,16 @@ way `pipeline logs` renders it, then live events as they arrive. It seeds from
 `ls` and stays current from a `subscribe` on its own connection; with no daemon
 running it reads the ticket files instead and simply does not update itself.
 
+Select a ticket running an **interactive** stage and the right pane becomes
+that stage's live terminal instead: it `attach`es on the subscription's
+connection, seeds from the daemon's `screen` snapshot and paints the `pty`
+frames after it. A `dropped` marker means the daemon binned part of the
+backlog, so it re-attaches for a fresh snapshot rather than paint across the
+gap. `i` types a line into it -- chunked at 4096 bytes an op, with a short
+write's remainder re-sent, so a long answer cannot be half-swallowed.
+
 `a` approve, `r` reject, `A` answer, `e` edit, `l` logs, `m` metrics, `k` kill,
-`q` quit. Only `k` is a daemon op -- approve, reject and answer rewrite the
+`i` type, `q` quit. Only `k` and `i` are daemon ops -- approve, reject and answer rewrite the
 ticket file, which is the source of truth, and the daemon's next tick notices;
 `e`/`l`/`m` suspend the app and hand you the real terminal. `e` interrupts the
 running stage before opening `$EDITOR`, so your edit cannot trip the
