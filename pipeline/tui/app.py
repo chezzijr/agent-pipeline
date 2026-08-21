@@ -96,10 +96,20 @@ def tail_log(project: str, tid: str) -> list[str]:
         return [f"(log unreadable: {e})"]
 
 
+class PtyPane(Static):
+    """The attached terminal. A widget and not a bare `Static` for one reason:
+    `events.Resize` does NOT bubble, so the only place that learns this pane
+    real size is the pane itself."""
+
+    def on_resize(self, event) -> None:
+        self.app._resize()
+
+
 class PipelineApp(App):
     CSS = """
     #tree { width: 34; }
     #log { height: 1fr; }
+    #pty { height: 1fr; }
     #status { height: 1; background: $panel; color: $text; }
     """
 
@@ -128,6 +138,8 @@ class PipelineApp(App):
         self.attached = None          # (project, ticket) the PTY pane is showing
         self.pty_id = None            # the request id its `attach` frames carry
         self.pty_screen = None        # our own emulator, fed by those frames
+        self.pty_writer = False       # resize is writer-only
+        self.resize_id = None         # the resize awaiting its reply
         self.keys_out = b""           # keystrokes the daemon has not taken yet
         self.keys_flight = None       # (request id, chunk) currently with it
 
@@ -147,12 +159,12 @@ class PipelineApp(App):
                 # this pane is fed raw terminal output. One bracketed path on
                 # the attached screen (`ls [/home/x]`) raises MarkupError
                 # inside the frame handler and takes the pane down.
-                yield Static(id="pty", markup=False)
+                yield PtyPane(id="pty", markup=False)
         yield Static("", id="status")
         yield Footer()
 
     def on_mount(self) -> None:
-        self.query_one("#pty", Static).display = False
+        self.query_one("#pty", PtyPane).display = False
         self.query_one(Tree).root.expand()
         rows = self._rows()
         self.projects = sorted({r["project"] for r in rows}) or (
@@ -256,6 +268,11 @@ class PipelineApp(App):
             return self._pty_frame(msg["pty"])
         if self.pty_id is not None and msg.get("id") == self.pty_id:
             return self._attached(msg)
+        if self.resize_id is not None and msg.get("id") == self.resize_id:
+            self.resize_id = None
+            if not msg.get("ok"):
+                self.notify("resize: %s" % msg.get("error"))
+            return
         if self.keys_flight and msg.get("id") == self.keys_flight[0]:
             return self._keys_acked(msg)
         if "dropped" in msg:
@@ -305,7 +322,7 @@ class PipelineApp(App):
         if self._pty(row):
             return
         self._detach()
-        self.query_one("#pty", Static).display = False
+        self.query_one("#pty", PtyPane).display = False
         log.display = True
         for line in tail_log(key[0], key[1]):
             log.write(line)
@@ -334,7 +351,7 @@ class PipelineApp(App):
                 return False
             self.attached = (row["project"], row["id"])
         self.query_one("#log", RichLog).display = False
-        self.query_one("#pty", Static).display = True
+        self.query_one("#pty", PtyPane).display = True
         return True
 
     def _detach(self) -> None:
@@ -345,6 +362,7 @@ class PipelineApp(App):
             except (OSError, ValueError):
                 pass
         self.attached = self.pty_id = self.pty_screen = None
+        self.pty_writer, self.resize_id = False, None
         self.keys_out, self.keys_flight = b"", None
 
     def _attached(self, msg: dict) -> None:
@@ -361,14 +379,33 @@ class PipelineApp(App):
         lines = [str(x) for x in (d.get("screen") or [])]
         self.pty_screen.feed(b"\x1b[H" + "\r\n".join(
             l.rstrip() for l in lines).encode("utf-8", "replace"))
+        self.pty_writer = bool(d.get("writer"))
         self._paint_pty()
-        if not d.get("writer"):
+        self._resize()
+        if not self.pty_writer:
             self.notify("another client holds the writer: read-only")
 
     def _paint_pty(self) -> None:
-        pane = self.query_one("#pty", Static)
+        pane = self.query_one("#pty", PtyPane)
         pane.update("\n".join(self.pty_screen.display))
         pane.display = True
+
+    def _resize(self) -> None:
+        """Tell the daemon how big this pane is, and keep our own emulator the
+        same size."""
+        if self.pty_screen is None or self.stream is None or not self.pty_writer:
+            return
+        size = self.query_one("#pty", PtyPane).size
+        rows, cols = size.height, size.width
+        if rows < 1 or cols < 1 or (rows, cols) == (self.pty_screen.rows,
+                                                    self.pty_screen.cols):
+            return
+        try:
+            self.resize_id = self.stream.send("resize", rows=rows, cols=cols)
+        except (OSError, ValueError) as e:
+            return self.notify("resize: %s" % e)
+        self.pty_screen.resize(rows, cols)
+        self._paint_pty()
 
     def _pty_frame(self, blob: str) -> None:
         if self.pty_screen is None:

@@ -243,11 +243,11 @@ def test_an_interactive_stage_attaches_and_a_dropped_frame_reattaches():
             assert "yes" in pty_pane(app), pty_pane(app)
             assert "Allow Bash?" in pty_pane(app), \
                 "the pre-attach screen was lost: the emulator started blank"
-            assert app.stream.ops() == ["attach"], app.stream.sent
+            assert app.stream.ops().count("attach") == 1, app.stream.sent
 
             app.on_frame({"sub": app.pty_id, "dropped": 3})
             await pilot.pause()
-            assert app.stream.ops() == ["attach", "attach"], \
+            assert app.stream.ops().count("attach") == 2, \
                 "a dropped frame left a silent gap instead of re-attaching"
             assert app.dropped == 3
 
@@ -397,5 +397,59 @@ def test_attaching_sends_the_pane_size():
             assert kw["cols"] > 120, f"pane no wider than the child: {kw}"
             assert app.pty_screen.cols == kw["cols"], \
                 f"local screen {app.pty_screen.cols} != sent {kw['cols']}"
+
+    asyncio.run(go())
+
+
+def test_resizing_the_terminal_resizes_the_child():
+    async def go():
+        d = "/tmp/alpha"
+        fake = FakeClient([row(d, "TICKET-001", "planning", running=True,
+                               mode="interactive")])
+        app = PipelineApp(client=fake)
+        async with app.run_test(size=(200, 50)) as pilot:
+            app.stream = FakeStream()
+            app.query_one(Tree).focus()
+            await pilot.press("down", "down")
+            await pilot.pause()
+            app.on_frame({"id": app.pty_id, "ok": True,
+                          "data": {"screen": ["Allow Bash?"], "rows": 40,
+                                   "cols": 120, "writer": True}})
+            await pilot.pause()
+
+            await pilot.resize_terminal(300, 60)
+            await pilot.pause()
+            assert app.stream.ops().count("resize") == 2, app.stream.sent
+            assert app.pty_screen.cols == 266, app.pty_screen.cols
+            assert app.pty_screen.rows == 58, app.pty_screen.rows
+
+            await pilot.resize_terminal(300, 60)
+            await pilot.pause()
+            assert app.stream.ops().count("resize") == 2, \
+                "the same size was re-sent"
+
+    asyncio.run(go())
+
+
+def test_a_read_only_viewer_never_sends_a_resize():
+    async def go():
+        d = "/tmp/alpha"
+        fake = FakeClient([row(d, "TICKET-001", "planning", running=True,
+                               mode="interactive")])
+        app = PipelineApp(client=fake)
+        async with app.run_test(size=(200, 50)) as pilot:
+            app.stream = FakeStream()
+            app.query_one(Tree).focus()
+            await pilot.press("down", "down")
+            await pilot.pause()
+            app.on_frame({"id": app.pty_id, "ok": True,
+                          "data": {"screen": ["Allow Bash?"], "rows": 40,
+                                   "cols": 120, "writer": False}})
+            await pilot.pause()
+
+            await pilot.resize_terminal(300, 60)
+            await pilot.pause()
+            assert "resize" not in app.stream.ops(), \
+                "resize claims the writer slot on the daemon"
 
     asyncio.run(go())
