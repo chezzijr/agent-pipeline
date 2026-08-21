@@ -1,5 +1,14 @@
 ---
-model: opus
+model: sonnet
+# sonnet: 20 runs, 26M tokens, all of it drawn on the Opus weekly limit --
+# which on a Max plan is capped separately from every other model and is what
+# runs out first. The work is reproduce one named failure and run one command.
+# Effort is not the lever here: `low` already holds thinking to 19% of output,
+# the lowest of any stage: the volume is 1.3M cache-read tokens per run of
+# CONTEXT. Sonnet moves it to the bucket that is barely touched.
+# The risk this accepts is the `chore` verdict, which skips the human approval
+# gate -- watch for `quick-review` runs appearing in `pipeline metrics`, which
+# have been zero to date. A `quick-review` returning `fail` is the backstop.
 # low: reproduce one named failure and run one command. Already declared;
 # this adds the reason the other five now carry.
 effort: low
