@@ -61,6 +61,15 @@ cannot ask you what you meant. Write so both get one reading, not two.
    to make a sentence shorter. If precision and brevity conflict, keep the
    precision and say you did.
 
+10. Batch independent tool calls. Every call that does not need another's
+    result goes in one message -- reads, greps and checks of separate files
+    together. Each extra turn re-reads your whole prompt from the start.
+11. Budget the artifact. A `## Thread` entry is 200 words or fewer, `## Summary`
+    150 or fewer. Over budget means you are narrating your process instead of
+    reporting findings. Cut the narration, never the precision rule 9 requires.
+    If a finding genuinely needs more, write `long: <why>` on its own line and
+    keep going.
+
 These rules govern your prose. They do not govern code, quoted output, file
 paths, or identifiers -- reproduce those exactly as they are.
 
