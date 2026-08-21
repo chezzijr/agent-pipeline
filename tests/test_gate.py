@@ -1,9 +1,40 @@
 """Tier A gate: the checks that must not be talkable-out-of."""
 import shutil
+import subprocess
+import tempfile
+from pathlib import Path
 
 from helpers import FIXTURE, project
 from pipeline.core import ticket as T
 from pipeline.core.gate import gate
+
+
+def _git_ticket_project(base_py: str, branch_py: str):
+    """A real git project: `main` holds `base_py`, the ticket worktree on
+    `ticket/001` holds `branch_py`. Returns (project, worktree).
+
+    Deliberately local to this file rather than in `helpers.py`: the gate
+    copies THIS file onto a checkout of base, where only what base already
+    has can be imported."""
+    d = Path(tempfile.mkdtemp())
+    sh = lambda c, cwd=d: subprocess.run(c, shell=True, cwd=cwd,
+                                         capture_output=True, text=True)
+    sh("git init -qb main && git config user.email t@t && git config user.name t")
+    (d / "f.py").write_text(base_py)
+    (d / "test_thing.py").write_text("")
+    (d / ".project" / "tickets").mkdir(parents=True)
+    (d / ".project" / "pipeline.toml").write_text(
+        'test_one = "echo test_broken; grep -q fixed f.py"\n'
+        'test_suite = "true"\n'
+        'test_suite_without_new = "true"\n'
+        'base = "main"\n')
+    (d / ".project" / "tickets" / "TICKET-001.md").write_text(FIXTURE)
+    sh("git add -A && git commit -qm init")
+    wt = d / ".worktrees" / "TICKET-001"
+    sh(f"git worktree add -q -b ticket/001 {wt} main")
+    (wt / "f.py").write_text(branch_py)
+    sh("git add -A && git commit -qm branch", cwd=wt)
+    return d, wt
 
 
 def test_gate_passes_a_complete_ticket():
@@ -147,3 +178,25 @@ def test_shell_injection_through_test_file_is_dead():
     gate(d, "TICKET-001")
     assert not marker.exists(), "command substitution executed"
     shutil.rmtree(d)
+
+
+def test_gate_blocks_a_test_that_passes_on_base():
+    """Tier A must prove the bug exists on base, not only on the ticket branch.
+    Here the branch's test fails but base is green -- someone already fixed it
+    -- so this is not a reproduction and the gate must say so."""
+    d, wt = _git_ticket_project("fixed\n", "buggy\n")
+    ok, failures = gate(d, "TICKET-001", workdir=wt)
+    assert not ok, "gate passed a test that does not fail on base"
+    assert any("base" in f for f in failures), failures
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_gate_passes_a_test_that_fails_on_base_too():
+    """The complement: a test that fails identically on base and on the
+    branch IS the reproduction Tier A demands, and the base check must not
+    reject it."""
+    d, wt = _git_ticket_project("buggy\n", "buggy\n")
+    ok, failures = gate(d, "TICKET-001", workdir=wt)
+    assert ok, failures
+    assert "fails on base" in (d / ".project/tickets/TICKET-001.md").read_text()
+    shutil.rmtree(d, ignore_errors=True)
