@@ -1,4 +1,5 @@
 """What the dispatcher does with a ticket it cannot run."""
+import argparse
 import shutil
 import subprocess
 
@@ -6,6 +7,7 @@ from helpers import FIXTURE, git_project, project
 from pipeline.core import ticket as T
 from pipeline.core import config
 from pipeline.core import machine as M
+from pipeline.cli.main import cmd_approve
 from pipeline.core.config import harness
 from pipeline.core.ticket import Ticket
 from pipeline.daemon import supervisor
@@ -217,4 +219,93 @@ def test_a_main_checkout_parked_elsewhere_does_not_get_the_ticket_landed_on_it()
     assert "ticket commit" not in sh("git log --oneline sidequest").stdout, \
         "the ticket landed on whatever branch happened to be checked out"
     assert "ticket commit" not in sh("git log --oneline main").stdout
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def _ticket_awaiting_approval():
+    """A git project whose ticket is parked at the human gate, with a worktree
+    on its branch -- where every re-gate case starts. The suite command reads a
+    file base can add, so "another ticket landed and broke it" is one commit."""
+    d, sh = git_project()
+    (d / "test_thing.py").write_text("")
+    sh("git add test_thing.py && git commit -qm 'the test file'")
+    (d / ".project/pipeline.toml").write_text(
+        'test_one = "echo test_broken; exit 1"\n'
+        'test_suite = "true"\n'
+        'test_suite_without_new = "! test -f broken"\n'
+        'base = "main"\n')
+    path = d / ".project/tickets/TICKET-001.md"
+    path.write_text(FIXTURE
+                    .replace("stage: plan-validation", "stage: awaiting-approval")
+                    .replace("counters: {}", "counters: {plan_validation_attempts: 0}"))
+    wt = supervisor.ensure_worktree(
+        d, {"id": "TICKET-001", "branch": "ticket/001"}, {"base": "main"})
+    cmd_approve(argparse.Namespace(project=str(d), id="TICKET-001", by="human"))
+    return d, sh, path, wt
+
+
+def test_a_stale_plan_is_re_gated_on_approval():
+    """A ticket sits at the human gate for days while other tickets land. Its
+    Tier A facts -- suite green, the new test the only red -- were recorded
+    against a tree that no longer exists, and approval used to trust them."""
+    d, sh, path, wt = _ticket_awaiting_approval()
+    assert Ticket.load(path).stage == "revalidating", "approval trusted a stale plan"
+    assert Ticket.load(path).extra["approved_by"] == "human", \
+        "approval must still stamp, and must not block on the rebase"
+
+    (d / "broken").write_text("another ticket landed and broke the suite\n")
+    sh("git add broken && git commit -qm 'base moved'")
+
+    did, rec = supervisor.start(d, path, harness("fake"), {})
+    assert did and rec and rec["kind"] == "regate"
+    rec["proc"].wait()
+    supervisor.finish(d, rec)
+
+    assert "base moved" in sh(f"git -C {wt} log --oneline").stdout, \
+        "the plan was re-gated without being rebased onto current base"
+    t = Ticket.load(path)
+    assert t.stage == "planning", "a plan validated against a dead tree was implemented"
+    assert t.counters["plan_validation_attempts"] == 0, \
+        "a good plan was charged for the crime of waiting"
+    assert t.counters["stale_regate"] == 1
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_a_still_good_plan_is_implemented_after_the_rebase():
+    d, sh, path, wt = _ticket_awaiting_approval()
+    (d / "unrelated.py").write_text("someone else's fix\n")
+    sh("git add unrelated.py && git commit -qm 'base moved'")
+
+    did, rec = supervisor.start(d, path, harness("fake"), {})
+    rec["proc"].wait()
+    supervisor.finish(d, rec)
+
+    t = Ticket.load(path)
+    assert t.stage == "implementing", "a plan that still gates clean was bounced"
+    assert (wt / "unrelated.py").exists(), "the branch never picked base up"
+    assert not t.lease_active()
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_a_rebase_conflict_on_approval_escalates_and_keeps_the_worktree():
+    """Same rule as a merge conflict: never auto-resolved, never retried, and
+    the conflicted index stays put because it is the evidence."""
+    d, sh, path, wt = _ticket_awaiting_approval()
+    (wt / "f.py").write_text("branch side\n")
+    _commit(wt, "'ticket commit'")
+    (d / "f.py").write_text("base side\n")
+    sh("git add f.py && git commit -qm 'base moved'")
+
+    did, rec = supervisor.start(d, path, harness("fake"), {})
+    assert did and rec and rec["kind"] == "regate"
+    rec["proc"].wait()
+    supervisor.finish(d, rec)
+
+    t = Ticket.load(path)
+    assert t.stage == "escalated"
+    assert wt.is_dir(), "the conflicted worktree is the evidence"
+    assert "f.py" in sh(f"git -C {wt} diff --name-only --diff-filter=U").stdout, \
+        "the conflict was resolved instead of left for the human"
+    assert t.counters.get("stale_regate", 0) == 0, "a conflict is not a stale plan"
+    assert not t.lease_active(), "an escalated ticket a human cannot resume"
     shutil.rmtree(d, ignore_errors=True)

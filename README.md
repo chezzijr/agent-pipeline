@@ -8,9 +8,9 @@ This is a pipeline, not a session tree. Nothing forks a parent session, so no
 process sits holding context while it waits, and nothing dies because its caller
 did. Tickets are the queue; agents are stateless workers pulled off it.
 
-    triage -> planning -> plan-validation -> [human] -> implementing
-                                                            |
-                        done <- merging <- verifying <- review
+    triage -> planning -> plan-validation -> [human] -> revalidating
+                                                              |
+             done <- merging <- verifying <- review <- implementing
 
 ## Why
 
@@ -33,7 +33,7 @@ pipeline --project ~/code/myproject run       # dispatcher loop
 pipelined --project ~/code/myproject          # the same loop, as its own command
 
 pipeline --project ~/code/myproject status
-pipeline --project ~/code/myproject approve TICKET-001
+pipeline --project ~/code/myproject approve TICKET-001   # -> revalidating
 pipeline --project ~/code/myproject reject  TICKET-001 "ignores cache invalidation"
 pipeline --project ~/code/myproject resume  TICKET-001 \
     --stage planning --reset plan_validation_attempts
@@ -62,6 +62,16 @@ ticket branch. Fast-forward only, and only while the main checkout is actually
 on `base`, so a dirty, diverged or elsewhere-parked checkout escalates instead
 of landing half of it -- and a conflict escalates with the conflicted worktree
 left in place for you to open.
+
+Approval does not mean "start typing". A ticket can sit at the human gate for
+days while other tickets land on base, so the Tier A facts behind its plan --
+suite green, the new test the only red -- describe a tree that no longer exists.
+`approve` therefore hands the ticket to `revalidating`, which rebases the branch
+onto current `base` and re-runs the gate before any implementation. A gate that
+now fails bounces back to `plan-validation` against its own counter
+(`stale_regate`), never `plan_validation_attempts`: the plan was fine, the world
+moved. A rebase conflict escalates and keeps the worktree, exactly like a merge
+conflict.
 
 Two tickets whose `files_declared` intersect never run at the same time -- the
 second one waits rather than failing. That ordering is silent, so `status` flags
@@ -115,10 +125,11 @@ run the loop under systemd or tmux, which already solve supervision.
    end up in shell commands, so they are pattern-checked on the way in
    (`validate_meta`) and `shlex.quote`d on the way out. A ticket that fails
    validation is escalated, never executed.
-4. **The regression suite and the merge are run by the dispatcher.**
-   `verifying` and `merging` have no agent at all -- a test result should never
-   pass through a model's mouth, and a merge conflict is never auto-resolved:
-   `merging` escalates and keeps the conflicted worktree as the evidence.
+4. **The regression suite, the re-gate and the merge are run by the dispatcher.**
+   `verifying`, `revalidating` and `merging` have no agent at all -- a test
+   result should never pass through a model's mouth, and neither a rebase nor a
+   merge conflict is ever auto-resolved: both escalate and keep the conflicted
+   worktree as the evidence.
 
 ## Layout
 

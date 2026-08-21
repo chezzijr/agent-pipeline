@@ -65,13 +65,16 @@ def cmd_approve(args) -> None:
     t = Ticket.find(project, args.id)
     if t.stage != "awaiting-approval":
         die(f"{args.id} is in `{t.stage}`, not `awaiting-approval`")
-    t.stage = "implementing"
+    # not `implementing`: the Tier A facts behind this plan were recorded
+    # before the ticket sat here, and base has moved since. `revalidating`
+    # rebases and re-gates. Approval returns now rather than waiting on it.
+    t.stage = "revalidating"
     t.extra["approved_by"] = args.by or os.environ.get("USER", "unknown")
     t.extra["approved_at"] = now().isoformat()
     t.append("human", "approval", f"**approved by {t.extra['approved_by']}**",
              by=t.extra["approved_by"])
     t.save()
-    print(f"{args.id}: -> implementing")
+    print(f"{args.id}: -> revalidating")
 
 
 def cmd_reject(args) -> None:

@@ -12,13 +12,13 @@ BOUNDS = {
 TERMINAL = {"done", "rejected", "escalated"}
 HUMAN_GATES = {"awaiting-approval", "needs-input"}
 KNOWN_STAGES = TERMINAL | HUMAN_GATES | {
-    "new", "triage", "planning", "plan-validation", "implementing",
-    "review", "holistic-review", "verifying", "merging"}
+    "new", "triage", "planning", "plan-validation", "revalidating",
+    "implementing", "review", "holistic-review", "verifying", "merging"}
 # only these leave a worktree behind for a human to look at
 CLEANUP_STAGES = {"done", "rejected"}
 # stages the dispatcher runs itself, with no agent and so no prompt file. A
 # test subtracts this set rather than hard-coding the exceptions.
-DISPATCHER_STAGES = {"verifying", "merging"}
+DISPATCHER_STAGES = {"verifying", "merging", "revalidating"}
 
 
 def transition(stage: str, result: str, counters: dict, klass: str = "bugfix"):
@@ -51,6 +51,24 @@ def transition(stage: str, result: str, counters: dict, klass: str = "bugfix"):
             return "awaiting-approval", c
         case ("plan-validation", "fail"):
             return charge("plan_validation_attempts", "planning")
+        case ("revalidating", "ok"):
+            return "implementing", c
+        case ("revalidating", "fail"):
+            # the plan went stale while it waited for a human -- base moved
+            # under it. That is not a bad plan, so it never charges
+            # `plan_validation_attempts`: doing so would escalate a good plan
+            # for the crime of waiting and corrupt the escalation rate. Its own
+            # counter is left out of BOUNDS deliberately -- staleness is base
+            # churn, not a property of the ticket's class, so it takes the
+            # dispatcher's default bound like every other counter the
+            # dispatcher raises itself.
+            # Target is `planning`, not `plan-validation`: a post-rebase gate
+            # failure means base moved -- new files, new overlap, a suite gone
+            # red underneath. Re-validating the same stale plan reruns the
+            # identical gate, fails identically, and charges
+            # plan_validation_attempts a tick later -- the exact cost this row
+            # exists to avoid. Re-planning is what can actually fix it.
+            return charge("stale_regate", "planning")
         case ("implementing", "ok"):
             return "review", c
         case ("implementing", "blocked"):
