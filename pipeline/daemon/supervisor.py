@@ -870,6 +870,36 @@ def _stopper():
     return (lambda: state["stop"]), r, w
 
 
+def _harness_reloader(name: str):
+    """Re-reads `<name>.toml` on every call instead of once per process, so a
+    harness change that merges mid-run reaches the next tick. The first read
+    is unguarded -- an unknown harness must still fail before the caller
+    takes the project lock. Every later read keeps the last good dict on any
+    exception, because a per-tick read turns a broken or half-written
+    `.toml` into a runtime fault where today it is only a startup fault, and
+    `run()` does not wrap its `tick()` call. A warning prints only when its
+    message changes, so a file that stays broken does not print once a
+    second."""
+    cfg = harness(name)
+    state = {"cfg": cfg, "err": None}
+
+    def reload() -> dict:
+        try:
+            new = harness(name)
+        except Exception as e:
+            msg = f"{e.__class__.__name__}: {e}"
+            if msg != state["err"]:
+                print(f"  harness {name}: keeping last good config ({msg})")
+            state["err"] = msg
+            return state["cfg"]
+        if new != state["cfg"]:
+            print(f"  harness {name}: reloaded")
+        state["cfg"], state["err"] = new, None
+        return state["cfg"]
+
+    return reload
+
+
 def run(project: Path, once: bool, interval: int, harness_name: str,
         max_parallel: int = 3, store=None) -> None:
     """Standalone: the daemon minus the socket server. One supervisor
@@ -882,7 +912,7 @@ def run(project: Path, once: bool, interval: int, harness_name: str,
     nobody could reach (see `spawn()` and the README). What you lose without
     the daemon is steering, never progress.
     """
-    hcfg = harness(harness_name)
+    reload = _harness_reloader(harness_name)
     emit = store.emitter(project) if store is not None else noop
     inflight: dict[str, dict] = {}
     lock = registry.lock(project)
@@ -896,8 +926,8 @@ def run(project: Path, once: bool, interval: int, harness_name: str,
 
     try:
         while not stopping():
-            worked = tick(project, hcfg, inflight, max_parallel, poller, emit,
-                          stopping)
+            worked = tick(project, reload(), inflight, max_parallel, poller,
+                          emit, stopping)
             if once and not inflight and not worked:
                 return  # --once drains the queue, it does not do a single pass
             poller.poll(1 if inflight else interval)
@@ -922,7 +952,7 @@ def serve(interval: int, harness_name: str, max_parallel: int, store, server,
     # = record child pids, reap on startup. Bounded today: the respawn uses a
     # new session id and drop_result() runs pre-spawn, so the worst case is a
     # stale thread summary.
-    hcfg = harness(harness_name)
+    reload = _harness_reloader(harness_name)
     states: dict[str, dict] = server.states
     locks: dict[str, object] = {}
     stopping, wake, wake_w = _stopper()
@@ -939,6 +969,7 @@ def serve(interval: int, harness_name: str, max_parallel: int, store, server,
 
     try:
         while not stopping():
+            hcfg = reload()
             wanted = {str(p): p for p in registry.projects()}
             for key in [k for k in states if k not in wanted]:
                 print(f"  unregistered: releasing {key}")

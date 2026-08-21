@@ -132,6 +132,11 @@ claiming the guard works.
   file on disk is unchanged and stays the protocol. A stage that reads
   the whole file to make an edit undoes the saving -- `_common.md`
   rule 4 is what stops it.
+- **The harness `.toml` is re-read once per tick**, by `_harness_reloader()`
+  in `pipeline/daemon/supervisor.py`. Before this, `run()` and `serve()` each
+  read it once above their loop, so a harness change that merged mid-run
+  reached nothing until the dispatcher restarted. A failed re-read keeps the
+  last good dict instead of killing the loop.
 
 ## Conventions
 

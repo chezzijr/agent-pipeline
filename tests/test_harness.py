@@ -6,7 +6,9 @@ changes documented in codex.toml's header comment."""
 from pathlib import Path
 
 from pipeline.core import PipelineError, config
-from pipeline.daemon import supervisor
+from pipeline.daemon import registry, supervisor
+from pipeline.daemon.server import Server
+from pipeline.daemon.store import Store
 
 
 def test_codex_cannot_register_hooks_so_a_guarded_stage_is_refused():
@@ -247,3 +249,86 @@ def test_a_harness_edit_mid_run_reaches_the_next_spawn():
     assert len(seen) == 2, f"expected two ticks, got {len(seen)}"
     assert seen[1].get("marker") == "TICKET-028", \
         "dispatcher spawned with a stale harness: the edit never reached tick 2"
+
+
+def test_a_harness_edit_mid_run_reaches_the_daemon_loop_too():
+    """TICKET-028: `serve()` (the daemon's `run_daemon()`) has the same bug
+    as `run()` -- one `hcfg` bound above its loop, reused for every project
+    it serves."""
+    import shutil
+    import tempfile
+
+    from helpers import project
+    tmp = Path(tempfile.mkdtemp())
+    shutil.copy(config.HARNESSES_DIR / "fake.toml", tmp / "fake.toml")
+    d = project()
+    seen, orig_dir, orig_tick = [], config.HARNESSES_DIR, supervisor.tick
+    store = Store(tmp / "events.db")
+    server = Server(store, tmp / "daemon.sock")
+
+    def fake_tick(proj, hcfg, *a, **kw):
+        seen.append(hcfg)
+        if len(seen) == 1:      # a harness change lands between two ticks
+            p = tmp / "fake.toml"
+            p.write_text(p.read_text() + '\nmarker = "TICKET-028"\n')
+            return True         # worked -- --once keeps draining
+        return False
+
+    config.HARNESSES_DIR = tmp
+    supervisor.tick = fake_tick
+    registry.register(d)
+    try:
+        supervisor.serve(0, "fake", 1, store, server, once=True)
+    finally:
+        supervisor.tick, config.HARNESSES_DIR = orig_tick, orig_dir
+        registry.unregister(d)
+
+    assert len(seen) == 2, f"expected two ticks, got {len(seen)}"
+    assert seen[1].get("marker") == "TICKET-028", \
+        "daemon spawned with a stale harness: the edit never reached tick 2"
+
+
+def test_a_broken_harness_mid_run_keeps_the_last_good_config():
+    """A per-tick re-read turns a half-written `.toml` into a runtime fault.
+    `run()` calls `tick()` with no `try/except`, so a `_harness_reloader()`
+    that re-raises would strand every lease. It must keep the last good
+    dict instead."""
+    import shutil
+    import tempfile
+
+    from helpers import project
+    tmp = Path(tempfile.mkdtemp())
+    shutil.copy(config.HARNESSES_DIR / "fake.toml", tmp / "fake.toml")
+    d = project()
+    seen, orig_dir, orig_tick = [], config.HARNESSES_DIR, supervisor.tick
+
+    def fake_tick(proj, hcfg, *a, **kw):
+        seen.append(hcfg)
+        if len(seen) == 1:
+            (tmp / "fake.toml").write_text("not toml = [[[")
+            return True
+        return False
+
+    config.HARNESSES_DIR = tmp
+    supervisor.tick = fake_tick
+    try:
+        supervisor.run(d, once=True, interval=0, harness_name="fake")
+    finally:
+        supervisor.tick, config.HARNESSES_DIR = orig_tick, orig_dir
+
+    assert len(seen) == 2, f"expected two ticks, got {len(seen)}"
+    assert seen[1] == seen[0], \
+        "a broken harness reload must keep the last good config, not " \
+        "propagate the parse error"
+
+
+def test_an_unknown_harness_still_fails_before_the_loop_starts():
+    """The first read stays unguarded: `pipeline run --harness nope` must
+    still die with `no harness config ...`, not hang or silently no-op."""
+    from helpers import project
+    d = project()
+    try:
+        supervisor.run(d, once=True, interval=0, harness_name="nope")
+        assert False, "an unknown harness should have raised before the loop"
+    except PipelineError as e:
+        assert "no harness config" in str(e)
