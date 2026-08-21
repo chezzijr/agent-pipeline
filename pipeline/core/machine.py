@@ -69,6 +69,12 @@ def transition(stage: str, result: str, counters: dict, klass: str = "bugfix"):
             # plan_validation_attempts a tick later -- the exact cost this row
             # exists to avoid. Re-planning is what can actually fix it.
             return charge("stale_regate", "planning")
+        case ("revalidating", "conflict"):
+            # the branch cannot be rebased onto base, so its commits are
+            # discarded and the branch is recut from base. `triage` is the
+            # only stage that can rebuild it: `planning` would replan without
+            # removing the conflicting commit and conflict again identically.
+            return charge("rebase_conflicts", "triage")
         case ("implementing", "ok"):
             return "review", c
         case ("implementing", "blocked"):

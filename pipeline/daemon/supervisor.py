@@ -24,8 +24,9 @@ from pipeline.core.ticket import (Ticket, all_tickets, drop_result,
                                   read_result, record_decision, result_file,
                                   stage_view, ticket_path, tickets_dir,
                                   validate_meta)
-from pipeline.core.worktree import (drop_worktree, ensure_worktree,
-                                    project_env, tree_snapshot, worktree)
+from pipeline.core.worktree import (base_ref, drop_worktree, ensure_worktree,
+                                    project_env, run_cmd, tree_snapshot,
+                                    worktree)
 from pipeline.daemon import registry
 from pipeline.daemon.server import Poller
 from pipeline.daemon.store import noop
@@ -539,8 +540,11 @@ def start(project: Path, path: Path, hcfg: dict, inflight: dict,
     if stage == "revalidating":
         # the Tier A facts were recorded before the ticket sat at the human
         # gate; base has moved since. Rebase first, re-gate in finish().
-        return child(f"git rebase {shlex.quote(str(cfg.get('base', 'main')))}",
-                     "regate")
+        base = base_ref(cfg)
+        ok, rec = child(f"git rebase {shlex.quote(base)}", "regate")
+        if rec is not None:
+            rec["base"] = base
+        return ok, rec
 
     if stage == "plan-validation":
         # ponytail: `gate()` runs the project's `test_one` synchronously, and
@@ -617,11 +621,26 @@ def finish_regate(project: Path, rec: dict, emit=noop) -> str:
     code = rec["proc"].returncode
     t = Ticket.load(rec["path"])
     if code != 0:
-        # same rule as a merge conflict: never auto-resolved, never retried.
-        # The half-rebased worktree stays -- `escalated` is not in CLEANUP_STAGES.
-        escalate(t, f"rebase onto base conflicted (exit {code})\n```\n"
-                    f"{log_tail(rec)}\n```", emit)
-        return "escalated"
+        # a conflicting rebase is repaired by discarding the branch's
+        # commits, not by resolving them: abort the rebase, then reset the
+        # branch onto base. Safe only because `revalidating` runs before
+        # `implementing` -- the branch carries triage's test commit and
+        # nothing else.
+        base = shlex.quote(rec.get("base") or "main")
+        rc, repair = run_cmd(f"git rebase --abort && git log --oneline {base}..HEAD",
+                              rec["wt"])
+        if rc == 0:
+            rc, reset_out = run_cmd(f"git reset --hard {base}", rec["wt"])
+            repair += reset_out
+        if rc != 0:
+            escalate(t, f"rebase onto base conflicted (exit {code}) and the "
+                        f"recut back onto base failed too\n```\n"
+                        f"{log_tail(rec)}\n{repair}\n```", emit)
+            return "escalated"
+        advance(project, t, "conflict",
+                f"rebase onto base conflicted; branch recut from base:\n```\n"
+                f"{log_tail(rec)}\n{repair}\n```", emit, agent=False)
+        return "conflict"
     ok, failures = gate(project, rec["tid"], rec["wt"])
     emit("gate", ticket=rec["tid"], stage=rec["stage"],
          verdict="pass" if ok else "fail", findings=failures)

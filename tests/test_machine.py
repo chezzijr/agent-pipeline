@@ -143,3 +143,14 @@ def test_an_approved_plan_is_re_gated_before_it_is_implemented():
     assert "plan_validation_attempts" not in c, "waiting for a human was charged to the plan"
     assert t("revalidating", "fail", c)[0] == "escalated", "an unbounded stale loop"
     assert "revalidating" in M.DISPATCHER_STAGES and "revalidating" in M.KNOWN_STAGES
+
+
+def test_a_rebase_conflict_returns_to_triage_and_is_bounded():
+    """A conflicting rebase discards the branch's commits, so only `triage`
+    can rebuild it. `planning` would replan without removing the conflicting
+    commit and conflict again identically."""
+    nxt, c = t("revalidating", "conflict")
+    assert nxt == "triage"
+    assert c["rebase_conflicts"] == 1
+    assert "stale_regate" not in c
+    assert t("revalidating", "conflict", c)[0] == "escalated", "an unbounded conflict loop"

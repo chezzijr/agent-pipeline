@@ -291,9 +291,11 @@ def test_a_still_good_plan_is_implemented_after_the_rebase():
     shutil.rmtree(d, ignore_errors=True)
 
 
-def test_a_rebase_conflict_on_approval_escalates_and_keeps_the_worktree():
-    """Same rule as a merge conflict: never auto-resolved, never retried, and
-    the conflicted index stays put because it is the evidence."""
+def test_a_rebase_conflict_recuts_the_branch_and_returns_to_triage():
+    """A conflicting rebase is repaired by discarding the branch's commits,
+    not by resolving them: abort the rebase, reset the branch onto base, and
+    hand the ticket back to `triage`, which rewrites its test against the
+    tree that now exists."""
     d, sh, path, wt = _ticket_awaiting_approval()
     (wt / "f.py").write_text("branch side\n")
     _commit(wt, "'ticket commit'")
@@ -306,12 +308,17 @@ def test_a_rebase_conflict_on_approval_escalates_and_keeps_the_worktree():
     supervisor.finish(d, rec)
 
     t = Ticket.load(path)
-    assert t.stage == "escalated"
-    assert wt.is_dir(), "the conflicted worktree is the evidence"
-    assert "f.py" in sh(f"git -C {wt} diff --name-only --diff-filter=U").stdout, \
-        "the conflict was resolved instead of left for the human"
+    assert t.stage == "triage"
+    assert t.counters["rebase_conflicts"] == 1
     assert t.counters.get("stale_regate", 0) == 0, "a conflict is not a stale plan"
-    assert not t.lease_active(), "an escalated ticket a human cannot resume"
+    assert not t.lease_active()
+    assert wt.is_dir(), "the branch is recut, not discarded"
+    assert sh(f"git -C {wt} diff --name-only --diff-filter=U").stdout == "", \
+        "the conflict was left unresolved instead of being discarded"
+    assert (wt / "f.py").read_text() == "base side\n"
+    log = sh(f"git -C {wt} log --oneline").stdout
+    assert "base moved" in log
+    assert "ticket commit" not in log
     shutil.rmtree(d, ignore_errors=True)
 
 

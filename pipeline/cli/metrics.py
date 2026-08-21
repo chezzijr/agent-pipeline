@@ -114,12 +114,13 @@ def _rows(conn: sqlite3.Connection, sql: str, since: float, project: str | None)
 
 # -- view 1: escalation rate per stage --------------------------------------
 # The headline: if plan-validation escalates constantly, the planning prompt
-# is miscalibrated. `stale_regate` and `plan_rejections` never emit a `kind`
-# of `escalated` -- `stale_regate` routes back to `planning` via a plain
-# `transition` event unless it exhausts its own bound, and `plan_rejections`
+# is miscalibrated. `stale_regate`, `rebase_conflicts` and `plan_rejections`
+# never emit a `kind` of `escalated` -- `stale_regate` routes back to
+# `planning` and `rebase_conflicts` routes back to `triage`, both via a plain
+# `transition` event unless they exhaust their own bound, and `plan_rejections`
 # is a human's CLI call that never reaches the dispatcher's `escalate()` at
-# all -- so neither counter inflates this view. It counts exactly what
-# DEC-011 names: kind='escalated'.
+# all -- so none of the three counters inflates this view. It counts exactly
+# what DEC-011 names: kind='escalated'.
 #
 # `runs` is every ENDED ATTEMPT at the stage, not every spawned agent:
 # `start()` emits a `stage_end` for the escalations that happen before a child

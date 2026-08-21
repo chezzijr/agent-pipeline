@@ -187,8 +187,11 @@ onto current `base` and re-runs the gate before any implementation. A gate that
 now fails bounces back to `planning` against its own counter (`stale_regate`),
 never `plan_validation_attempts`: the plan was fine, the world moved -- and
 re-validating the same stale plan would rerun the identical gate and fail
-identically, so re-planning is the only thing that can fix it. A rebase conflict escalates and keeps the worktree, exactly like a merge
-conflict.
+identically, so re-planning is the only thing that can fix it. A rebase
+conflict aborts the rebase, recuts the branch from base against its own
+counter (`rebase_conflicts`), and hands the ticket back to `triage`, which
+rewrites its test on current base; nothing is auto-resolved, and a second
+conflict escalates.
 
 Two tickets whose `files_declared` intersect never run at the same time -- the
 second one waits rather than failing. That ordering is silent, so `ls` flags
