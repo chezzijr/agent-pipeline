@@ -5,6 +5,12 @@
 #
 # The agent's cwd is the ticket's git worktree; the ticket itself lives in the
 # main checkout, which is why {project} is passed as an extra allowed dir.
+#
+# The `--` before the prompt is load-bearing: `--add-dir` is VARIADIC, so
+# `--add-dir /p "prompt"` consumes the prompt as a second directory and claude
+# exits with "Input must be provided either through stdin or as a prompt
+# argument". Every stage this harness spawned died there, silently, because the
+# end-to-end tests use `fake.toml`, whose command has no positional argument.
 
 prompt_mode = "system"   # composed prompt via --append-system-prompt
 supports_hooks = true    # PreToolUse hooks registered via --settings
@@ -34,7 +40,7 @@ cmd = """claude -p --model {model} {effort_flag} {session_flag} {settings_flag} 
 --tools "{tools}" \
 --permission-mode {permission_mode} \
 --max-budget-usd {cap} \
---add-dir {project} \
+--add-dir {project} -- \
 "Work ticket {id}. Read {ticket} first. When finished write {result_file}" """
 
 # The same stage, hosted on a PTY the daemon owns (`mode: interactive` in the
@@ -48,5 +54,5 @@ interactive_cmd = """claude --model {model} {effort_flag} {session_flag} {settin
 --tools "{tools}" \
 --permission-mode {permission_mode} \
 --max-budget-usd {cap} \
---add-dir {project} \
+--add-dir {project} -- \
 "Work ticket {id}. Read {ticket} first. When finished write {result_file}" """

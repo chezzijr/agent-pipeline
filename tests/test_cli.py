@@ -12,7 +12,15 @@ from helpers import ROOT
 from pipeline.core.ticket import Ticket
 
 
+# Every `pipeline` process writes its events to $XDG_STATE_HOME/pipeline. With
+# the real environment inherited, these tests wrote into the developer's own
+# event log: 29 rows from 25 throwaway /tmp projects, which then showed up in a
+# bare `pipeline metrics`. Sandbox it here, once, rather than in each caller.
+_STATE = Path(tempfile.mkdtemp(prefix="pipeline-test-state-"))
+
+
 def cli(project, *args, env=None):
+    env = {**os.environ, "XDG_STATE_HOME": str(_STATE), **(env or {})}
     return subprocess.run([sys.executable, "-m", "pipeline",
                            "--project", str(project), *args],
                           cwd=ROOT, capture_output=True, text=True, env=env)

@@ -66,3 +66,27 @@ def test_claude_code_render_is_unchanged_by_the_extraction():
     assert "--append-system-prompt" in cmd
     assert "--settings /proj/settings.json" in cmd
     assert "claude -p" in cmd
+
+
+def test_the_prompt_survives_a_variadic_flag():
+    """`--add-dir` is variadic: `--add-dir /p "prompt"` eats the prompt as a
+    second directory and claude exits with "Input must be provided either
+    through stdin or as a prompt argument". Every stage this harness spawned
+    died there. Nothing caught it because the end-to-end tests use `fake.toml`,
+    whose command has no positional argument at all -- so the one harness that
+    talks to a real agent was the one harness never exercised.
+
+    The `--` is what ends option parsing. Assert it separates the last flag
+    from the prompt in every command template that carries a positional.
+    """
+    hcfg = config.harness("claude-code")
+    for key in ("cmd", "interactive_cmd"):
+        tpl = hcfg.get(key)
+        if not tpl:
+            continue
+        # the prompt is the trailing quoted positional
+        head, sep, prompt = tpl.rpartition('"Work ticket')
+        assert sep, f"{key}: no positional prompt found"
+        assert head.rstrip().rstrip("\\").rstrip().endswith("--"), (
+            f"{key}: the prompt is not separated from the flags by `--`, so a "
+            f"variadic flag will swallow it:\n...{head[-60:]!r}")
