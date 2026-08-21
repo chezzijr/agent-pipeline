@@ -696,3 +696,40 @@ def test_child_stdout_cannot_name_the_event_log_s_own_columns():
     assert rows[0]["ticket"] == "TICKET-001" and rows[0]["stage"] == "planning"
     assert rows[0]["data"]["status"] == "warning", rows
     s.close()
+
+
+def test_the_daemon_log_is_readable_while_the_daemon_runs():
+    """`pipeline start` redirects stdout to a file, and a file is not a tty, so
+    Python block-buffers it: the banner and every stage line sit in the process
+    until 8 KiB pile up or it exits. Watching that log is how a human -- or a
+    `tail -f` -- sees what the pipeline is doing, and it is blank while it does
+    it. A real child on a real redirect, because that is the only place the
+    buffering exists."""
+    tmp = Path(tempfile.mkdtemp())
+    log = tmp / "daemon.log"
+    sock = tmp / "daemon.sock"
+    env = dict(os.environ, PYTHONPATH=str(ROOT))
+    for var in ("XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_RUNTIME_DIR"):
+        env[var] = str(tmp)
+    fh = log.open("wb")
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "pipeline.daemon.main", "--socket", str(sock),
+         "--db", str(tmp / "events.db"), "--interval", "60"],
+        stdout=fh, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+        env=env, cwd=ROOT)
+    try:
+        for _ in range(100):        # wait on the socket, not on a sleep
+            if sock.exists():
+                break
+            time.sleep(0.05)
+        assert sock.exists(), f"daemon never came up: {log.read_text()}"
+        time.sleep(0.5)             # the banner is printed BEFORE the bind
+        assert b"pipelined" in log.read_bytes(), \
+            "the daemon printed its banner but the log is empty"
+    finally:
+        proc.terminate()
+        proc.wait(10)
+        fh.close()
+    # and once it is dead the whole buffer lands at once -- proof the line was
+    # written, just not where anyone could read it
+    assert b"pipelined" in log.read_bytes(), log.read_bytes()
