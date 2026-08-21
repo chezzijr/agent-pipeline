@@ -1,12 +1,18 @@
 ---
 id: TICKET-005
-stage: new
+stage: done
 class: feature
 branch: ticket/005
 test_file: null
 files_declared: []
-counters: {plan_validation_attempts: 0, review_loops: 0, blocked_count: 0, lease_expiries: 0}
-lease: {holder: null, expires: null}
+counters:
+  plan_validation_attempts: 0
+  review_loops: 0
+  blocked_count: 0
+  lease_expiries: 0
+lease:
+  holder: null
+  expires: null
 ---
 
 ## Summary
@@ -36,3 +42,11 @@ never from an agent prompt.
 ## Rollback
 
 ## Thread
+
+### 2026-08-21 03:13:21Z · human · note
+
+Implemented outside the pipeline during the initial build, before any real agent could run (the claude-code harness could not pass its prompt -- see `.project/known-issues.md`). Landed as:
+
+    e79071a feat(005): loop bounds come from the ticket class, not one constant
+
+Closed by hand so the dispatcher does not re-triage finished work. The ticket file stays as the record of what was asked for.

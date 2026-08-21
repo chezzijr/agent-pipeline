@@ -1,12 +1,18 @@
 ---
 id: TICKET-002
-stage: new
+stage: done
 class: feature
 branch: ticket/002
 test_file: null
 files_declared: []
-counters: {plan_validation_attempts: 0, review_loops: 0, blocked_count: 0, lease_expiries: 0}
-lease: {holder: null, expires: null}
+counters:
+  plan_validation_attempts: 0
+  review_loops: 0
+  blocked_count: 0
+  lease_expiries: 0
+lease:
+  holder: null
+  expires: null
 ---
 
 ## Summary
@@ -51,3 +57,11 @@ if the human means it.
 ## Rollback
 
 ## Thread
+
+### 2026-08-21 03:13:21Z · human · note
+
+Implemented outside the pipeline during the initial build, before any real agent could run (the claude-code harness could not pass its prompt -- see `.project/known-issues.md`). Landed as:
+
+    f0dbdf1 feat(002): pipeline reject returns a plan to planning with its reason
+
+Closed by hand so the dispatcher does not re-triage finished work. The ticket file stays as the record of what was asked for.

@@ -1,12 +1,18 @@
 ---
 id: TICKET-012
-stage: new
+stage: done
 class: feature
 branch: ticket/012
 test_file: null
 files_declared: []
-counters: {plan_validation_attempts: 0, review_loops: 0, blocked_count: 0, lease_expiries: 0}
-lease: {holder: null, expires: null}
+counters:
+  plan_validation_attempts: 0
+  review_loops: 0
+  blocked_count: 0
+  lease_expiries: 0
+lease:
+  holder: null
+  expires: null
 ---
 
 ## Summary
@@ -39,3 +45,11 @@ Spec: ~/.claude/plans/2026-08-20-pipeline-app-design.md
 ## Rollback
 
 ## Thread
+
+### 2026-08-21 03:13:21Z · human · note
+
+Implemented outside the pipeline during the initial build, before any real agent could run (the claude-code harness could not pass its prompt -- see `.project/known-issues.md`). Landed as:
+
+    18778f8 feat(012): stream-json parsing and `pipeline logs`
+
+Closed by hand so the dispatcher does not re-triage finished work. The ticket file stays as the record of what was asked for.

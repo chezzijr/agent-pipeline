@@ -1,12 +1,18 @@
 ---
 id: TICKET-008
-stage: new
+stage: done
 class: feature
 branch: ticket/008
 test_file: null
 files_declared: []
-counters: {plan_validation_attempts: 0, review_loops: 0, blocked_count: 0, lease_expiries: 0}
-lease: {holder: null, expires: null}
+counters:
+  plan_validation_attempts: 0
+  review_loops: 0
+  blocked_count: 0
+  lease_expiries: 0
+lease:
+  holder: null
+  expires: null
 ---
 
 ## Summary
@@ -36,3 +42,11 @@ reason recorded, and planning agents see that status when they grep.
 ## Rollback
 
 ## Thread
+
+### 2026-08-21 03:13:21Z · human · note
+
+Implemented outside the pipeline during the initial build, before any real agent could run (the claude-code harness could not pass its prompt -- see `.project/known-issues.md`). Landed as:
+
+    42039da feat(008): let a plan supersede an earlier decision record
+
+Closed by hand so the dispatcher does not re-triage finished work. The ticket file stays as the record of what was asked for.
