@@ -1,7 +1,10 @@
 """Running project commands, and the per-ticket checkout they run in."""
 import os
 import shlex
+import shutil
 import subprocess
+import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 
 
@@ -29,6 +32,12 @@ def worktree(project: Path, meta: dict) -> Path:
     return project / ".worktrees" / meta["id"]
 
 
+def base_ref(cfg: dict) -> str:
+    """One default for base, so the gate and the ticket's own checkout can
+    never drift apart."""
+    return str(cfg.get("base", "main"))
+
+
 def ensure_worktree(project: Path, meta: dict, cfg: dict) -> Path | None:
     """A ticket owns a checkout. Two tickets cannot share one, which is why
     concurrency and worktrees arrive together. Scripted, never improvised by an
@@ -44,7 +53,7 @@ def ensure_worktree(project: Path, meta: dict, cfg: dict) -> Path | None:
     # a resume would silently discard every commit the ticket already made.
     add = (f"git worktree add {shlex.quote(str(wt))} {branch}" if branch_exists else
            f"git worktree add -b {branch} {shlex.quote(str(wt))} "
-           f"{shlex.quote(str(cfg.get('base', 'main')))}")
+           f"{shlex.quote(base_ref(cfg))}")
     code, out = run_cmd(add, project)
     if code:
         print(f"  worktree failed for {meta['id']}: {out.strip()[:300]}")
@@ -59,6 +68,32 @@ def drop_worktree(project: Path, meta: dict) -> None:
     wt = worktree(project, meta)
     if wt.is_dir():
         run_cmd(f"git worktree remove --force {shlex.quote(str(wt))}", project)
+
+
+@contextmanager
+def base_checkout(project: Path, cfg: dict):
+    """A throwaway detached checkout of base, outside the repo, for running a
+    ticket's test against the code the ticket branched from. Yields
+    `(path, "")`, or `(None, git's output)` when base cannot be checked out.
+
+    Always removed. It is not a ticket's checkout: nothing resumes in it and
+    nothing may be left behind for a human to look at."""
+    tmp = Path(tempfile.mkdtemp(prefix="pipeline-base-"))
+    wt = tmp / "base"
+    code, out = run_cmd(
+        f"git worktree add --detach {shlex.quote(str(wt))} "
+        f"{shlex.quote(base_ref(cfg))}", project)
+    try:
+        if code:
+            yield None, out
+        else:
+            if cfg.get("worktree_setup"):
+                run_cmd(cfg["worktree_setup"], wt)
+            yield wt, ""
+    finally:
+        if not code:
+            run_cmd(f"git worktree remove --force {shlex.quote(str(wt))}", project)
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
 def tree_snapshot(project: Path) -> str:

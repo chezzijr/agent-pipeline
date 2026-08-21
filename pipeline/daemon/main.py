@@ -8,13 +8,14 @@ anything -- the socket is the liveness check and the pid comes back from
 import argparse
 import sys
 
-from pipeline.core import PipelineError
+from pipeline.core import PipelineError, line_buffer_stdout
 from pipeline.daemon import supervisor
 from pipeline.daemon.server import Server
 from pipeline.daemon.store import Store
 
 
 def main() -> None:
+    line_buffer_stdout()
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--interval", type=int, default=10)
     ap.add_argument("--harness", default="claude-code")

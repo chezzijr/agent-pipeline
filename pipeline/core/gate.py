@@ -1,11 +1,12 @@
 """Tier A gate -- deterministic, no LLM judgment anywhere in the path."""
 import re
 import shlex
+import shutil
 from pathlib import Path
 
 from pipeline.core.config import project_config
 from pipeline.core.ticket import Ticket, ticket_path
-from pipeline.core.worktree import run_cmd
+from pipeline.core.worktree import base_checkout, base_ref, run_cmd
 
 # `## Thread` is deliberately absent: it starts empty on every ticket and the
 # gate itself is what first writes to it.
@@ -22,6 +23,47 @@ def _cites(text: str, path: str) -> bool:
     contains it (`ratio.py`, `delegate.py` for `gate.py`)."""
     pat = r"(?<![\w./-])" + re.escape(path) + r"(?![\w-])"
     return re.search(pat, text) is not None
+
+
+def _base_findings(project: Path, cfg: dict, wd: Path, test: str,
+                   node: str) -> list[str]:
+    """A test that fails in the ticket's worktree proves the bug is HERE.
+    Tier A wants more: that it fails on BASE, which is what makes it a
+    reproduction rather than a branch that broke itself. The test itself
+    only exists on the branch, so the branch's test file is copied onto a
+    throwaway checkout of base: the branch's test, base's code."""
+    if wd.resolve() == project.resolve():
+        return ["ok: base check skipped -- no ticket worktree was given, so "
+                "there is no branch to compare against base"]
+    rel = test.split("::")[0]
+    if ".." in rel or rel.startswith("/"):
+        # SAFE_TEST bans shell metacharacters, not traversal -- and unlike
+        # the branch run, which only reads, this one WRITES the path.
+        return [f"`{test}` is not a plain relative path -- refusing to copy "
+                f"it into a checkout of base"]
+    base = base_ref(cfg)
+    with base_checkout(project, cfg) as (base_wt, err):
+        if base_wt is None:
+            return [f"could not check out base `{base}` to re-run `{test}`"
+                    f"\n```\n{err[-1200:]}\n```"]
+        dst = base_wt / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(wd / rel, dst)
+        code, out = run_cmd(
+            cfg["test_one"].format(test=shlex.quote(test)), base_wt)
+    if code == 0:
+        return [f"`{test}` PASSES on base `{base}` -- it fails only on this "
+                f"branch, so it is not a reproduction: either the bug is "
+                f"already fixed on base, or the test is red for a reason "
+                f"base does not have\n```\n{out[-1200:]}\n```"]
+    if node not in out:
+        # same trap as the branch run: an import error exits non-zero too,
+        # and here that reads as a successful reproduction
+        return [f"`{test}` exited non-zero on base `{base}` but its name "
+                f"never appears in the output -- it errored rather than "
+                f"failed, so base proves nothing\n```\n{out[-1200:]}\n```"]
+    return [f"ok: `{test}` fails on base `{base}` too -- the bug is not "
+            f"already fixed upstream\n```\n{out[-1200:]}\n```"]
 
 
 def gate(project: Path, tid: str, workdir: Path | None = None) -> tuple[bool, list[str]]:
@@ -88,6 +130,7 @@ def gate(project: Path, tid: str, workdir: Path | None = None) -> tuple[bool, li
                     f"string {expect!r}\n```\n{out[-1200:]}\n```")
             else:
                 findings.append(f"ok: `{test}` fails as required\n```\n{out[-1200:]}\n```")
+                findings += _base_findings(project, cfg, wd, test, node)
             code, out = run_cmd(cfg["test_suite_without_new"].format(test=shlex.quote(test)), wd)
             if code != 0:
                 findings.append(
