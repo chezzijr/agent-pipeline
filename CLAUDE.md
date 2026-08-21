@@ -149,3 +149,14 @@ But a change to `pipeline/hooks/dangerous-commands.py`, `transition()`, `validat
 or `CONTROL_FIELDS` **requires human review before merge**, whatever the
 pipeline says. A pipeline that can weaken its own guard unattended is the one
 failure mode worth refusing to automate.
+
+**`.claude/skills/file-ticket/SKILL.md` is part of the interface.** It is what a
+session reads before filing work into this pipeline, so a change to a CLI
+command, a stage's behaviour, or the human gates is not finished until the skill
+says the same thing. A skill describing a pipeline that no longer exists sends
+every future ticket in wrong, and nothing tests it.
+
+**The main checkout must be parked on the base branch while the dispatcher
+runs.** `merging` refuses to land otherwise -- "main checkout is parked on
+`<branch>`, not the base branch" -- and the ticket escalates with its work done.
+Read that message as "check out `main`", not as a merge conflict.

@@ -127,7 +127,14 @@ pipeline projects                # is this repo registered
 failure. Read the line it prints, not the exit code.
 
 - Not registered → `pipeline register /home/chezzijr/proj/claude-setup`
-- Daemon down → `pipeline start` (polls every 10s), or `pipeline run --once` to drain
+- Daemon down → `pipeline run` (this project, in your terminal; `--once` drains the
+  queue and exits) or `pipeline start` (detached, every registered project).
+  **They differ where it matters:** `planning` is `mode: interactive`, so under the
+  daemon it runs on a PTY and waits for a human to answer its first approval prompt
+  (`pipeline tui`, then `i` for raw mode). Under `pipeline run` nothing can attach,
+  so it runs headless and finishes on its own. Unattended = `pipeline run`.
+- Whichever you use, the main checkout has to be sitting on the base branch, or
+  `merging` refuses to land the ticket and escalates it with the work already done.
   the queue in the foreground and watch it
 
 Then tell the user what to expect and how to watch:
