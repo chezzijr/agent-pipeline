@@ -1,5 +1,8 @@
 ---
 model: opus
+# medium: a narrower job than review -- coherence of the accumulated diff only,
+# and the prompt forbids line-level nits that review already covered.
+effort: medium
 write: false
 max_usd: 4
 hooks: [dangerous-commands]

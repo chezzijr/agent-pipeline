@@ -67,10 +67,19 @@ skill_tool = "Skill"
 #                                  SQLite, to gain sub-message granularity on a
 #                                  view that is already live.
 # Both flags exist in `claude --help`; re-enabling either is a one-line edit.
+# `--tools` restricts the built-in tool set only, not MCP. TICKET-024's
+# `planning` asked for 7 tools and its `init` event granted 53 from 9
+# `~/.claude` MCP servers, Gmail among them -- the guard's `matcher: "Bash"`
+# covers none of those tool names. Measured on `claude-haiku-4-5-20251001`,
+# 2026-08-21: without `--strict-mcp-config`, `init` reports 68 tools and 9
+# servers; with it, exactly `["Bash","Edit","Glob","Grep","Read","Skill",
+# "Write"]` and `"mcp":[]`. `--bare` is not the alternative -- it skips hooks,
+# and `spawn()` already refuses a stage that cannot register
+# `dangerous-commands.py`.
 cmd = """claude -p --model {model} {effort_flag} {session_flag} {settings_flag} \
 --output-format stream-json --verbose \
 --append-system-prompt "$(cat {stage_prompt})" \
---tools "{tools}" \
+--tools "{tools}" --strict-mcp-config \
 --permission-mode {permission_mode} \
 --max-budget-usd {cap} \
 --add-dir {project} -- \
@@ -86,7 +95,7 @@ cmd = """claude -p --model {model} {effort_flag} {session_flag} {settings_flag} 
 # A harness without this key falls back to `cmd` under the PTY.
 interactive_cmd = """claude --model {model} {effort_flag} {session_flag} {settings_flag} \
 --append-system-prompt "$(cat {stage_prompt})" \
---tools "{tools}" \
+--tools "{tools}" --strict-mcp-config \
 --permission-mode {permission_mode} \
 --max-budget-usd {cap} \
 --add-dir {project} -- \
