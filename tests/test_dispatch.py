@@ -542,3 +542,48 @@ def test_the_summary_marker_is_recorded_when_a_verdict_is_applied():
         "the marker is not recorded: a summary with it and a summary without "
         "it leave identical events and identical ticket text\n"
         f"events: {with_marker}")
+
+
+def test_the_marker_record_names_the_agents_summary_and_nothing_else():
+    """The marker is evidence about a stage prompt, never a verdict, so it
+    is recorded per stage in two places: a `marker` field on the
+    `transition` event, and a `marker=` attr on the thread entry header.
+
+    The dispatcher's own notes -- `dispatcher pickup`, a failed gate, a
+    merge exit code -- were written by no agent, so they carry no field
+    at all. A `False` there would read as a prompt that dropped the rule.
+    """
+    def run(summary: str, **kw) -> tuple[dict, str]:
+        d = project()
+        path = d / ".project/tickets/TICKET-001.md"
+        seen: list = []
+        supervisor.advance(d, Ticket.load(path), "ok", summary,
+                           lambda kind, **k: seen.append(k), **kw)
+        body = path.read_text()
+        shutil.rmtree(d, ignore_errors=True)
+        return seen[0], body
+
+    marked, marked_body = run("✓ planned")
+    tight, _ = run("✓planned")           # loose_result() ate the space
+    bare, bare_body = run("planned")
+    pickup, pickup_body = run("dispatcher pickup", agent=False)
+
+    assert marked["marker"] is True
+    assert tight["marker"] is True, "match the character, not character+space"
+    assert bare["marker"] is False
+    assert "marker=yes" in marked_body and "marker=no" in bare_body
+    assert "marker" not in pickup, pickup
+    assert "marker=" not in pickup_body
+
+
+def test_a_missing_marker_changes_no_transition_and_no_counter():
+    """Evidence, not a verdict: an unmarked summary must advance exactly
+    like a marked one. If this ever fails, someone turned a prose-rule
+    reminder into a gate on the agent's work."""
+    d = project()
+    path = d / ".project/tickets/TICKET-001.md"
+    supervisor.advance(d, Ticket.load(path), "ok", "no marker here")
+    t = Ticket.load(path)
+    shutil.rmtree(d, ignore_errors=True)
+    assert t.stage == "awaiting-approval"
+    assert t.counters == {}

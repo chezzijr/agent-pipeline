@@ -70,11 +70,37 @@ def escalate(t: Ticket, reason: str, emit=noop) -> None:
     print(f"  {t.path.stem}: -> escalated ({reason})")
 
 
-def advance(project: Path, t: Ticket, result: str, note: str, emit=noop) -> None:
+# `pipeline/stages/_common.md` tells every stage to start `summary:` with
+# this character. It is evidence about the agent's context, never a
+# verdict: nothing below acts on its absence.
+MARKER = "✓"
+
+
+def has_marker(note: str) -> bool:
+    """Did this summary still carry the shared prose rules' marker?
+
+    The character, NOT the character plus a space: `loose_result()`
+    (`pipeline/core/ticket.py`) takes `rest.strip()`, so a sidecar whose
+    YAML broke arrives with the space already gone, and a `"✓ "` prefix
+    test would report a marked stage as unmarked.
+    """
+    return note.lstrip().startswith(MARKER)
+
+
+def advance(project: Path, t: Ticket, result: str, note: str, emit=noop,
+            agent: bool = True) -> None:
+    # `agent` says this note is an agent's `.result` summary. The
+    # dispatcher's own notes are nobody's prose, so they get no `marker`
+    # key at all -- absent means "not applicable", False means "a stage
+    # prompt lost the rule", and collapsing the two would count every
+    # dispatcher pickup as a failure.
     stage = t.stage
     nxt, counters = transition(stage, result, t.counters, t.klass)
+    marker = has_marker(note) if agent else None   # BEFORE t.append copies the note
+    ev = {} if marker is None else {"marker": marker}
+    attrs = {} if marker is None else {"marker": "yes" if marker else "no"}
     emit("transition", ticket=t.id, stage=stage, **{"from": stage, "to": nxt,
-         "result": result, "counters": counters})
+         "result": result, "counters": counters}, **ev)
     if nxt == "escalated":
         # The other route into `escalated`. `escalate()` covers the paths it
         # owns -- a crash, a tamper, an unusable ticket -- and it sets the
@@ -90,7 +116,7 @@ def advance(project: Path, t: Ticket, result: str, note: str, emit=noop) -> None
             f"({counters[charged]}/{BOUNDS.get(t.klass, {}).get(charged, MAX_ATTEMPTS)})"
             if charged else f"`{stage}` escalated on result `{result}`"))
     t.append(stage, "transition", f"**{stage} -> {nxt}** (result: `{result}`)\n\n{note}",
-             to=nxt, result=result)
+             to=nxt, result=result, **attrs)
     if nxt == "done":
         did = record_decision(project, t)
         t.append(stage, "decision", f"decision recorded as `{did}`" if did else
@@ -457,7 +483,7 @@ def start(project: Path, path: Path, hcfg: dict, inflight: dict,
         t.save()  # persist now: later returns skip the save
 
     if stage == "new":
-        advance(project, t, "new", "dispatcher pickup", emit)
+        advance(project, t, "new", "dispatcher pickup", emit, agent=False)
         return True, None
 
     if files_conflict(t.frontmatter(),
@@ -522,7 +548,7 @@ def start(project: Path, path: Path, hcfg: dict, inflight: dict,
         if not ok:
             advance(project, t, "fail",
                     "Tier A gate failed:\n" + "\n".join(f"- {f}" for f in failures),
-                    emit)
+                    emit, agent=False)
             # a failed gate IS this stage's run: no agent is spawned, so
             # `finish()` never fires and view 1 would divide an escalation by
             # zero runs and report no rate for the stage that escalated
@@ -572,7 +598,7 @@ def finish_child(project: Path, rec: dict, label: str, emit=noop) -> str:
     code = rec["proc"].returncode
     result = "ok" if code == 0 else "fail"
     advance(project, Ticket.load(rec["path"]), result,
-            f"{label} exit {code}\n```\n{log_tail(rec)}\n```", emit)
+            f"{label} exit {code}\n```\n{log_tail(rec)}\n```", emit, agent=False)
     return result
 
 
@@ -594,7 +620,8 @@ def finish_regate(project: Path, rec: dict, emit=noop) -> str:
     t = Ticket.load(rec["path"])  # the gate wrote its findings to the thread
     advance(project, t, "ok" if ok else "fail",
             "re-gated after rebasing onto base:\n"
-            + ("- clean" if ok else "\n".join(f"- {f}" for f in failures)), emit)
+            + ("- clean" if ok else "\n".join(f"- {f}" for f in failures)), emit,
+            agent=False)
     return "ok" if ok else "fail"
 
 
