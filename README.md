@@ -29,10 +29,9 @@ uv tool install .                             # `pipeline` and `pipelined` on PA
 pipeline init ~/code/myproject                # scaffold .project/
 $EDITOR ~/code/myproject/.project/pipeline.toml   # how to run this project's tests
 pipeline --project ~/code/myproject new "cache leaks on evict"
-pipeline --project ~/code/myproject run       # dispatcher loop
-pipelined --project ~/code/myproject          # the same loop, as its own command
+pipeline --project ~/code/myproject run       # dispatcher loop, no daemon
 
-pipeline --project ~/code/myproject status
+pipeline --project ~/code/myproject ls
 pipeline --project ~/code/myproject approve TICKET-001   # -> revalidating
 pipeline --project ~/code/myproject reject  TICKET-001 "ignores cache invalidation"
 pipeline --project ~/code/myproject resume  TICKET-001 \
@@ -43,6 +42,47 @@ Without installing it, `uv run python -m pipeline …` runs the same CLI.
 
 `run --once` drains the queue and exits -- what you want while you are still
 watching it. Plain `run` keeps polling.
+
+## The daemon
+
+`pipelined` is **one process for many projects**, not one per project. It keeps
+working after you close the terminal, and it records what happened to
+`~/.local/state/pipeline/events.db`.
+
+```sh
+pipeline register ~/code/myproject   # -> ~/.config/pipeline/projects, one path per line
+pipeline start                       # spawns pipelined, detached
+pipeline status                      # is it running, and how many projects
+pipeline ls                          # every registered project's tickets
+pipeline ls --project ~/code/myproject     # --project is a FILTER here
+pipeline stop
+pipeline unregister ~/code/myproject
+```
+
+`pipelined` itself stays a raw foreground process, so `systemd --user` or tmux
+can supervise it; `pipeline start` is just a convenience wrapper. There is no
+pidfile: the socket at `$XDG_RUNTIME_DIR/pipeline/daemon.sock` is the liveness
+check and `ping` returns the pid.
+
+**The daemon is an accelerator, never a dependency.** `pipeline run --project X`
+is the same supervisor minus the socket, and every client command falls back to
+reading the ticket files when nothing answers the socket. Ticket files stay the
+source of truth; the database holds the event log only, so `rm events.db` loses
+history and nothing else.
+
+Two supervisors on one project would double-spawn, so each holds an
+`fcntl.flock` on `<project>/.project/.lock` while it watches it, and the daemon
+itself holds one on `daemon.sock.lock`. The kernel releases both on crash. A
+daemon restart also treats a lease whose holder pid is gone as expired, instead
+of parking the ticket for the full 30 minutes.
+
+The socket is `0600` in a `0700` directory and the event database is `0600`, but
+the boundary is the uid and nothing more: anything running as you can `ls`,
+`subscribe` and `kill`. It is not a privilege boundary and nothing should treat
+it as one.
+
+The protocol, the schema and the event-kind vocabulary are frozen in
+`.project/decisions/DEC-011.md`.
 
 ## Concurrency
 
@@ -74,7 +114,7 @@ moved. A rebase conflict escalates and keeps the worktree, exactly like a merge
 conflict.
 
 Two tickets whose `files_declared` intersect never run at the same time -- the
-second one waits rather than failing. That ordering is silent, so `status` flags
+second one waits rather than failing. That ordering is silent, so `ls` flags
 anything sitting still for more than `STALE_HOURS`.
 
 Per-project worktree setup (shared build cache, `.env`, dependency install) is
@@ -89,15 +129,16 @@ worktree_setup = "ln -s ~/.cache/cargo-target target && cp ../../.env ."
 Every spawn gets a session id and a log:
 
 ```
-$ pipeline --project ~/code/myproject status -v
+$ pipeline --project ~/code/myproject ls -v
 TICKET-001   review    bugfix  {'review_loops': 1, ...}
              last: review log=.project/logs/TICKET-001-review-3582ef02.log
                    replay=`claude --resume 3582ef02-...`
 ```
 
-`tail -f` the log while it runs; `claude --resume <id>` to open the session and
-see what the agent actually did. There is no daemon manager here on purpose --
-run the loop under systemd or tmux, which already solve supervision.
+`tail -f` the log while it runs, or `pipeline logs <id> -f` to pretty-print it;
+`claude --resume <id>` to open the session and see what the agent actually did.
+Under the daemon the child's stdout comes back over a pipe, but it is *teed* to
+the same log file -- otherwise both of those stop working.
 
 ## The three invariants
 
@@ -140,7 +181,11 @@ run the loop under systemd or tmux, which already solve supervision.
     pipeline/core/gate.py        the Tier A gate
     pipeline/core/worktree.py    per-ticket checkouts and project commands
     pipeline/daemon/supervisor.py  the dispatcher loop
+    pipeline/daemon/server.py    the select loop: watch(fd, cb)/unwatch(fd), AF_UNIX, NDJSON
+    pipeline/daemon/store.py     the append-only SQLite event log
+    pipeline/daemon/registry.py  the project list and the per-project flock
     pipeline/cli/main.py         the human-facing commands
+    pipeline/cli/client.py       the socket client, and its file-based fallback
     pipeline/stages/_common.md   rules every stage shares, incl. the failure protocol
     pipeline/stages/*.md         one self-contained stage: frontmatter (model,
                                  effort, write) plus the prompt. Harness-neutral.
@@ -220,7 +265,5 @@ second agent onto the same stage in the same worktree.
 
 - **No real agent has run yet.** The stage prompts are the only unverified part;
   everything around them is tested against a fake harness.
-- **`.project/decisions/` has no writer.** `planning.md` greps it; nothing ever
-  appends to it, so the "do not revert this, it fixed a leak" case is still open.
 - Per-class bounds, model tiering. Watch the escalation rate per stage -- the
   frontmatter counters give it to you for free.
