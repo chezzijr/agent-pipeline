@@ -157,6 +157,39 @@ def test_estimate_cost_flags_pty_tokens_as_an_estimate():
     assert known == metrics.PRICE_PER_MTOK["claude-sonnet-4-5"]["input"]
 
 
+def test_token_columns_read_both_spellings_of_the_cache_key():
+    """A `result` event carries the API's `cache_read_input_tokens`; a PTY
+    stage has no `result` at all, and `usage_events()` in
+    `daemon/supervisor.py` re-keys the same number to `cache_read` when it
+    totals one. Reading a single spelling reports 0 for exactly the stages
+    with no `result` event to fall back on -- in the column whose whole job is
+    naming what drains the weekly token limit."""
+    res = metrics._tokens(
+        {"num_turns": 12,
+         "usage": {"output_tokens": 500, "cache_read_input_tokens": 90_000,
+                   "output_tokens_details": {"thinking_tokens": 200}}}, "result")
+    assert res == {"out": 500, "think": 200, "cache_read": 90_000, "turns": 12}
+
+    # the shape `usage_events()` actually emits -- see supervisor.py's
+    # ("cache_read", "cache_read_input_tokens") re-key
+    pty = metrics._tokens(
+        {"model": "claude-opus-5", "input_tokens": 10, "output_tokens": 500,
+         "cache_read": 90_000, "cache_creation": 1_000}, "usage")
+    assert pty["cache_read"] == 90_000, "the PTY spelling must not read as 0"
+    assert pty["turns"] == 0, "a usage event carries no turn count"
+
+    # missing/None keys are 0, never a TypeError on a half-written event
+    assert metrics._tokens({}, "result") == {
+        "out": 0, "think": 0, "cache_read": 0, "turns": 0}
+
+
+def test_token_scale_stays_readable_at_the_sizes_that_occur():
+    assert metrics._k(0) == "0"
+    assert metrics._k(999) == "999"
+    assert metrics._k(90_000) == "90K"
+    assert metrics._k(250_000_000) == "250.0M"
+
+
 def test_connect_refuses_a_missing_db_instead_of_creating_a_stray_file():
     """`sqlite3.connect` on a missing path silently creates an empty,
     schema-less, default-permission file -- and if that happens before the

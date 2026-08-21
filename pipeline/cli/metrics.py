@@ -206,17 +206,40 @@ def merged_tickets(conn: sqlite3.Connection, since: float = 0.0,
     return {(r["project"], r["ticket"]) for r in _rows(conn, sql, since, project)}
 
 
+def _tokens(d: dict, kind: str) -> dict:
+    """The token counts a stage run cost, from either event shape. A `result`
+    nests them under `usage` and carries `num_turns`; a PTY `usage` event IS
+    the usage dict and has no turn count.
+
+    On a Max plan the metered unit is tokens, not dollars, and Opus draws on a
+    weekly limit of its own -- so a per-stage cost in USD cannot say which
+    stage is exhausting the budget. These columns can.
+
+    Both spellings of the cache key, exactly as `estimate_cost` above accepts
+    both: a `result` carries the API's `cache_read_input_tokens`, while
+    `usage_events()` in `daemon/supervisor.py` re-keys it to `cache_read` when
+    it totals a PTY stage. Reading only one spelling reports 0 for precisely
+    the stages that have no `result` event to fall back on."""
+    u = (d.get("usage") or {}) if kind == "result" else d
+    return {"out": int(u.get("output_tokens") or 0),
+            "think": int((u.get("output_tokens_details") or {}).get("thinking_tokens") or 0),
+            "cache_read": int(u.get("cache_read_input_tokens")
+                              or u.get("cache_read") or 0),
+            "turns": int(d.get("num_turns") or 0)}
+
+
 def _cost_events(conn: sqlite3.Connection, since: float, project: str | None):
-    """(project, ticket, stage, cost_usd, estimated) for every `result`/
-    `usage` event in the window, restricted to nothing yet -- callers filter
-    to merged."""
+    """(project, ticket, stage, cost_usd, estimated, tokens) for every
+    `result`/`usage` event in the window, restricted to nothing yet --
+    callers filter to merged."""
     sql = _EV + "SELECT project, ticket, stage, kind, data FROM ev WHERE kind IN ('result','usage')"
     for r in _rows(conn, sql, since, project):
         d = json.loads(r["data"]) if isinstance(r["data"], str) else r["data"]
+        toks = _tokens(d, r["kind"])
         if r["kind"] == "result":
-            yield r["project"], r["ticket"], r["stage"], float(d.get("total_cost_usd") or 0.0), False
+            yield r["project"], r["ticket"], r["stage"], float(d.get("total_cost_usd") or 0.0), False, toks
         else:  # usage: a PTY stage, no result event, tokens x price table
-            yield r["project"], r["ticket"], r["stage"], estimate_cost(d.get("model"), d), True
+            yield r["project"], r["ticket"], r["stage"], estimate_cost(d.get("model"), d), True, toks
 
 
 def cost_by_stage(conn: sqlite3.Connection, since: float = 0.0,
@@ -227,17 +250,27 @@ def cost_by_stage(conn: sqlite3.Connection, since: float = 0.0,
     merged = merged_tickets(conn, since, project)
     if not merged:
         return []
-    by_stage: dict[str, list[tuple[float, bool]]] = {}
-    for proj, ticket, stage, cost, estimated in _cost_events(conn, since, project):
+    by_stage: dict[str, list[tuple[float, bool, dict]]] = {}
+    for proj, ticket, stage, cost, estimated, toks in _cost_events(conn, since, project):
         if (proj, ticket) not in merged:
             continue
-        by_stage.setdefault(stage, []).append((cost, estimated))
+        by_stage.setdefault(stage, []).append((cost, estimated, toks))
     out = []
     for stage, items in sorted(by_stage.items()):
-        costs = [c for c, _ in items]
+        costs = [c for c, _, _ in items]
+        # Tokens are summed, not medianed: the question they answer is "which
+        # stage is draining the weekly limit", which is a total. Turns are a
+        # median -- a per-run shape, and one crashed run of 2 turns would drag
+        # a mean far below what a normal run costs.
+        toks = [t for _, _, t in items]
+        turns = [t["turns"] for t in toks if t["turns"]]
         out.append({"stage": stage, "n": len(items),
                      "p50_cost": statistics.median(costs),
-                     "estimated": any(e for _, e in items)})
+                     "estimated": any(e for _, e, _ in items),
+                     "out_tokens": sum(t["out"] for t in toks),
+                     "thinking_tokens": sum(t["think"] for t in toks),
+                     "cache_read_tokens": sum(t["cache_read"] for t in toks),
+                     "p50_turns": statistics.median(turns) if turns else None})
     return out
 
 
@@ -257,7 +290,7 @@ def cost_per_merged(conn: sqlite3.Connection, since: float = 0.0,
     if not merged:
         return 0.0, False
     total, estimated = 0.0, False
-    for proj, ticket, _stage, cost, est in _cost_events(conn, since, project):
+    for proj, ticket, _stage, cost, est, _toks in _cost_events(conn, since, project):
         if (proj, ticket) in merged:
             total += cost
             estimated = estimated or est
@@ -380,6 +413,16 @@ def _fmt_money(x: float, estimated: bool) -> str:
     return f"{'~' if estimated else ''}${x:.2f}"
 
 
+def _k(n: int) -> str:
+    """Token counts, at the scale they actually occur. Cache reads run to
+    hundreds of millions and raw digits stop being readable well before that."""
+    if n >= 1_000_000:
+        return f"{n / 1_000_000:.1f}M"
+    if n >= 1_000:
+        return f"{n / 1_000:.0f}K"
+    return str(n)
+
+
 def _fmt_duration(s: float) -> str:
     s = int(round(s))
     h, rem = divmod(s, 3600)
@@ -398,7 +441,8 @@ def render(data: dict) -> str:
     stages = sorted(set(esc_by_stage) | set(cost_by_stage_map))
     any_estimated = False
 
-    out.append(f"{'stage':<17} {'runs':>4} {'escalated':>9} {'rate':>6} {'p50 cost':>10}")
+    out.append(f"{'stage':<17} {'runs':>4} {'escalated':>9} {'rate':>6} {'p50 cost':>10}"
+               f" {'turns':>6} {'out tok':>8} {'think':>7} {'cache rd':>9}")
     for stage in stages:
         e = esc_by_stage.get(stage, {"runs": 0, "escalated": 0, "rate": None})
         c = cost_by_stage_map.get(stage)
@@ -406,9 +450,14 @@ def render(data: dict) -> str:
         if c:
             cost = _fmt_money(c["p50_cost"], c["estimated"])
             any_estimated = any_estimated or c["estimated"]
+            turns = f"{c['p50_turns']:.0f}" if c["p50_turns"] else "-"
+            toks = (f"{_k(c['out_tokens']):>8} {_k(c['thinking_tokens']):>7} "
+                    f"{_k(c['cache_read_tokens']):>9}")
         else:
-            cost = "-"
-        out.append(f"{stage:<17} {e['runs']:>4} {e['escalated']:>9} {rate:>6} {cost:>10}")
+            cost, turns = "-", "-"
+            toks = f"{'-':>8} {'-':>7} {'-':>9}"
+        out.append(f"{stage:<17} {e['runs']:>4} {e['escalated']:>9} {rate:>6} {cost:>10}"
+                   f" {turns:>6} {toks}")
 
     out.append("")
     dist = data["review_loop_distribution"]
