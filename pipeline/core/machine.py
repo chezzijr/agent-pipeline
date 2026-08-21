@@ -62,7 +62,13 @@ def transition(stage: str, result: str, counters: dict, klass: str = "bugfix"):
             # churn, not a property of the ticket's class, so it takes the
             # dispatcher's default bound like every other counter the
             # dispatcher raises itself.
-            return charge("stale_regate", "plan-validation")
+            # Target is `planning`, not `plan-validation`: a post-rebase gate
+            # failure means base moved -- new files, new overlap, a suite gone
+            # red underneath. Re-validating the same stale plan reruns the
+            # identical gate, fails identically, and charges
+            # plan_validation_attempts a tick later -- the exact cost this row
+            # exists to avoid. Re-planning is what can actually fix it.
+            return charge("stale_regate", "planning")
         case ("implementing", "ok"):
             return "review", c
         case ("implementing", "blocked"):

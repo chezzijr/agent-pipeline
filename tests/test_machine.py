@@ -138,7 +138,7 @@ def test_an_approved_plan_is_re_gated_before_it_is_implemented():
     corrupt the escalation rate the whole system is measured by."""
     assert t("revalidating", "ok")[0] == "implementing"
     nxt, c = t("revalidating", "fail")
-    assert nxt == "plan-validation", f"a stale plan must replan, got {nxt}"
+    assert nxt == "planning", f"a stale plan must replan, got {nxt}"
     assert c["stale_regate"] == 1
     assert "plan_validation_attempts" not in c, "waiting for a human was charged to the plan"
     assert t("revalidating", "fail", c)[0] == "escalated", "an unbounded stale loop"

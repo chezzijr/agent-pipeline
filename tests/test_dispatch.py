@@ -264,7 +264,7 @@ def test_a_stale_plan_is_re_gated_on_approval():
     assert "base moved" in sh(f"git -C {wt} log --oneline").stdout, \
         "the plan was re-gated without being rebased onto current base"
     t = Ticket.load(path)
-    assert t.stage == "plan-validation", "a plan validated against a dead tree was implemented"
+    assert t.stage == "planning", "a plan validated against a dead tree was implemented"
     assert t.counters["plan_validation_attempts"] == 0, \
         "a good plan was charged for the crime of waiting"
     assert t.counters["stale_regate"] == 1
