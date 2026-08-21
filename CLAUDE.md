@@ -125,6 +125,13 @@ claiming the guard works.
   is not in `CLEANUP_STAGES`, so a conflict keeps its worktree -- moving the
   merge into `start()`'s cleanup would delete the evidence in the same pass
   that produced it.
+- **A stage reads a bounded view, not the ticket file.** `stage_view()`
+  (`pipeline/core/ticket.py`) keeps every section except `## Thread`
+  whole and trims the thread to the human-written kinds plus the last
+  `VIEW_RECENT` entries; `spawn()` puts it in the composed prompt. The
+  file on disk is unchanged and stays the protocol. A stage that reads
+  the whole file to make an edit undoes the saving -- `_common.md`
+  rule 4 is what stops it.
 
 ## Conventions
 

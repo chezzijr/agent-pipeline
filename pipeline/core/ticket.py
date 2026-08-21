@@ -400,6 +400,69 @@ def record_decision(project: Path, t: "Ticket") -> str | None:
 KINDS = frozenset({"note", "transition", "gate", "question", "answer", "finding",
                    "escalation", "approval", "rejection", "session", "decision"})
 
+# What a stage is asked to read. The thread is the only part of a ticket
+# that grows without bound -- 46168 of TICKET-016's 56294 bytes (82%)
+# were inside `## Thread` -- because every other section is REWRITTEN by
+# the stage that owns it. These kinds are never omitted: each carries a
+# human's words, or the reason a ticket previously stopped, and a stage
+# that acts without them acts against a decision somebody already made.
+VIEW_KEEP_KINDS = frozenset({"question", "answer", "rejection",
+                             "approval", "escalation", "decision"})
+VIEW_RECENT = 8      # trailing entries of any kind, always kept
+VIEW_CLIP = 2000     # chars per entry that is kept only for recency
+
+
+def _view_keep(e: "ThreadEntry") -> bool:
+    return (e.kind in VIEW_KEEP_KINDS
+            or (e.kind == "finding" and e.attrs.get("severity") == "blocking"))
+
+
+def stage_view(t: "Ticket", stage: str) -> str:
+    """The ticket as a stage is asked to read it: every section except
+    `## Thread` verbatim, and a bounded slice of the thread.
+
+    The bound does not depend on how many stages ran before. Sections
+    are kept whole because they are rewritten, not appended to; only
+    the thread grows with stage count.
+
+    DEC-016 is why nothing is dropped silently: an omitted entry
+    becomes a counted marker naming the ticket, so a stage that needs
+    an older entry knows it exists and where to read it.
+
+    `stage` names the reader in the header. There is deliberately no
+    per-stage kind filter: a filter that guesses wrong drops what a
+    stage needed, which is the failure TICKET-016 recorded.
+    """
+    entries = t.thread()
+    keep = {i for i, e in enumerate(entries) if _view_keep(e)}
+    keep |= set(range(max(0, len(entries) - VIEW_RECENT), len(entries)))
+    out = [
+        f"# {t.id} -- bounded view for the `{stage}` stage", "",
+        f"The full ticket is {t.path}. Every section except `## Thread` "
+        f"is below in full; the thread is trimmed to {len(keep)} of "
+        f"{len(entries)} entries. To read an omitted entry, run "
+        f"`grep -n {chr(39)}^### {chr(39)} {t.path}` and read only that range.", "",
+    ]
+    for name, text in t.sections().items():
+        if name != "Thread":
+            out += [f"## {name}", "", text, ""]
+    out += ["## Thread (bounded view)", ""]
+    gap = 0
+    for i, e in enumerate(entries):
+        if i not in keep:
+            gap += 1
+            continue
+        if gap:
+            out += [f"*-- {gap} earlier entries omitted; "
+                    f"they are in {t.path} --*", ""]
+            gap = 0
+        text = e.text
+        if not _view_keep(e) and len(text) > VIEW_CLIP:
+            text = (text[:VIEW_CLIP] + f"\n\n*-- clipped here; the full "
+                    f"{len(e.text)} chars are in {t.path} --*")
+        out += [f"### {e.raw}", "", text, ""]
+    return "\n".join(out).rstrip() + "\n"
+
 # `class` is a Python keyword, so the attribute is `klass`; the YAML key stays
 # `class`. `frontmatter()` is the only place that translation lives.
 TYPED_KEYS = ("id", "stage", "class", "branch", "test_file", "files_declared",
@@ -413,6 +476,7 @@ class ThreadEntry:
     kind: str                # "note" for freeform
     attrs: dict[str, str]
     text: str
+    raw: str = ""            # the `### ` line as written; a view reprints it
 
 
 def _parse_header(line: str) -> tuple[datetime | None, str, str, dict[str, str]]:
@@ -513,17 +577,17 @@ class Ticket:
 
     def thread(self) -> list[ThreadEntry]:
         out: list[ThreadEntry] = []
-        head, buf = None, []
+        head, raw, buf = None, "", []
         lines = self.section("Thread").splitlines()
         for line, fenced in zip(lines, _fenced(lines)):
             if line.startswith("### ") and not fenced:
                 if head is not None:
-                    out.append(ThreadEntry(*head, "\n".join(buf).strip()))
-                head, buf = _parse_header(line[4:]), []
+                    out.append(ThreadEntry(*head, "\n".join(buf).strip(), raw))
+                head, raw, buf = _parse_header(line[4:]), line[4:], []
             elif head is not None:
                 buf.append(line)
         if head is not None:
-            out.append(ThreadEntry(*head, "\n".join(buf).strip()))
+            out.append(ThreadEntry(*head, "\n".join(buf).strip(), raw))
         return out
 
     # -- lease ------------------------------------------------------------

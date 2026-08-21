@@ -92,6 +92,28 @@ def test_the_prompt_survives_a_variadic_flag():
             f"variadic flag will swallow it:\n...{head[-60:]!r}")
 
 
+def test_the_work_message_points_at_the_view_not_the_whole_ticket():
+    """The saving is lost the moment the agent is told to read the file.
+    Both claude-code templates and render()'s inline message carry their
+    own copy of that sentence, so both are checked."""
+    hcfg = config.harness("claude-code")
+    for key in ("cmd", "interactive_cmd"):
+        tpl = hcfg[key]
+        assert "Read {ticket} first" not in tpl, f"{key}: orders a full read"
+        assert "bounded view" in tpl, f"{key}: does not name the view"
+        assert "{ticket}" in tpl, f"{key}: the agent must still write there"
+    prompt = config.compose_prompt("review")
+    cmd = config.render(config.harness("codex"),
+                        config.stage_config("review"), tid="TICKET-001",
+                        project=Path("/proj"), ticket=Path("/proj/t.md"),
+                        result_file=Path("/proj/t.result"), session="s",
+                        prompt=prompt)
+    prompt.unlink()
+    assert "Work ticket TICKET-001" in cmd
+    assert "Read /proj/t.md first" not in cmd
+    assert "bounded view" in cmd
+
+
 def test_headless_stages_get_the_harness_permission_mode_not_a_prompt():
     """`acceptEdits` auto-accepts file edits and nothing else, so under `-p`
     every Bash command fell through to an approval prompt with nobody to

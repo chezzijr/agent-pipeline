@@ -465,3 +465,31 @@ def test_the_stage_view_is_bounded_by_thread_length():
     for name in ("Summary", "Digest", "Plan"):
         assert T.sections(t.body)[name] in big, f"the view dropped `## {name}`"
     shutil.rmtree(d)
+
+
+def test_the_stage_view_keeps_every_human_entry():
+    """DEC-016: a view that drops what a later stage needed is worse than
+    a large ticket. A human's answer, rejection or approval is never
+    recoverable from a summary, so those kinds survive at any depth --
+    while a non-blocking finding at the same depth does not, which is
+    what keeps the view bounded."""
+    d = project()
+    t = Ticket.load(d / ".project/tickets/TICKET-001.md")
+    t.append("planning", "question", "QUESTION-MARKER: which design?")
+    t.append("planning", "answer", "ANSWER-MARKER: the second one")
+    t.append("planning", "rejection", "REJECT-MARKER: not that plan")
+    t.append("review", "finding", "BLOCKER-MARKER: it drops entries",
+             severity="blocking")
+    t.append("review", "finding", "MINOR-MARKER: a nit", severity="minor")
+    for i in range(200):
+        t.append("implementing", "note", f"filler {i} " + "x" * 400)
+    view = T.stage_view(t, "implementing")
+    for marker in ("QUESTION-MARKER", "ANSWER-MARKER", "REJECT-MARKER",
+                   "BLOCKER-MARKER"):
+        assert marker in view, f"the view dropped a {marker} entry"
+    assert "MINOR-MARKER" not in view, (
+        "a non-blocking finding 200 entries back was kept -- the view "
+        "is not bounded")
+    assert "earlier entries omitted" in view, (
+        "the view omitted entries without saying so -- DEC-016")
+    shutil.rmtree(d)

@@ -26,6 +26,21 @@ def test_composed_prompt_has_common_rules_and_no_frontmatter():
     assert "model:" not in text.split("## Your stage")[0].split("```")[0]
 
 
+def test_the_composed_prompt_carries_the_stage_view():
+    """The view reaches the agent through the system prompt, not a file
+    it has to open. A prompt built without one is the pre-TICKET-023
+    behaviour and must stay buildable -- `spawn()` falls back to it."""
+    f = C.compose_prompt("review", None, "VIEW-MARKER-9137")
+    text = f.read_text()
+    f.unlink()
+    assert "VIEW-MARKER-9137" in text, "the view never reached the prompt"
+    assert "Failure protocol" in text, "the shared rules were displaced"
+    g = C.compose_prompt("review")
+    plain = g.read_text()
+    g.unlink()
+    assert "VIEW-MARKER-9137" not in plain and "# The ticket" not in plain
+
+
 def test_every_stage_named_by_the_state_machine_has_a_prompt():
     reachable = {M.transition(s, r, {})[0] for s in C.agent_stages()
                  for r in ["ok", "fail", "blocked", "rejected"]}

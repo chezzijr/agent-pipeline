@@ -49,7 +49,7 @@ def harness(name: str = "claude-code") -> dict:
     return tomllib.loads(p.read_text())
 
 
-def compose_prompt(stage: str, hcfg: dict | None = None) -> Path:
+def compose_prompt(stage: str, hcfg: dict | None = None, view: str = "") -> Path:
     """_common.md + this stage's body, frontmatter stripped, as one file.
 
     A stage's `skills:` only reaches the prompt when the harness declares the
@@ -65,6 +65,11 @@ def compose_prompt(stage: str, hcfg: dict | None = None) -> Path:
                  "Invoke these before you start; they are here because this "
                  "stage's job depends on them.\n\n"
                  + "\n".join(f"- `/{sk}`" for sk in cfg["skills"]) + "\n")
+    if view:
+        text += ("\n\n---\n\n# The ticket\n\nThis is a bounded view of "
+                 "the ticket named in your instructions -- the ticket's "
+                 "own text, trimmed. Read it here; open the file only "
+                 "for what the view says it omitted.\n\n" + view)
     f = tempfile.NamedTemporaryFile("w", suffix=".md", delete=False)
     f.write(text)
     f.close()
@@ -89,7 +94,10 @@ def render(hcfg: dict, cfg: dict, *, tid: str, project: Path, ticket: Path,
     back to its normal command under the PTY -- what you lose is the
     harness's interactive flags, not the terminal."""
     ticket_q, result_q = shlex.quote(str(ticket)), shlex.quote(str(result_file))
-    work = f"Work ticket {tid}. Read {ticket_q} first. When finished write {result_q}"
+    work = (f"Work ticket {tid}. Your prompt carries a bounded view of "
+            f"{ticket_q}; open that file only for what the view says it "
+            f"omitted, and read only the lines you need. When finished "
+            f"write {result_q}")
     inline = (shlex.quote(prompt.read_text() + "\n\n" + work)
               if hcfg.get("prompt_mode", "system") == "inline" else "")
     return (hcfg.get(key) or hcfg["cmd"]).format(

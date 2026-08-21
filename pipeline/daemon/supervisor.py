@@ -22,7 +22,8 @@ from pipeline.core.machine import (BOUNDS, CLEANUP_STAGES, CONTROL_FIELDS,
                                    apply_claims, files_conflict, transition)
 from pipeline.core.ticket import (Ticket, all_tickets, drop_result,
                                   read_result, record_decision, result_file,
-                                  ticket_path, tickets_dir, validate_meta)
+                                  stage_view, ticket_path, tickets_dir,
+                                  validate_meta)
 from pipeline.core.worktree import (drop_worktree, ensure_worktree,
                                     project_env, tree_snapshot, worktree)
 from pipeline.daemon import registry
@@ -323,7 +324,14 @@ def spawn(project: Path, wt: Path, tid: str, stage: str, hcfg: dict,
     logs = project / ".project" / "logs"
     logs.mkdir(parents=True, exist_ok=True)
     log = logs / f"{tid}-{stage}-{session[:8]}.log"
-    prompt = compose_prompt(stage, hcfg)
+    try:
+        view = stage_view(Ticket.find(project, tid), stage)
+    except PipelineError:
+        # Total: `spawn()` is called directly with no ticket on disk
+        # (tests/test_pty.py:393). No view means the agent reads the file,
+        # which is exactly what it did before this existed.
+        view = ""
+    prompt = compose_prompt(stage, hcfg, view)
     settings = stage_settings(stage, cfg)
     cmd = render(hcfg, cfg, tid=tid, project=project,
                 ticket=ticket_path(project, tid),

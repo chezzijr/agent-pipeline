@@ -6,14 +6,21 @@ it is lost.
 
 ## Rules
 
-1. Read the ticket file completely before doing anything.
+1. Your prompt carries a bounded view of the ticket: every section
+   except `## Thread`, plus the thread entries your stage acts on.
+   Read it before doing anything. Open the ticket file itself only for
+   an entry the view says it omitted, and read only that range --
+   grep the file for `^### ` to get the line number.
 2. Do only your stage's job. Do not fix things you notice outside it; note them
    in `## Thread` instead.
 3. Never edit the YAML frontmatter. The dispatcher owns it, and `stage` in
    particular. You cannot advance, retry, or escalate a ticket -- you only
    report what happened in your own stage.
 4. Append your findings to `## Thread` (never rewrite existing entries) and
-   rewrite `## Summary` so the next stage can skip the thread.
+   rewrite `## Summary` so the next stage can skip the thread. Locate the
+   section by grepping the file for `^## `, then read only that range
+   before you edit it. Never read the whole ticket file in order to make
+   an edit -- that is the cost the view exists to remove.
 5. Finish by writing the result file **at the exact absolute path given in
    your instructions** (your working directory is a git worktree, not the
    project root, so a relative path lands in the wrong tree):
