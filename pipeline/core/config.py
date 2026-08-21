@@ -116,6 +116,17 @@ def render(hcfg: dict, cfg: dict, *, tid: str, project: Path, ticket: Path,
             else "permission_mode", "acceptEdits")),
         stage_prompt=shlex.quote(str(prompt)),
         prompt=inline,
+        # The mirror of `_tools()`, gated on the same pair it is: a stage that
+        # ends up with no skill tool -- because it declares no `skills:`, or
+        # because the harness supplies none -- can also be spawned with the
+        # flag that drops the skill machinery entirely. Measured on
+        # `claude-haiku-4-5-20251001`: 98 slash commands and 22,574 tokens of
+        # opening context become 0 and 19,946 -- 2,628 tokens back on EVERY
+        # turn, and a stage pays its opening context once per turn. Verified
+        # 2026-08-21 that a `PreToolUse` guard still fires under the flag;
+        # that is the condition of using it at all (invariant 4).
+        skills_flag=("" if (cfg.get("skills") and hcfg.get("skill_tool"))
+                     else hcfg.get("no_skills_flag", "")),
         tools=_tools(hcfg, cfg),
         cap=cfg.get("max_usd", hcfg.get("max_usd", 5)),
         project=shlex.quote(str(project)),

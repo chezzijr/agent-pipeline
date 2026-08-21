@@ -55,6 +55,26 @@ interactive_permission_mode = "acceptEdits"
 # run of 2026-08-21 with "No such tool available: Skill".
 skill_tool = "Skill"
 
+# ...and the flag for a stage that declares none. `--disable-slash-commands`
+# ("Disable all skills") drops the Skill tool AND the slash-command listing:
+# 98 commands and 22,574 tokens of opening context become 0 and 19,946 on
+# `claude-haiku-4-5-20251001`. That is 2,628 tokens per TURN, and a stage
+# re-reads its opening context on every one -- a 40-turn stage pays it 40
+# times. `render()` only emits this where `skills:` is absent, so the four
+# read-only stages get it and `triage`/`planning`/`implementing` do not.
+#
+# NOT `--bare`, which also skips hooks. Note what does and does not catch that:
+# `spawn()` refuses on `supports_hooks = false` (`daemon/supervisor.py:301`) --
+# it never reads the flags in `cmd`, so `no_skills_flag = "--bare"` here would
+# leave `supports_hooks = true` satisfied while the guard never registered.
+# Nothing in the code stops that; this file is trusted shell either way, since
+# `cmd` itself is a free-form template. It is also NOT in `machine.FENCED`, so
+# a ticket editing it merges unattended and `_harness_reloader()` picks it up
+# on the next tick. Treat any edit here as a guard edit.
+# `--disable-slash-commands` is safe on that axis -- verified 2026-08-21,
+# `sudo -n ls /` under it still came back "Blocked by the pipeline guard".
+no_skills_flag = "--disable-slash-commands"
+
 # Stage output is stream-json so a running stage can be watched instead of
 # arriving as one blob four minutes late. `--verbose` is what makes `-p` emit
 # every event rather than only the last one.
@@ -79,7 +99,7 @@ skill_tool = "Skill"
 cmd = """claude -p --model {model} {effort_flag} {session_flag} {settings_flag} \
 --output-format stream-json --verbose \
 --append-system-prompt "$(cat {stage_prompt})" \
---tools "{tools}" --strict-mcp-config \
+--tools "{tools}" --strict-mcp-config {skills_flag} \
 --permission-mode {permission_mode} \
 --max-budget-usd {cap} \
 --add-dir {project} -- \
@@ -95,7 +115,7 @@ cmd = """claude -p --model {model} {effort_flag} {session_flag} {settings_flag} 
 # A harness without this key falls back to `cmd` under the PTY.
 interactive_cmd = """claude --model {model} {effort_flag} {session_flag} {settings_flag} \
 --append-system-prompt "$(cat {stage_prompt})" \
---tools "{tools}" --strict-mcp-config \
+--tools "{tools}" --strict-mcp-config {skills_flag} \
 --permission-mode {permission_mode} \
 --max-budget-usd {cap} \
 --add-dir {project} -- \

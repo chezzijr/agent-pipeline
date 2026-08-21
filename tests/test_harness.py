@@ -163,6 +163,39 @@ def test_the_skill_tool_is_granted_only_where_skills_are_declared():
         "a harness that cannot supply the tool must not have it invented for it"
 
 
+def test_a_stage_with_no_skills_is_spawned_without_the_skill_machinery():
+    """The mirror of the test above. A stage that gets no `Skill` tool has no
+    use for the 98 slash commands that ship with it either, and they cost
+    2,628 tokens of opening context on EVERY turn -- 40 turns, 40 payments.
+
+    The flag is `--disable-slash-commands`, never `--bare`: `--bare` skips
+    hooks, and a stage that cannot register the guard is refused outright."""
+    hcfg = config.harness("claude-code")
+    assert hcfg["no_skills_flag"] == "--disable-slash-commands"
+    assert config.stage_config("implementing").get("skills"), \
+        "fixture assumption broken: `implementing` no longer declares skills"
+    assert not config.stage_config("review").get("skills")
+
+    def cmd(stage, harness=hcfg):
+        prompt = config.compose_prompt(stage)
+        try:
+            return config.render(harness, config.stage_config(stage),
+                                 tid="TICKET-001", project=Path("/proj"),
+                                 ticket=Path("/proj/t.md"),
+                                 result_file=Path("/proj/t.result"),
+                                 session="s1", prompt=prompt)
+        finally:
+            prompt.unlink()
+
+    assert "--disable-slash-commands" in cmd("review"), \
+        "a read-only stage declaring no skills should shed them"
+    assert "--disable-slash-commands" not in cmd("implementing"), \
+        "a stage that USES a skill must keep the tool that invokes it"
+    # a harness that declares no such flag must not have one invented for it
+    quiet = dict(hcfg); quiet.pop("no_skills_flag")
+    assert "--disable-slash-commands" not in cmd("review", quiet)
+
+
 def test_an_interactive_stage_keeps_the_mode_that_can_ask():
     """`bypassPermissions` on a real terminal opens a modal before the session
     starts, and a stage parked on "Yes, I accept" is a stage nobody is
