@@ -637,3 +637,62 @@ def test_finish_emits_usage_for_an_interactive_stage_only():
     # a headless stage's `result` event is authoritative -- billing it twice
     # from the transcript as well would double every merged ticket's cost
     assert _with_home(home, lambda: run("batch")) == []
+
+
+def test_the_listener_is_re_armed_after_running_out_of_fds():
+    """EMFILE steps off the listener -- a level-triggered listener with no free
+    fd is a 100% spin -- and the only other re-arm was a client disconnecting.
+    With the fds exhausted by children and nobody connected, `status`, `tui`,
+    `attach` and `kill` stayed dead until a restart, long after they freed."""
+    tmp = Path(tempfile.mkdtemp())
+    s = store(tmp)
+    srv = server_on(tmp, s)
+    try:
+        real = srv.sock
+
+        class OutOfFds:                    # the listener, minus a free fd
+            fileno = real.fileno
+            def accept(self):
+                raise OSError(24, "Too many open files")
+
+        srv.sock = OutOfFds()
+        srv._accept()
+        assert real.fileno() not in srv.sel.get_map(), \
+            "a listener that spins at 100% on every poll"
+
+        srv.sock = real
+        srv.poll(0)
+        assert srv.sock.fileno() in srv.sel.get_map(), "the daemon stayed deaf"
+
+        c = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        c.connect(str(srv.path))
+        srv.poll(0.5)
+        assert srv.conns, "the re-armed listener accepted nothing"
+        c.close()
+    finally:
+        srv.close()
+        s.close()
+
+
+def test_child_stdout_cannot_name_the_event_log_s_own_columns():
+    """`rate_limit_event` is a passthrough, so a line
+    `{"type":"rate_limit_event","ticket":"X"}` reached `emit(..., ticket=tid,
+    **ev)` and raised `TypeError: multiple values for 'ticket'` -- swallowed by
+    the sink's wrapper, so the event was silently lost and a child chose which
+    events got recorded."""
+    from pipeline.stream.events import parse
+    ev = parse('{"type":"rate_limit_event","status":"warning","ticket":"EVIL",'
+               '"stage":"done","session":"s","remaining_fraction":0.5}')
+    assert ev["kind"] == "rate_limit" and ev["status"] == "warning"
+    assert ev["remaining_fraction"] == 0.5, "a real field was dropped"
+    assert "ticket" not in ev and "stage" not in ev and "session" not in ev, ev
+
+    tmp = Path(tempfile.mkdtemp())
+    s = store(tmp)
+    supervisor.event_sink("TICKET-001", "planning", "sess-1",
+                          s.emitter("/p"))(dict(ev, ticket="EVIL", stage="done"))
+    rows = [r for r in s.since(0) if r["kind"] == "rate_limit"]
+    assert len(rows) == 1, s.since(0)
+    assert rows[0]["ticket"] == "TICKET-001" and rows[0]["stage"] == "planning"
+    assert rows[0]["data"]["status"] == "warning", rows
+    s.close()

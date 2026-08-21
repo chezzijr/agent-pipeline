@@ -21,8 +21,8 @@ from pipeline.core.machine import (BOUNDS, CLEANUP_STAGES, CONTROL_FIELDS,
                                    HUMAN_GATES, MAX_ATTEMPTS, TERMINAL,
                                    apply_claims, files_conflict, transition)
 from pipeline.core.ticket import (Ticket, all_tickets, drop_result,
-                                  read_result, record_decision, ticket_path,
-                                  tickets_dir, validate_meta)
+                                  read_result, record_decision, result_file,
+                                  ticket_path, tickets_dir, validate_meta)
 from pipeline.core.worktree import (drop_worktree, ensure_worktree,
                                     project_env, tree_snapshot, worktree)
 from pipeline.daemon import registry
@@ -170,6 +170,11 @@ STREAM_KINDS = {"init", "assistant", "tool_result", "hook_started",
                 "hook_response", "rate_limit", "result"}
 
 
+# `Store.emit(project, kind, ticket=, stage=, session=, **data)` -- the
+# keywords a parsed record may never supply.
+EMIT_COLUMNS = ("kind", "project", "ticket", "stage", "session")
+
+
 def event_sink(tid: str, stage: str, session: str, emit):
     """TICKET-012's parser -> TICKET-011's event log. This is the seam: `pump`
     hands every parsed record to `rec["sink"]`, which used to drop it, so
@@ -186,9 +191,13 @@ def event_sink(tid: str, stage: str, session: str, emit):
             return
         try:
             emit(kind, ticket=tid, stage=stage, session=session,
-                 # `session` is the column, not payload -- `init` carries the
-                 # harness's copy of it and would collide with the keyword
-                 **{k: v for k, v in ev.items() if k not in ("kind", "session")})
+                 # These are `emit()`'s own columns, not payload. A parsed
+                 # record carrying one of them (`init` has its own `session`;
+                 # a `rate_limit_event` is a passthrough, so a child's stdout
+                 # can name any of them) raised `TypeError: multiple values
+                 # for 'ticket'` and the event was swallowed by the wrapper
+                 # below -- silent loss driven by the child.
+                 **{k: v for k, v in ev.items() if k not in EMIT_COLUMNS})
         except Exception as e:
             print(f"  {tid}: event not recorded ({e.__class__.__name__}: {e})")
     return sink
@@ -269,12 +278,21 @@ def spawn(project: Path, wt: Path, tid: str, stage: str, hcfg: dict,
     # A stage a human has to steer: `--permission-mode` is ignored under `-p`
     # and AskUserQuestion is not in the headless toolset, so a permission
     # prompt or an option picker only exists on a real terminal.
-    interactive = cfg.get("mode") == "interactive"
-    if interactive and poller is None:
-        # nothing would drain the master, so the child blocks at a full buffer
-        # holding its lease -- and nobody could attach to it anyway
-        raise PipelineError(f"`{stage}` is interactive and needs a poller to "
-                            f"host its PTY")
+    #
+    # `mode: interactive` therefore means "interactive WHEN a human can reach
+    # it". Under `pipeline run` there is no socket, so nothing can ever
+    # `attach`, and a REPL nobody attaches to sits at its prompt until the
+    # lease expires twice and the ticket escalates -- which would make the
+    # daemon a dependency for every ticket that reaches `planning`, not an
+    # accelerator. Headless is what the stage did before it grew a PTY, and
+    # its prompt already carries the escape hatch: `result: needs-input`
+    # parks the ticket at a human gate instead of asking on a terminal.
+    interactive = cfg.get("mode") == "interactive" and getattr(
+        poller, "attachable", False)
+    if cfg.get("mode") == "interactive" and not interactive:
+        print(f"  {tid}: `{stage}` is interactive, but nothing can attach to it "
+              f"here -- running headless (start the daemon and `pipeline tui` "
+              f"to steer it)")
     session = str(uuid.uuid4())
     logs = project / ".project" / "logs"
     logs.mkdir(parents=True, exist_ok=True)
@@ -369,9 +387,9 @@ def merge_cmd(project: Path, t: Ticket, cfg: dict) -> str:
     dirty, diverged or elsewhere-parked checkout escalates rather than landing
     the ticket half-way or onto some other branch. Nothing resolves a conflict.
     """
-    # ponytail: two tickets merging in the same tick race on the main
-    # checkout's index.lock and the loser escalates spuriously. Fails safe --
-    # nothing lands half-merged -- so serialise merges only if it shows up.
+    # Only one merge runs at a time (see `start()`), so the base this reads is
+    # the base the fast-forward below lands on, and nothing races the main
+    # checkout's index.lock either.
     base = shlex.quote(str(cfg.get("base", "main")))
     proj = shlex.quote(str(project))
     return (f"git merge --no-edit {base} || exit 1\n"
@@ -392,10 +410,24 @@ def start(project: Path, path: Path, hcfg: dict, inflight: dict,
     t = Ticket.load(path)
     stage, tid = t.stage, t.id
 
+    def bail(reason: str) -> tuple[bool, None]:
+        """Escalate before any child exists.
+
+        The `stage_end` matters: view 1 is `escalated / stage_end` per stage,
+        and these four paths emitted only the numerator, so one completed
+        `implementing` run plus two lease-expiry escalations rendered `200%`.
+        An attempt that ended before it could spawn is still an attempt at
+        this stage -- the same reasoning (and the same emit) as a failed Tier
+        A gate, which spawns nothing either.
+        """
+        escalate(t, reason, emit)
+        emit("stage_end", ticket=tid, stage=stage, result="escalated",
+             next_stage="escalated", exit_code=None)
+        return True, None
+
     bad = t.errors()
     if bad and stage not in TERMINAL:
-        escalate(t, "unusable frontmatter: " + "; ".join(bad), emit)
-        return True, None
+        return bail("unusable frontmatter: " + "; ".join(bad))
 
     if stage in HUMAN_GATES:
         return False, None
@@ -419,8 +451,7 @@ def start(project: Path, path: Path, hcfg: dict, inflight: dict,
         n = t.counters.get("lease_expiries", 0) + 1
         t.counters["lease_expiries"] = n
         if n >= MAX_ATTEMPTS:
-            escalate(t, "lease expired twice", emit)
-            return True, None
+            return bail("lease expired twice")
         t.append(stage, "note", f"lease expired, respawning `{stage}` fresh (expiry {n})")
         t.release_lease()
         t.save()  # persist now: later returns skip the save
@@ -438,13 +469,11 @@ def start(project: Path, path: Path, hcfg: dict, inflight: dict,
     except PipelineError as e:
         # one unconfigured project must not take the loop -- and every other
         # ticket's agent -- down with it
-        escalate(t, str(e), emit)
-        return True, None
+        return bail(str(e))
     drain_all(inflight)      # `git worktree add` + worktree_setup both block
     wt = ensure_worktree(project, t.frontmatter(), cfg)
     if wt is None:
-        escalate(t, "could not create a worktree", emit)
-        return True, None
+        return bail("could not create a worktree")
 
     def child(cmd: str, kind: str) -> tuple[bool, dict]:
         # a child that outlives the tick must lease exactly like an agent, or a
@@ -461,6 +490,16 @@ def start(project: Path, path: Path, hcfg: dict, inflight: dict,
         return child(cfg["test_suite"], "suite")
 
     if stage == "merging":
+        if any(r.get("kind") == "merge" for r in inflight.values()):
+            # Merges are serialised, not ordered by `files_declared`: two
+            # DISJOINT tickets reaching `merging` in one tick both `git merge
+            # base` against the same base, and the first `--ff-only` to land
+            # moves base under the second, whose merge then fails. That is a
+            # lost update, not the index.lock race the old comment named, and
+            # `transition("merging","fail")` escalates with no retry -- a
+            # fully verified ticket parked for a human over a merge that
+            # succeeds a tick later. Wait, exactly like `files_conflict` does.
+            return False, None
         return child(merge_cmd(project, t, cfg), "merge")
 
     if stage == "revalidating":
@@ -496,12 +535,35 @@ def start(project: Path, path: Path, hcfg: dict, inflight: dict,
 
     before = tree_snapshot(wt) if is_readonly(stage) else None  # before Popen
     drop_result(project, tid)  # L3: never let a previous run's verdict be reused
-    rec = spawn(project, wt, tid, stage, hcfg, poller, emit)
+    try:
+        rec = spawn(project, wt, tid, stage, hcfg, poller, emit)
+    except PipelineError as e:
+        # The lease is already taken. Letting this out propagates through
+        # tick() and run(), `finally: shut_down` terminates every OTHER
+        # in-flight agent, and the process dies -- the exact failure the
+        # `project_config` branch above exists to prevent, and invariant 6
+        # forbids. A harness that cannot register hooks is a fact about this
+        # ticket's stage; escalate the ticket, keep the loop.
+        return bail(str(e))
     rec["path"] = path
     rec["tid"] = tid
     rec["meta"] = t   # the pre-spawn snapshot: control fields come back from here
     rec["before"] = before
     return True, rec
+
+
+def log_tail(rec: dict, n: int = 1500) -> str:
+    """The tail of a child's log, decoded the way `pump()` decodes it.
+
+    `read_text()` here decodes STRICT utf-8 over output we did not write: one
+    stray byte from `git merge` or a test runner raised `UnicodeDecodeError`
+    inside `finish()`, `reap()` caught and printed it, and `advance()` never
+    ran -- so the lease `child()` took was held until it expired.
+    """
+    try:
+        return rec["log"].read_bytes()[-n:].decode("utf-8", "replace")
+    except OSError as e:
+        return f"(log unreadable: {e})"
 
 
 def finish_child(project: Path, rec: dict, label: str, emit=noop) -> str:
@@ -510,7 +572,7 @@ def finish_child(project: Path, rec: dict, label: str, emit=noop) -> str:
     code = rec["proc"].returncode
     result = "ok" if code == 0 else "fail"
     advance(project, Ticket.load(rec["path"]), result,
-            f"{label} exit {code}\n```\n{rec['log'].read_text()[-1500:]}\n```", emit)
+            f"{label} exit {code}\n```\n{log_tail(rec)}\n```", emit)
     return result
 
 
@@ -524,7 +586,7 @@ def finish_regate(project: Path, rec: dict, emit=noop) -> str:
         # same rule as a merge conflict: never auto-resolved, never retried.
         # The half-rebased worktree stays -- `escalated` is not in CLEANUP_STAGES.
         escalate(t, f"rebase onto base conflicted (exit {code})\n```\n"
-                    f"{rec['log'].read_text()[-1500:]}\n```", emit)
+                    f"{log_tail(rec)}\n```", emit)
         return "escalated"
     ok, failures = gate(project, rec["tid"], rec["wt"])
     emit("gate", ticket=rec["tid"], stage=rec["stage"],
@@ -654,7 +716,25 @@ def _finish(project: Path, rec: dict, emit=noop) -> str:
     return result
 
 
+def end_interactive(project: Path, inflight: dict) -> None:
+    """An interactive child is a REPL: it ends when a human types `/exit`, and
+    writing the `.result` sidecar does not end it. `finish()` fires on
+    `proc.poll()`, so without this a `planning` session that had already
+    reported its verdict sat at its prompt holding the lease until it expired
+    -- twice -- and the ticket escalated with the agent's plan already written.
+
+    The sidecar IS the exit condition, so treat it as one. SIGTERM here, and
+    the ordinary `reap()` below collects it on this pass or the next.
+    """
+    for tid, rec in inflight.items():
+        if (rec.get("mode") == "interactive" and rec["proc"].poll() is None
+                and result_file(project, tid).is_file()):
+            print(f"  {tid}: `{rec['stage']}` reported its result; ending the session")
+            rec["proc"].terminate()
+
+
 def reap(project: Path, inflight: dict, emit=noop) -> bool:
+    end_interactive(project, inflight)
     done = [tid for tid, rec in inflight.items() if rec["proc"].poll() is not None]
     for tid in done:
         rec = inflight.pop(tid)
@@ -717,7 +797,15 @@ def tick(project: Path, hcfg: dict, inflight: dict, max_parallel: int = 3,
             continue
         if tid in inflight:
             continue
-        did_work, rec = start(project, path, hcfg, inflight, poller, emit)
+        try:
+            did_work, rec = start(project, path, hcfg, inflight, poller, emit)
+        except Exception as e:
+            # invariant 6, the other half: one broken ticket must not take the
+            # loop -- and every other agent's lease -- down with it. A lease
+            # this ticket took before raising expires on the ordinary path and
+            # is charged, so the retry stays bounded.
+            print(f"  {path.stem}: start failed ({e.__class__.__name__}: {e})")
+            continue
         worked = worked or did_work
         if rec:
             inflight[rec["tid"]] = rec
@@ -752,7 +840,13 @@ def run(project: Path, once: bool, interval: int, harness_name: str,
     """Standalone: the daemon minus the socket server. One supervisor
     implementation, two entry points -- the daemon is an accelerator, never a
     dependency. `store` is optional; with none, nothing is recorded and the
-    loop is exactly what it was before the daemon existed."""
+    loop is exactly what it was before the daemon existed.
+
+    Every stage runs here, interactive ones included: the bare `Poller` is not
+    `attachable`, so `spawn()` runs those headless rather than parking a REPL
+    nobody could reach (see `spawn()` and the README). What you lose without
+    the daemon is steering, never progress.
+    """
     hcfg = harness(harness_name)
     emit = store.emitter(project) if store is not None else noop
     inflight: dict[str, dict] = {}

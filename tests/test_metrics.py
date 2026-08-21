@@ -263,3 +263,27 @@ def test_a_ticket_that_never_leaves_a_gate_is_not_counted_as_parked():
         assert metrics.parked_spans(conn) == []
     finally:
         conn.close()
+
+
+def test_a_resumed_ticket_reaching_a_terminal_stage_twice_is_counted_once():
+    """View 2's docstring promised "a ticket has at most one such row".
+    Terminal stages are absorbing to the dispatcher but not to a human:
+    `pipeline resume --stage triage` puts an escalated ticket back into the
+    pipeline, and its second terminal transition double-counted it."""
+    s = _log()
+    _at(s, BASE + 0, "transition", ticket="TICKET-001", stage="review",
+        **{"from": "review", "to": "escalated", "counters": {"review_loops": 2}})
+    _at(s, BASE + 1, "transition", ticket="TICKET-001", stage="merging",
+        **{"from": "merging", "to": "done", "counters": {"review_loops": 3}})
+    _at(s, BASE + 2, "transition", ticket="TICKET-002", stage="merging",
+        **{"from": "merging", "to": "done", "counters": {"review_loops": 1}})
+
+    conn = metrics.connect(s.path)
+    try:
+        dist = metrics.review_loop_distribution(conn)
+        assert sum(r["tickets"] for r in dist) == 2, dist
+        # the LAST word on the ticket, not the first
+        assert {r["review_loops"]: r["tickets"] for r in dist} == {1: 1, 3: 1}, dist
+    finally:
+        conn.close()
+    s.close()

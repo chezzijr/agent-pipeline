@@ -120,6 +120,13 @@ def _rows(conn: sqlite3.Connection, sql: str, since: float, project: str | None)
 # is a human's CLI call that never reaches the dispatcher's `escalate()` at
 # all -- so neither counter inflates this view. It counts exactly what
 # DEC-011 names: kind='escalated'.
+#
+# `runs` is every ENDED ATTEMPT at the stage, not every spawned agent:
+# `start()` emits a `stage_end` for the escalations that happen before a child
+# exists (unusable frontmatter, a dead project config, a failed worktree, a
+# lease expired twice) exactly as it does for a failed Tier A gate. Without
+# those rows the numerator counted attempts the denominator did not, and this
+# headline could print 200%.
 def escalation_rates(conn: sqlite3.Connection, since: float = 0.0,
                      project: str | None = None) -> list[dict]:
     sql = _EV + """
@@ -145,8 +152,12 @@ def escalation_rate(conn: sqlite3.Connection, stage: str, since: float = 0.0,
 # -- view 2: review-loop distribution ----------------------------------------
 # How many review loops a ticket burned before it stopped moving, for every
 # ticket that stopped moving via a `transition` event landing in TERMINAL.
-# Terminal stages are absorbing, so a ticket has at most one such row -- one
-# row in, one ticket counted.
+# Terminal stages are absorbing *to the dispatcher*, but not to a human:
+# `pipeline resume --stage triage` puts an escalated ticket back into the
+# pipeline, and it can then reach a terminal stage again. Counting every such
+# row would count that ticket twice, so this takes the LAST terminal
+# transition per (project, ticket) -- one ticket, one row, whatever a human
+# did to it in between.
 #
 # This underclaims `escalated` specifically: `supervisor.escalate()` (bad
 # frontmatter, a dead lease, a failed worktree/rebase, a tampering agent, a
@@ -159,10 +170,15 @@ def escalation_rate(conn: sqlite3.Connection, stage: str, since: float = 0.0,
 def review_loop_distribution(conn: sqlite3.Connection, since: float = 0.0,
                              project: str | None = None) -> list[dict]:
     sql = _EV + f"""
-    SELECT CAST(json_extract(data,'$.counters.review_loops') AS INTEGER) AS review_loops,
-           COUNT(*) AS tickets
-    FROM ev
-    WHERE kind='transition' AND json_extract(data,'$.to') IN ({_TERMINAL_SQL})
+    SELECT review_loops, COUNT(*) AS tickets FROM (
+        SELECT MAX(id),
+               CAST(json_extract(data,'$.counters.review_loops') AS INTEGER)
+                   AS review_loops
+        FROM ev
+        WHERE kind='transition' AND json_extract(data,'$.to') IN ({_TERMINAL_SQL})
+          AND ticket IS NOT NULL
+        GROUP BY project, ticket
+    )
     GROUP BY review_loops
     ORDER BY review_loops
     """
