@@ -200,3 +200,16 @@ def test_gate_passes_a_test_that_fails_on_base_too():
     assert ok, failures
     assert "fails on base" in (d / ".project/tickets/TICKET-001.md").read_text()
     shutil.rmtree(d, ignore_errors=True)
+
+
+def test_gate_blocks_a_one_word_digest_and_an_unresolvable_decision_id():
+    """Both Tier A content checks are non-emptiness only: a digest of one word
+    passes, and a cited `DEC-999` passes though no such record exists in
+    `.project/decisions/`."""
+    d = project(FIXTURE.replace("## Digest\nthing.py holds it\n", "## Digest\nx\n")
+                       .replace("none relevant (grepped: cache, evict)", "DEC-999"))
+    ok, failures = gate(d, "TICKET-001")
+    assert not ok, "one-word digest and unresolvable DEC-999 both passed the gate"
+    assert any("Digest" in f for f in failures), failures
+    assert any("DEC-999" in f for f in failures), failures
+    shutil.rmtree(d)
