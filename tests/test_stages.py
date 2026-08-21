@@ -151,3 +151,16 @@ def test_effort_values_are_ones_the_harness_accepts():
     for stage in C.agent_stages():
         effort = C.stage_config(stage).get("effort")
         assert effort in allowed, f"{stage}: effort {effort!r} not in {sorted(allowed)}"
+
+
+def test_the_fenced_list_matches_the_rule_file():
+    """`CLAUDE.md` names the fenced things in prose and `machine.FENCED` names
+    them in code. Two copies that can drift are one promise nobody keeps."""
+    import re
+    text = (C.PKG.parent / "CLAUDE.md").read_text()
+    i = text.index("requires human review before merge")
+    sentence = text[text.rindex("\n\n", 0, i):i]
+    prose = {tok.rstrip("()") for tok in re.findall(r"`([^`]+)`", sentence)}
+    code = {p for p, s in M.FENCED.items() if s is None} | {
+        s for syms in M.FENCED.values() if syms for s in syms}
+    assert prose == code, f"CLAUDE.md says {prose}, machine.FENCED says {code}"

@@ -102,22 +102,27 @@ def record(project: Path, t: Ticket, frm: str, result: str) -> None:
               f"({e.__class__.__name__}: {e})", file=sys.stderr)
 
 
+GATE_NEXT = {"awaiting-approval": "revalidating", "awaiting-merge": "merging"}
+
+
 def cmd_approve(args) -> None:
     project = proj(args)
     t = Ticket.find(project, args.id)
-    if t.stage != "awaiting-approval":
-        die(f"{args.id} is in `{t.stage}`, not `awaiting-approval`")
+    gate = t.stage
+    if gate not in GATE_NEXT:
+        die(f"{args.id} is in `{t.stage}`, not a gate `approve` handles "
+            f"({', '.join(GATE_NEXT)})")
     # not `implementing`: the Tier A facts behind this plan were recorded
     # before the ticket sat here, and base has moved since. `revalidating`
     # rebases and re-gates. Approval returns now rather than waiting on it.
-    t.stage = "revalidating"
+    t.stage = GATE_NEXT[gate]
     t.extra["approved_by"] = args.by or os.environ.get("USER", "unknown")
     t.extra["approved_at"] = now().isoformat()
     t.append("human", "approval", f"**approved by {t.extra['approved_by']}**",
              by=t.extra["approved_by"])
     t.save()
-    record(project, t, "awaiting-approval", "approved")
-    print(f"{args.id}: -> revalidating")
+    record(project, t, gate, "approved")
+    print(f"{args.id}: -> {t.stage}")
 
 
 def cmd_reject(args) -> None:

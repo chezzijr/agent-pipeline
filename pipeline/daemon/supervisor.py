@@ -16,6 +16,7 @@ from pipeline.core import PipelineError
 from pipeline.core.config import (compose_prompt, harness, is_readonly,
                                   project_config, render, stage_config,
                                   stage_settings)
+from pipeline.core.fence import fenced_touches
 from pipeline.core.gate import gate
 from pipeline.core.machine import (BOUNDS, CLEANUP_STAGES, CONTROL_FIELDS,
                                    HUMAN_GATES, MAX_ATTEMPTS, TERMINAL,
@@ -614,6 +615,41 @@ def finish_child(project: Path, rec: dict, label: str, emit=noop) -> str:
     return result
 
 
+def finish_suite(project: Path, rec: dict, emit=noop) -> str:
+    """The suite's exit code, and then the fence check.
+
+    `ok` PARKS at `awaiting-merge`; only `clean` reaches `merging`. The
+    polarity is the guard: a git failure, an unparseable diff or a bug in
+    `fenced_touches()` all yield `ok`, and a human looks at the diff. A guard
+    that fails open is not a guard.
+    """
+    close_child(rec)
+    code = rec["proc"].returncode
+    t = Ticket.load(rec["path"])
+    if code != 0:
+        advance(project, t, "fail",
+                f"regression suite exit {code}\n```\n{log_tail(rec)}\n```",
+                emit, agent=False)
+        return "fail"
+    try:
+        hits = fenced_touches(rec["wt"], base_ref(project_config(project)))
+    except Exception as e:
+        hits = [f"fence check failed ({e.__class__.__name__}: {e})"]
+    if not hits:
+        advance(project, t, "clean",
+                "regression suite passed; the diff touches no fenced code",
+                emit, agent=False)
+        return "clean"
+    advance(project, t, "ok",
+            "regression suite passed, but the diff touches fenced code:\n"
+            + "\n".join(f"- `{h}`" for h in hits)
+            + f"\n\n`CLAUDE.md` requires a human to see this diff before it "
+              f"lands. `pipeline approve {rec['tid']}` lands it; "
+              f"`pipeline resume {rec['tid']} --stage planning` sends it back.",
+            emit, agent=False)
+    return "ok"
+
+
 def finish_regate(project: Path, rec: dict, emit=noop) -> str:
     """A rebase onto current base, then the Tier A gate again -- an approval is
     only as good as the tree it was given against."""
@@ -689,7 +725,7 @@ def _finish(project: Path, rec: dict, emit=noop) -> str:
     # agent left behind speak for the test run. It also skips the tamper check,
     # the tree snapshot and apply_claims -- none of which have an agent to check.
     if rec.get("kind") == "suite":
-        return finish_child(project, rec, "regression suite", emit)
+        return finish_suite(project, rec, emit)
     # a merge is the dispatcher's own child too: its verdict is the exit code of
     # git, and `fail` means a conflict nobody may auto-resolve. Its worktree
     # stays -- `escalated` is not in CLEANUP_STAGES.

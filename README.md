@@ -10,7 +10,7 @@ did. Tickets are the queue; agents are stateless workers pulled off it.
 
     triage -> planning -> plan-validation -> [human] -> revalidating
       |                                                       |
-      |    done <- merging <- verifying <- review <- implementing
+      |    done <- merging <- [human?] <- verifying <- review <- implementing
       |                          |
       +-- (chore) -> implementing -> quick-review --+
 
@@ -34,7 +34,7 @@ pipeline --project ~/code/myproject new "cache leaks on evict"
 pipeline --project ~/code/myproject run       # dispatcher loop, no daemon
 
 pipeline --project ~/code/myproject ls
-pipeline --project ~/code/myproject approve TICKET-001   # -> revalidating
+pipeline --project ~/code/myproject approve TICKET-001   # -> revalidating, or -> merging from awaiting-merge
 pipeline --project ~/code/myproject reject  TICKET-001 "ignores cache invalidation"
 pipeline --project ~/code/myproject resume  TICKET-001 \
     --stage planning --reset plan_validation_attempts
@@ -174,17 +174,19 @@ Ticket files stay in the **main** checkout, not the worktree. They are the queue
 and keeping them in one place is also what stops parallel agents from producing
 merge conflicts on their own ticket threads.
 
-`done` means landed. Once the suite passes, `merging` merges `base` into the
-ticket's own worktree and then fast-forwards the **main** checkout onto the
-ticket branch. Fast-forward only, and only while the main checkout is actually
-on `base`, so a dirty, diverged or elsewhere-parked checkout escalates instead
-of landing half of it -- and a conflict escalates with the conflicted worktree
-left in place for you to open.
+`done` means landed. Once the suite passes, a diff that touches nothing
+`CLAUDE.md` fences off from unattended merge reaches `merging` on its own; one
+that does parks first at `awaiting-merge`, a human gate, and `approve` sends
+it on. `merging` merges `base` into the ticket's own worktree and then
+fast-forwards the **main** checkout onto the ticket branch. Fast-forward only,
+and only while the main checkout is actually on `base`, so a dirty, diverged
+or elsewhere-parked checkout escalates instead of landing half of it -- and a
+conflict escalates with the conflicted worktree left in place for you to open.
 
 Approval does not mean "start typing". A ticket can sit at the human gate for
 days while other tickets land on base, so the Tier A facts behind its plan --
 suite green, the new test the only red -- describe a tree that no longer exists.
-`approve` therefore hands the ticket to `revalidating`, which rebases the branch
+`approve` at `awaiting-approval` therefore hands the ticket to `revalidating`, which rebases the branch
 onto current `base` and re-runs the gate before any implementation. A gate that
 now fails bounces back to `planning` against its own counter (`stale_regate`),
 never `plan_validation_attempts`: the plan was fine, the world moved -- and

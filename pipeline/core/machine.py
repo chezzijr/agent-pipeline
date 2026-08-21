@@ -10,7 +10,16 @@ BOUNDS = {
     "refactor": {"review_loops": 3, "plan_validation_attempts": 3, "blocked_count": 2},
 }
 TERMINAL = {"done", "rejected", "escalated"}
-HUMAN_GATES = {"awaiting-approval", "needs-input"}
+HUMAN_GATES = {"awaiting-approval", "needs-input", "awaiting-merge"}
+# The four things `CLAUDE.md` fences off from unattended merge, path to symbol
+# tuple or None for whole-file. `CLAUDE.md` keeps the prose copy;
+# tests/test_stages.py::test_the_fenced_list_matches_the_rule_file compares
+# the two in both directions so they cannot drift.
+FENCED = {
+    "pipeline/hooks/dangerous-commands.py": None,
+    "pipeline/core/machine.py": ("transition", "CONTROL_FIELDS"),
+    "pipeline/core/ticket.py": ("validate_meta",),
+}
 KNOWN_STAGES = TERMINAL | HUMAN_GATES | {
     "new", "triage", "planning", "plan-validation", "revalidating",
     "implementing", "review", "quick-review", "holistic-review", "verifying", "merging"}
@@ -117,6 +126,12 @@ def transition(stage: str, result: str, counters: dict, klass: str = "bugfix"):
         case ("holistic-review", "fail"):
             return charge("review_loops", "implementing")
         case ("verifying", "ok"):
+            # plain `ok` PARKS. Only an explicit `clean` claim from
+            # `finish_suite()` skips the human -- everything that can go
+            # wrong in the fence check (git missing, no merge base, an
+            # exception) falls back to plain `ok`, so it fails closed.
+            return "awaiting-merge", c
+        case ("verifying", "clean"):
             return "merging", c
         case ("verifying", "fail"):
             return charge("review_loops", "implementing")

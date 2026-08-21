@@ -179,6 +179,31 @@ def test_a_human_gate_records_the_moment_the_human_acted():
     shutil.rmtree(state)
 
 
+def test_approve_lands_a_fenced_ticket():
+    """`approve` also lands the second human gate, `awaiting-merge`, into
+    `merging` -- not `revalidating`, which is what `awaiting-approval` gets."""
+    d = Path(tempfile.mkdtemp())
+    state = Path(tempfile.mkdtemp())
+    env = {**os.environ, "XDG_STATE_HOME": str(state)}
+    cli(d, "new", "t", env=env)
+    cli(d, "resume", "TICKET-001", "--stage", "awaiting-merge", env=env)
+    r = cli(d, "approve", "TICKET-001", env=env)
+    assert r.returncode == 0, r.stderr
+    t = Ticket.load(d / ".project/tickets/TICKET-001.md")
+    assert t.stage == "merging"
+
+    db = state / "pipeline" / "events.db"
+    conn = sqlite3.connect(db)
+    rows = [(t, s, k, json.loads(dat)) for t, s, k, dat in conn.execute(
+        "SELECT ticket, stage, kind, data FROM events")]
+    conn.close()
+    tid, stage, kind, data = rows[-1]
+    assert (tid, stage, kind) == ("TICKET-001", "awaiting-merge", "transition"), rows
+    assert data["from"] == "awaiting-merge" and data["to"] == "merging", data
+    shutil.rmtree(d)
+    shutil.rmtree(state)
+
+
 def test_answer_and_reject_record_too():
     """One command emitting and the other two not is the same bug with a
     smaller blast radius."""

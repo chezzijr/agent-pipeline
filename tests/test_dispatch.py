@@ -153,7 +153,7 @@ def _commit(wt, msg):
 def test_a_verified_ticket_lands_on_base():
     """`done` means landed. `verifying` used to go straight to `done`, leaving
     the fix on `ticket/<id>` with nothing to say a branch was waiting."""
-    assert M.transition("verifying", "ok", {})[0] == "merging"
+    assert M.transition("verifying", "clean", {})[0] == "merging"
     d, sh = git_project()
     path = d / ".project/tickets/TICKET-001.md"
     path.write_text(FIXTURE.replace("stage: plan-validation", "stage: verifying"))
@@ -173,6 +173,50 @@ def test_a_verified_ticket_lands_on_base():
         "`done` but the fix never landed on base"
     supervisor.start(d, path, harness("fake"), {})   # the `done` cleanup pass
     assert not wt.is_dir()
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_a_fenced_diff_parks_before_merging():
+    """A diff that edits `transition()` is exactly what `CLAUDE.md` fences off
+    from unattended merge -- the suite passing is not enough to land it."""
+    d, sh = git_project()
+    (d / "pipeline/core").mkdir(parents=True)
+    (d / "pipeline/core/machine.py").write_text("def transition():\n    return 1\n")
+    sh("git add -A && git commit -qm 'add machine.py'")
+    path = d / ".project/tickets/TICKET-001.md"
+    path.write_text(FIXTURE.replace("stage: plan-validation", "stage: verifying"))
+    wt = supervisor.ensure_worktree(
+        d, {"id": "TICKET-001", "branch": "ticket/001"}, {"base": "main"})
+    (wt / "pipeline/core/machine.py").write_text("def transition():\n    return 2\n")
+    _commit(wt, "'edit transition'")
+
+    did, rec = supervisor.start(d, path, harness("fake"), {})
+    assert did and rec
+    rec["proc"].wait()
+    supervisor.finish(d, rec)
+
+    assert Ticket.load(path).stage == "awaiting-merge"
+    did, rec = supervisor.start(d, path, harness("fake"), {})
+    assert not did and not rec, "a human gate must not spawn"
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_an_unfenced_diff_merges_without_a_human():
+    """An edit outside the fenced list reaches `merging` on its own."""
+    d, sh = git_project()
+    path = d / ".project/tickets/TICKET-001.md"
+    path.write_text(FIXTURE.replace("stage: plan-validation", "stage: verifying"))
+    wt = supervisor.ensure_worktree(
+        d, {"id": "TICKET-001", "branch": "ticket/001"}, {"base": "main"})
+    (wt / "g.py").write_text("the fix\n")
+    _commit(wt, "'ticket commit'")
+
+    did, rec = supervisor.start(d, path, harness("fake"), {})
+    assert did and rec
+    rec["proc"].wait()
+    supervisor.finish(d, rec)
+
+    assert Ticket.load(path).stage == "merging"
     shutil.rmtree(d, ignore_errors=True)
 
 

@@ -162,6 +162,12 @@ or `CONTROL_FIELDS` **requires human review before merge**, whatever the
 pipeline says. A pipeline that can weaken its own guard unattended is the one
 failure mode worth refusing to automate.
 
+This is enforced, not just written down: `machine.FENCED` names the same
+things in code, a diff touching any of them parks at the `awaiting-merge`
+gate instead of landing on its own, and
+`tests/test_stages.py::test_the_fenced_list_matches_the_rule_file` keeps this
+paragraph and `machine.FENCED` from drifting apart.
+
 **`.claude/skills/file-ticket/SKILL.md` is part of the interface.** It is what a
 session reads before filing work into this pipeline, so a change to a CLI
 command, a stage's behaviour, or the human gates is not finished until the skill
