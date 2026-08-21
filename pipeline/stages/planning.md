@@ -87,5 +87,14 @@ the pipeline: everything downstream executes your guess faithfully.
 Ask only what you cannot settle by reading the code. Two rounds of questions on
 one ticket means you should have read more.
 
+Write the questions for a human who has not read the code today:
+
+1. Number them. One decision per question.
+2. Give each question two or three concrete options, not an open prompt.
+3. Say what you will do if nobody answers -- your default, and why.
+4. Say what changes downstream for each option, in one line.
+5. Keep the whole block under 20 lines. Put the research in `## Digest`; a
+   human answering a question must not have to read a plan first.
+
 `result`: `ok` (plan written) | `needs-input` (questions appended) |
 `fail` (cannot plan; say what is missing)
