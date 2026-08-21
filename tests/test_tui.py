@@ -369,3 +369,33 @@ def test_edit_waits_for_the_stage_to_actually_stop():
             assert len(opened) == 1, opened
 
     asyncio.run(go())
+
+
+def test_attaching_sends_the_pane_size():
+    """TICKET-019: the child is forked at a fixed 40x120 and the TUI never
+    tells the daemon how big its pane really is, so a wide terminal renders the
+    agent in a 120-column box. `_op_resize` exists on the daemon and no client
+    has ever called it."""
+    async def go():
+        d = "/tmp/alpha"
+        fake = FakeClient([row(d, "TICKET-001", "planning", running=True,
+                               mode="interactive")])
+        app = PipelineApp(client=fake)
+        async with app.run_test(size=(200, 50)) as pilot:
+            app.stream = FakeStream()
+            app.query_one(Tree).focus()
+            await pilot.press("down", "down")
+            await pilot.pause()
+            app.on_frame({"id": app.pty_id, "ok": True,
+                          "data": {"screen": ["Allow Bash?"], "rows": 40,
+                                   "cols": 120, "writer": True}})
+            await pilot.pause()
+
+            assert "resize" in app.stream.ops(), \
+                f"attached without sending a size: {app.stream.ops()}"
+            kw = dict(app.stream.sent[-1][1])
+            assert kw["cols"] > 120, f"pane no wider than the child: {kw}"
+            assert app.pty_screen.cols == kw["cols"], \
+                f"local screen {app.pty_screen.cols} != sent {kw['cols']}"
+
+    asyncio.run(go())
