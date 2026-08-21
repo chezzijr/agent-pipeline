@@ -90,3 +90,50 @@ def test_the_prompt_survives_a_variadic_flag():
         assert head.rstrip().rstrip("\\").rstrip().endswith("--"), (
             f"{key}: the prompt is not separated from the flags by `--`, so a "
             f"variadic flag will swallow it:\n...{head[-60:]!r}")
+
+
+def test_headless_stages_get_the_harness_permission_mode_not_a_prompt():
+    """`acceptEdits` auto-accepts file edits and nothing else, so under `-p`
+    every Bash command fell through to an approval prompt with nobody to
+    answer it -- `This command requires approval` on `uv run pytest`, on
+    `git add`, on everything triage exists to do. The harness now carries the
+    default, so the fallback chain is: stage frontmatter, then harness, then
+    the old value for a harness that says nothing."""
+    hcfg = config.harness("claude-code")
+    assert hcfg["permission_mode"] == "bypassPermissions"
+
+    def rendered(stage_cfg, h=hcfg):
+        prompt = config.compose_prompt("review", h)
+        cmd = config.render(h, stage_cfg, tid="TICKET-001", project=Path("/proj"),
+                            ticket=Path("/proj/t.md"),
+                            result_file=Path("/proj/t.result"), session="s1",
+                            prompt=prompt, settings=Path("/proj/s.json"))
+        prompt.unlink()
+        return cmd
+
+    assert "--permission-mode bypassPermissions" in rendered(
+        config.stage_config("review")), "the harness default did not reach the command"
+    assert "--permission-mode plan" in rendered({"model": "opus", "permission_mode": "plan"}), \
+        "a stage can no longer override the harness"
+    quiet = dict(hcfg); quiet.pop("permission_mode")
+    assert "--permission-mode acceptEdits" in rendered({"model": "opus"}, quiet), \
+        "a harness that declares nothing must keep the pre-fix value"
+
+
+def test_the_skill_tool_is_granted_only_where_skills_are_declared():
+    """A stage's `skills:` used to reach the prompt while `Skill` never
+    reached `--tools`, so triage/planning/implementing each opened with
+    "No such tool available: Skill". Grant it exactly where it is declared."""
+    hcfg = config.harness("claude-code")
+    assert hcfg["skill_tool"] == "Skill"
+    assert config.stage_config("implementing").get("skills"), \
+        "fixture assumption broken: `implementing` no longer declares skills"
+    assert not config.stage_config("review").get("skills")
+
+    tools = config._tools(hcfg, config.stage_config("implementing"))
+    assert tools.split(",")[-1] == "Skill"
+    assert "Skill" not in config._tools(hcfg, config.stage_config("review")).split(","), \
+        "a stage that declares no skills must not get the tool"
+    quiet = dict(hcfg); quiet.pop("skill_tool")
+    assert "Skill" not in config._tools(quiet, config.stage_config("implementing")).split(","), \
+        "a harness that cannot supply the tool must not have it invented for it"

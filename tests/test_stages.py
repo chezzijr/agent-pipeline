@@ -55,10 +55,19 @@ def test_every_stage_that_can_run_bash_has_the_guard():
             f"{stage} runs Bash with no guard"
 
 
-def test_declared_skills_reach_the_prompt():
-    f = C.compose_prompt("implementing")
-    text = f.read_text(); f.unlink()
+def test_declared_skills_reach_the_prompt_only_when_the_harness_grants_the_tool():
+    """Both directions, because the block is only honest in one of them: the
+    2026-08-21 run appended it for every harness, and the agent's first turn
+    was always `Skill(...)` -> "No such tool available: Skill"."""
+    granted = C.compose_prompt("implementing", {"skill_tool": "Skill"})
+    text = granted.read_text(); granted.unlink()
     assert "/superpowers:test-driven-development" in text
+
+    for hcfg in ({}, None, C.harness("codex")):
+        f = C.compose_prompt("implementing", hcfg)
+        text = f.read_text(); f.unlink()
+        assert "superpowers:test-driven-development" not in text, \
+            f"{hcfg}: told the agent to invoke a tool the harness cannot give it"
 
 
 def test_data_files_live_inside_the_package_so_they_survive_install():

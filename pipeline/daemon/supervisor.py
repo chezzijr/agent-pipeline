@@ -297,7 +297,7 @@ def spawn(project: Path, wt: Path, tid: str, stage: str, hcfg: dict,
     logs = project / ".project" / "logs"
     logs.mkdir(parents=True, exist_ok=True)
     log = logs / f"{tid}-{stage}-{session[:8]}.log"
-    prompt = compose_prompt(stage)
+    prompt = compose_prompt(stage, hcfg)
     settings = stage_settings(stage, cfg)
     cmd = render(hcfg, cfg, tid=tid, project=project,
                 ticket=ticket_path(project, tid),

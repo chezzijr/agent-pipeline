@@ -22,6 +22,23 @@ readonly_tools = "Read,Grep,Glob,Bash"
 write_tools = "Read,Grep,Glob,Bash,Edit,Write"
 max_usd = 5
 
+# The guard is the permission layer (CLAUDE.md invariant 4), so Claude Code's
+# own prompt layer is both redundant with it and unanswerable under `-p`:
+# `acceptEdits` auto-accepts file edits and NOTHING else, so every Bash command
+# fell through to an approval prompt with nobody to answer it, and triage --
+# whose whole job is to run a test -- could never finish. Verified 2026-08-21,
+# both halves, before this was trusted: under `bypassPermissions` a PreToolUse
+# hook still fires (`sudo -n ls /` came back "Blocked by the pipeline guard
+# (triage)") and a legitimate write command runs with no approval error.
+permission_mode = "bypassPermissions"
+
+# The tool that lets a stage's `skills:` frontmatter mean anything. A harness
+# that omits this key gets no skills block in its prompt at all -- telling an
+# agent to invoke a tool it was not given is the failure mode the pipeline
+# exists to prevent, and it burned a turn on every triage/planning/implementing
+# run of 2026-08-21 with "No such tool available: Skill".
+skill_tool = "Skill"
+
 # Stage output is stream-json so a running stage can be watched instead of
 # arriving as one blob four minutes late. `--verbose` is what makes `-p` emit
 # every event rather than only the last one.
@@ -44,10 +61,12 @@ cmd = """claude -p --model {model} {effort_flag} {session_flag} {settings_flag} 
 "Work ticket {id}. Read {ticket} first. When finished write {result_file}" """
 
 # The same stage, hosted on a PTY the daemon owns (`mode: interactive` in the
-# stage's frontmatter). No `-p`: that is the whole point -- under print mode
-# `--permission-mode` is ignored and AskUserQuestion is not in the toolset, so
-# a permission prompt or an option picker cannot exist. `--max-budget-usd` and
-# `--tools` stay: they work outside print mode and they are the money guard.
+# stage's frontmatter). No `-p`: that is the whole point -- print mode has no
+# terminal to ask on and AskUserQuestion is not in its toolset, so a permission
+# prompt or an option picker cannot exist there. (`--permission-mode` itself
+# does take effect under `-p` -- verified 2026-08-21 -- which is what makes
+# `bypassPermissions` above the fix for headless stages.) `--max-budget-usd`
+# and `--tools` stay: they work outside print mode and they are the money guard.
 # A harness without this key falls back to `cmd` under the PTY.
 interactive_cmd = """claude --model {model} {effort_flag} {session_flag} {settings_flag} \
 --append-system-prompt "$(cat {stage_prompt})" \

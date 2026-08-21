@@ -49,11 +49,18 @@ def harness(name: str = "claude-code") -> dict:
     return tomllib.loads(p.read_text())
 
 
-def compose_prompt(stage: str) -> Path:
-    """_common.md + this stage's body, frontmatter stripped, as one file."""
+def compose_prompt(stage: str, hcfg: dict | None = None) -> Path:
+    """_common.md + this stage's body, frontmatter stripped, as one file.
+
+    A stage's `skills:` only reaches the prompt when the harness declares the
+    tool that can invoke them (`skill_tool`). Otherwise the block is dropped:
+    the 2026-08-21 run appended it unconditionally, so every triage, planning
+    and implementing stage opened by calling a tool it had not been given
+    ("No such tool available: Skill") -- the prompt lying to the agent, which
+    is the one thing this design exists to stop."""
     cfg, body = split_frontmatter(STAGES_DIR / f"{stage}.md")
     text = (STAGES_DIR / "_common.md").read_text() + "\n" + body
-    if cfg.get("skills"):
+    if cfg.get("skills") and (hcfg or {}).get("skill_tool"):
         text += ("\n\n## Skills for this stage\n\n"
                  "Invoke these before you start; they are here because this "
                  "stage's job depends on them.\n\n"
@@ -92,17 +99,31 @@ def render(hcfg: dict, cfg: dict, *, tid: str, project: Path, ticket: Path,
         session_flag=hcfg.get("session_flag", "").format(session=session),
         settings_flag=(hcfg.get("settings_flag", "").format(
             settings=shlex.quote(str(settings))) if settings else ""),
-        permission_mode=cfg.get("permission_mode", "acceptEdits"),
+        # stage frontmatter wins, then the harness's own default; a harness
+        # that says nothing keeps the pre-2026-08-21 value. See
+        # `claude-code.toml`: `acceptEdits` denies every Bash command headless.
+        permission_mode=cfg.get("permission_mode",
+                                hcfg.get("permission_mode", "acceptEdits")),
         stage_prompt=shlex.quote(str(prompt)),
         prompt=inline,
-        tools=cfg.get("tools") or (hcfg["write_tools"] if cfg.get("write")
-                                   else hcfg["readonly_tools"]),
+        tools=_tools(hcfg, cfg),
         cap=cfg.get("max_usd", hcfg.get("max_usd", 5)),
         project=shlex.quote(str(project)),
         ticket=ticket_q,
         result_file=result_q,
         id=tid,
     )
+
+
+def _tools(hcfg: dict, cfg: dict) -> str:
+    """The stage's toolset, plus the harness's skill tool when -- and only when
+    -- the stage declares `skills:` and the harness can supply one."""
+    tools = cfg.get("tools") or (hcfg["write_tools"] if cfg.get("write")
+                                 else hcfg["readonly_tools"])
+    skill_tool = hcfg.get("skill_tool")
+    if cfg.get("skills") and skill_tool and skill_tool not in tools.split(","):
+        tools += f",{skill_tool}"
+    return tools
 
 
 def stage_settings(stage: str, cfg: dict) -> Path | None:
