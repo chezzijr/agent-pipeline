@@ -156,3 +156,13 @@ def test_a_small_fix_takes_the_cheap_route():
     assert t("quick-review", "fail")[0] == "planning", \
         "a cheap path that cannot promote itself lands a vacuous test unattended"
     assert "quick-review" in M.KNOWN_STAGES
+    nxt, c = t("triage", "chore")
+    assert c["cheap_route"] == 1, "nothing carries the route as far as `implementing`"
+    assert t("implementing", "ok", c) == ("quick-review", {}), \
+        "the cheap route pays for the full review, or leaks its flag past the stage that consumes it"
+    assert t("implementing", "ok", {})[0] == "review", "the full route changed"
+    assert t("implementing", "blocked", {"cheap_route": 1})[0] == "planning", \
+        "a blocked chore re-gates a plan that does not exist"
+    assert t("quick-review", "fail", {"cheap_route": 1})[0] == "planning"
+    assert "cheap_route" not in M.BOUNDS.get("bugfix", {}), \
+        "a route flag is not a bounded loop counter"
