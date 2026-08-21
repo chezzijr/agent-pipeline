@@ -443,3 +443,25 @@ def test_project_paths_accept_a_string():
     assert T.ticket_path(d, "TICKET-001").name == "TICKET-001.md"
     assert T.all_tickets(d) == []
     shutil.rmtree(d, ignore_errors=True)
+
+
+def test_the_stage_view_is_bounded_by_thread_length():
+    """The symptom of TICKET-023: what a stage is asked to read grows with the
+    thread. A stage is handed a view, and its size must not depend on how many
+    stages ran before it -- while `## Summary`, `## Digest` and `## Plan`, the
+    parts a later stage acts on, stay in it."""
+    d = project()
+    p = d / ".project/tickets/TICKET-001.md"
+    t = Ticket.load(p)
+    for i in range(5):
+        t.append("implementing", "note", f"early entry {i} " + "x" * 400)
+    small = T.stage_view(t, "implementing")
+    for i in range(200):
+        t.append("implementing", "note", f"late entry {i} " + "x" * 400)
+    big = T.stage_view(t, "implementing")
+
+    assert len(big) < 2 * len(small) + 4000, (
+        f"the view grew with the thread: {len(small)} -> {len(big)} chars")
+    for name in ("Summary", "Digest", "Plan"):
+        assert T.sections(t.body)[name] in big, f"the view dropped `## {name}`"
+    shutil.rmtree(d)
