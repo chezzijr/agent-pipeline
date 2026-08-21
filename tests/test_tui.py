@@ -475,8 +475,13 @@ def test_raw_mode_routes_every_keystroke_to_the_pty_until_esc_esc():
 
             await pilot.press("i")
             await pilot.pause()
-            await pilot.press("down", "tab")
-            await pilot.pause()
+            for key in ("down", "tab"):
+                await pilot.press(key)
+                await pilot.pause()
+                # one op is in flight at a time and the daemon ack is what
+                # releases the next keystroke; the fake stream never acks
+                app.on_frame({"id": app.stream._id, "ok": True,
+                              "data": {"written": PTY_INPUT}})
             sent = b"".join(base64.b64decode(kw["data"])
                             for op, kw in app.stream.sent if op == "input")
             assert sent == b"\x1b[B\t", f"raw mode never reached the pty: {sent!r}"
@@ -488,5 +493,35 @@ def test_raw_mode_routes_every_keystroke_to_the_pty_until_esc_esc():
             after = b"".join(base64.b64decode(kw["data"])
                              for op, kw in app.stream.sent if op == "input")
             assert after == sent, f"esc esc did not leave raw mode: {after!r}"
+
+    asyncio.run(go())
+
+
+def status(app) -> str:
+    return str(app.query_one("#status").render())
+
+
+def test_raw_mode_is_visible_and_does_not_outlive_the_attachment():
+    """A keyboard that silently belongs to the child is worse than no raw mode,
+    and raw mode pointed at a detached pane types into nothing."""
+    async def go():
+        app = PipelineApp(client=FakeClient([]))
+        async with app.run_test() as pilot:
+            app.stream = FakeStream()
+            app.pty_screen = Screen(4, 24)
+            await pilot.press("i")
+            await pilot.pause()
+            assert app.raw is False, "raw mode with nothing to type into"
+
+            app.attached = ("/tmp/alpha", "TICKET-001")
+            await pilot.press("i")
+            await pilot.pause()
+            assert app.raw is True
+            assert "RAW" in status(app), status(app)
+
+            app._detach()
+            await pilot.pause()
+            assert app.raw is False, "raw mode outlived the attachment"
+            assert "RAW" not in status(app), status(app)
 
     asyncio.run(go())

@@ -25,7 +25,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from types import SimpleNamespace
 
-from textual import work
+from textual import events, work
 from textual.app import App, ComposeResult, SuspendNotSupported
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Footer, RichLog, Static, Tree
@@ -48,6 +48,29 @@ TREE_KINDS = {"stage_start", "stage_end", "transition", "escalated", "gate"}
 # TICKET-012's passthrough kinds: `data` is the shape `cli.main.render` reads.
 STREAM_KINDS = {"init", "assistant", "tool_result", "hook_started",
                 "hook_response", "rate_limit", "result"}
+
+
+# What a terminal sends for a key Textual hands us only the *name* of. Raw
+# mode needs the bytes: `Key.character` is None for a cursor key, and wrong for
+# backspace -- Textual says \x08, a terminal sends \x7f.
+RAW_KEYS = {
+    "up": b"\x1b[A", "down": b"\x1b[B", "right": b"\x1b[C", "left": b"\x1b[D",
+    "home": b"\x1b[H", "end": b"\x1b[F", "insert": b"\x1b[2~",
+    "delete": b"\x1b[3~", "pageup": b"\x1b[5~", "pagedown": b"\x1b[6~",
+    "shift+tab": b"\x1b[Z", "tab": b"\t", "enter": b"\r", "escape": b"\x1b",
+    "backspace": b"\x7f", "space": b" ",
+}
+
+
+def key_bytes(event) -> bytes:
+    """One Textual key event -> the bytes the terminal would have sent. Total:
+    a key with no sequence (f5, alt+x) is dropped, never guessed."""
+    if event.key in RAW_KEYS:
+        return RAW_KEYS[event.key]
+    name = event.key.removeprefix("ctrl+")
+    if name != event.key and len(name) == 1 and name.isalpha():
+        return bytes([ord(name.upper()) ^ 0x40])
+    return event.character.encode("utf-8") if event.is_printable else b""
 
 
 def marker(row: dict) -> str:
@@ -122,7 +145,7 @@ class PipelineApp(App):
         ("l", "logs", "logs"),
         ("m", "metrics", "metrics"),
         ("k", "kill", "kill"),
-        ("i", "send", "type"),
+        ("i", "raw", "type"),
     ]
 
     def __init__(self, client=None, project: str | None = None) -> None:
@@ -142,6 +165,8 @@ class PipelineApp(App):
         self.resize_id = None         # the resize awaiting its reply
         self.keys_out = b""           # keystrokes the daemon has not taken yet
         self.keys_flight = None       # (request id, chunk) currently with it
+        self.raw = False              # raw mode: every keystroke goes to the pty
+        self.esc = 0                  # escapes held back, waiting for the second
 
     def notify(self, message: str, **kw) -> None:
         """Everything this app notifies with is text it did not write -- an
@@ -213,7 +238,7 @@ class PipelineApp(App):
             grouped.setdefault(r["project"], []).append(r)
         sig = [(p, [label(r) for r in sorted(rs, key=lambda r: r["id"])])
                for p, rs in sorted(grouped.items())]
-        self._status(rows)
+        self._status()
         if sig == self.sig:
             return
         self.sig = sig
@@ -227,12 +252,14 @@ class PipelineApp(App):
                 if leaf.data == keep:
                     tree.move_cursor(leaf)
 
-    def _status(self, rows: list[dict]) -> None:
+    def _status(self) -> None:
+        rows = list(self.rows.values())
         running = sum(1 for r in rows if r.get("running"))
         drops = f" - {self.dropped} events dropped" if self.dropped else ""
+        mode = "RAW (esc esc to exit) - " if self.raw else ""
         # the sketch's `$2.14 today` lives behind `m`: cost is TICKET-014's
         self.query_one("#status", Static).update(
-            f"{len(rows)} tickets - {running} running{drops}")
+            f"{mode}{len(rows)} tickets - {running} running{drops}")
 
     # -- the event stream ---------------------------------------------------
     @work(thread=True, exclusive=True)
@@ -364,6 +391,8 @@ class PipelineApp(App):
         self.attached = self.pty_id = self.pty_screen = None
         self.pty_writer, self.resize_id = False, None
         self.keys_out, self.keys_flight = b"", None
+        self.raw, self.esc = False, 0
+        self._status()
 
     def _attached(self, msg: dict) -> None:
         """The `attach` reply: a snapshot of the daemon's pyte screen."""
@@ -456,14 +485,42 @@ class PipelineApp(App):
             return
         self._flush_keys()
 
-    def action_send(self) -> None:
-        """Type a line into the attached terminal. Through the same suspend
-        and `input()` the other two prompts use: capturing every keystroke
-        would mean giving up the keybindings this app is."""
+    async def on_event(self, event) -> None:
+        """Raw mode has to catch a key HERE, before Textual checks the bindings
+        and before it forwards to the focused Tree -- anywhere later and `down`
+        moves the ticket cursor instead of reaching the child. It is also the
+        only point at which ctrl+c is still ours to pass on. The guard stays
+        narrowed to `events.Key`: DEC-019's pane sizing needs `Resize` through."""
+        if self.raw and isinstance(event, events.Key) and not event.is_forwarded:
+            return self._raw_key(event)
+        await super().on_event(event)
+
+    def _raw_key(self, event) -> None:
+        """Every keystroke goes to the child except `Esc Esc`, the way back out.
+        A lone Esc is held rather than sent: an agent prompt reads Esc as
+        cancel, so a stray one on the way out of raw mode would answer the
+        question you attached to read."""
+        if event.key == "escape":
+            self.esc += 1
+            if self.esc > 1:
+                self.raw, self.esc = False, 0
+                self._status()
+            return
+        # ponytail: a held Esc is flushed by the next key, never by a timer.
+        # Upgrade = a timeout, if "Esc alone does nothing" ever bites.
+        pending, self.esc = b"\x1b" * self.esc, 0
+        data = pending + key_bytes(event)
+        if data:
+            self._send_keys(data)
+
+    def action_raw(self) -> None:
+        """Hand the keyboard to the attached terminal until `Esc Esc`. The old
+        `i` suspended the whole app to read one line through `input()`, which
+        took the tree, the pane and the prompt off screen to answer it."""
         if self.attached is None:
             return self.notify("select an interactive stage first")
-        self._send_keys(self._ask("send to terminal (empty = just Enter): ")
-                        .encode("utf-8") + b"\r")
+        self.raw, self.esc = True, 0
+        self._status()
 
     # -- the keys that only touch the ticket file ---------------------------
     def _target(self) -> tuple[str, str] | None:
