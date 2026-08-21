@@ -865,9 +865,20 @@ def _stopper():
     def on_signal(signum, _frame):
         state["stop"] = True
         print(f"\n  signal {signum}: stopping")
-    for sig in (signal.SIGINT, signal.SIGTERM):
+    old_handlers = {sig: signal.getsignal(sig)
+                    for sig in (signal.SIGINT, signal.SIGTERM)}
+    for sig in old_handlers:
         signal.signal(sig, on_signal)
-    return (lambda: state["stop"]), r, w
+    return (lambda: state["stop"]), r, w, old_handlers
+
+
+def _restore_signals(old_handlers: dict) -> None:
+    """Undoes `_stopper()`'s handlers. A library call that returns must not
+    leave the process's signal disposition changed -- without this, every
+    `pty.fork()` child spawned after `run()`/`serve()` returns inherits
+    `on_signal` and never dies on the SIGTERM `end_interactive()` sends it."""
+    for sig, handler in old_handlers.items():
+        signal.signal(sig, handler)
 
 
 def _harness_reloader(name: str):
@@ -921,7 +932,7 @@ def run(project: Path, once: bool, interval: int, harness_name: str,
             f"another dispatcher already holds {project}/.project/.lock -- "
             f"two supervisors on one project double-spawn")
     poller = Poller()
-    stopping, wake, wake_w = _stopper()
+    stopping, wake, wake_w, old_handlers = _stopper()
     poller.watch(wake, lambda fd: os.read(fd, 4096))
 
     try:
@@ -934,6 +945,7 @@ def run(project: Path, once: bool, interval: int, harness_name: str,
     finally:
         shut_down(project, inflight)
         signal.set_wakeup_fd(-1)
+        _restore_signals(old_handlers)
         poller.close()
         os.close(wake)
         os.close(wake_w)
@@ -955,7 +967,7 @@ def serve(interval: int, harness_name: str, max_parallel: int, store, server,
     reload = _harness_reloader(harness_name)
     states: dict[str, dict] = server.states
     locks: dict[str, object] = {}
-    stopping, wake, wake_w = _stopper()
+    stopping, wake, wake_w, old_handlers = _stopper()
     server.watch(wake, lambda fd: os.read(fd, 4096))
     store.emit("", "daemon_start", pid=os.getpid(), version=__version__,
                socket=str(server.path))
@@ -1003,6 +1015,7 @@ def serve(interval: int, harness_name: str, max_parallel: int, store, server,
             release(key)
         store.emit("", "daemon_stop", pid=os.getpid(), version=__version__)
         signal.set_wakeup_fd(-1)
+        _restore_signals(old_handlers)
         server.close()
         os.close(wake)
         os.close(wake_w)
