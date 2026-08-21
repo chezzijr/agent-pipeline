@@ -511,3 +511,34 @@ def test_a_child_log_that_is_not_utf8_still_advances_the_ticket():
     assert t.stage == "implementing", "the verdict never reached advance()"
     assert not t.lease_active(), "the lease outlived the child"
     shutil.rmtree(d, ignore_errors=True)
+
+
+def test_the_summary_marker_is_recorded_when_a_verdict_is_applied():
+    """`pipeline/stages/_common.md` tells every stage to start `summary:` with
+    `✓ `. The marker is evidence that the shared prose rules were still in the
+    agent's context at the end of a long run. Nothing reads it, so a stage that
+    drops the marker advances exactly like one that keeps it.
+
+    Design-neutral on purpose: the record may be an event field, a thread note,
+    or both. What it may not be is nothing. The summary text itself is stripped
+    from the ticket body before comparing, or the note echo alone would pass
+    this vacuously.
+    """
+    def run(summary: str) -> tuple[list, str]:
+        d = project()
+        path = d / ".project/tickets/TICKET-001.md"
+        seen: list = []
+        t = Ticket.load(path)
+        supervisor.advance(d, t, "ok", summary,
+                           lambda kind, **kw: seen.append((kind, kw)))
+        body = path.read_text().replace(summary, "")
+        shutil.rmtree(d, ignore_errors=True)
+        return seen, body
+
+    with_marker, body_with = run("✓ reproduced, failing test committed")
+    without, body_without = run("reproduced, failing test committed")
+
+    assert (with_marker, body_with) != (without, body_without), (
+        "the marker is not recorded: a summary with it and a summary without "
+        "it leave identical events and identical ticket text\n"
+        f"events: {with_marker}")
