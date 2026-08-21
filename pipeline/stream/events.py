@@ -106,7 +106,13 @@ def _norm(ev: dict) -> dict:
         return {**{k: v for k, v in ev.items() if k not in RESERVED},
                 "kind": "rate_limit"}
 
-    return {"kind": "other", "raw_type": typ, "subtype": sub}
+    # An unnamed event still carries something a human can read: a synthetic
+    # `user` message's text, a task's `description`, a notification's
+    # `summary`. Keep it -- `?? system` with the content dropped is why these
+    # lines looked like noise rather than events.
+    return {"kind": "other", "raw_type": typ, "subtype": sub,
+            "text": (_join(_blocks(ev), "text", "text")
+                     or str(ev.get("summary") or ev.get("description") or ""))[:MAX_TEXT]}
 
 
 def parse(line: str) -> dict:

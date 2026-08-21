@@ -126,3 +126,33 @@ def test_render_is_total_and_shows_the_guard_biting():
     assert all(isinstance(x, str) for x in lines)
     assert "exit=2" in lines[5] and "guard:" in lines[5], lines[5]
     assert lines[11].startswith("== success $0.3412 7 turns 184.2s")
+
+
+def test_an_unnamed_event_is_named_and_a_shell_line_is_not_marked_unparseable():
+    """`??` means "I could not parse this", and three different things wore it.
+
+    A dispatcher stage (`verifying`, `merging`) logs plain shell output, so a
+    whole merge read as `?? Merge made by the 'ort' strategy.` -- unparseable
+    marked on something there was nothing to parse in. `system/thinking_tokens`
+    is a per-turn token counter: 45 of one implementing stage's 189 events.
+    And an event with a name and a payload printed as a bare `?? system`.
+    """
+    from pipeline.cli.main import render
+    from pipeline.stream.events import parse
+
+    assert render(parse("Merge made by the 'ort' strategy.")) == \
+        "Merge made by the 'ort' strategy."
+    assert render(parse(json.dumps(
+        {"type": "system", "subtype": "thinking_tokens",
+         "estimated_tokens": 812}))) == "", "a token counter is not an event"
+
+    line = render(parse(json.dumps(
+        {"type": "system", "subtype": "task_started",
+         "description": "uv run pytest -q"})))
+    assert line.startswith("?? system/task_started"), line
+    assert "uv run pytest -q" in line, "the payload was dropped again"
+
+    line = render(parse(json.dumps(
+        {"type": "user", "isSynthetic": True,
+         "message": {"content": [{"type": "text", "text": "interrupted by user"}]}})))
+    assert line.startswith("?? user") and "interrupted by user" in line, line

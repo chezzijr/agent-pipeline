@@ -332,7 +332,23 @@ def render(ev: dict) -> str:
         ms = ev["duration_ms"] if isinstance(ev["duration_ms"], (int, float)) else 0
         return (f"== {ev['subtype']} ${ev['total_cost_usd']:.4f} "
                 f"{ev['num_turns']} turns {ms / 1000:.1f}s")
-    return f"?? {ev.get('raw_type') or _one(ev.get('raw') or ev.get('error') or '')}"
+    # Everything the parser could not name. Three different things arrive here
+    # and they do not deserve the same line:
+    #
+    #  * a line that was never JSON -- a DISPATCHER stage (`verifying`,
+    #    `merging`) logs plain shell output, so `?? Fast-forward` marks as
+    #    unparseable something there was nothing to parse in. Print it as it
+    #    came: git output should look like git output.
+    #  * `system/thinking_tokens` -- a token counter emitted once per model
+    #    turn. 45 of one implementing stage's 189 events were this. Dropped.
+    #  * anything else -- name it `type/subtype` and carry whatever text it
+    #    has, because `?? system` says nothing a human can act on.
+    if ev.get("raw") is not None:
+        return _one(ev["raw"])
+    if ev.get("subtype") == "thinking_tokens":
+        return ""
+    label = "/".join(x for x in (ev.get("raw_type"), ev.get("subtype")) if x)
+    return f"?? {label or '?'} {_one(ev.get('text') or ev.get('error') or '')}".rstrip()
 
 
 def cmd_logs(args) -> None:
