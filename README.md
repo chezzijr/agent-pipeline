@@ -84,6 +84,39 @@ it as one.
 The protocol, the schema and the event-kind vocabulary are frozen in
 `.project/decisions/DEC-011.md`.
 
+## Interactive stages
+
+A stage whose frontmatter says `mode: interactive` is spawned on a real PTY the
+daemon owns, using the harness's `interactive_cmd` template. `planning` is the
+one that does today.
+
+This is not a nicer view of a headless stage. Under `-p` the harness *ignores*
+`--permission-mode` and `AskUserQuestion` is not in the toolset, so a permission
+prompt and an option picker simply do not exist there. A PTY is the only mode in
+which a human can steer a stage.
+
+```
+-> {"id":7,"op":"attach","ticket":"TICKET-003"}      # "project" optional, a filter
+<- {"id":7,"ok":true,"data":{"screen":[...40 lines...],"writer":true,"rows":40,"cols":120}}
+<- {"sub":7,"pty":"<base64 chunk>"}                  # live, until you detach
+-> {"id":8,"op":"input","data":"<base64 keystrokes>"}
+-> {"id":9,"op":"resize","rows":50,"cols":160}
+-> {"id":10,"op":"detach"}
+```
+
+`screen` is the *current* 40 lines, not a replay -- that is the whole reason
+`pyte` is a dependency. The full raw stream is in the stage log, so
+`cat .project/logs/<id>-<stage>-<session>.log` covers scrollback.
+
+**Detach never kills the session**, and neither does closing the socket: the
+daemon holds the master fd, so a client is only ever a subscriber. Any number
+may watch; the first to attach holds the writer, others get `writer:false` and
+their `input` is refused until the holder detaches or disconnects.
+
+An interactive stage does **not** survive a daemon restart -- the master fd dies
+with the daemon and the child gets SIGHUP. The lease expiry recovers the ticket
+like any other crash.
+
 ## Concurrency
 
     pipeline --project ~/code/myproject run -j 4
@@ -184,6 +217,8 @@ the same log file -- otherwise both of those stop working.
     pipeline/daemon/server.py    the select loop: watch(fd, cb)/unwatch(fd), AF_UNIX, NDJSON
     pipeline/daemon/store.py     the append-only SQLite event log
     pipeline/daemon/registry.py  the project list and the per-project flock
+    pipeline/pty/host.py         a stage on a real PTY: pty.fork, a Popen shim,
+                                 a pyte screen, and the clients watching it
     pipeline/cli/main.py         the human-facing commands
     pipeline/cli/client.py       the socket client, and its file-based fallback
     pipeline/stages/_common.md   rules every stage shares, incl. the failure protocol

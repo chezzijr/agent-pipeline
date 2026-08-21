@@ -9,6 +9,8 @@ source of events is two lines at the call site instead of a rewrite here.
 `watch(fd, callback)` / `unwatch(fd)` are the extension point. Callbacks take
 the fd and must not block.
 """
+import base64
+import binascii
 import errno
 import fcntl
 import json
@@ -25,11 +27,19 @@ from pipeline.core import PipelineError
 from pipeline.core.machine import HUMAN_GATES, TERMINAL
 from pipeline.core.ticket import Ticket, all_tickets, now
 from pipeline.daemon import registry
+from pipeline.pty import host
 
 OUTBOX = 1000    # events per connection before the oldest is dropped
 MAX_CONNS = 64   # clients; past this, accept-and-refuse rather than run out of fds
 MAX_SUBS = 8     # subscriptions per connection
-OPS = ("ping", "ls", "projects", "subscribe", "kill")
+OPS = ("ping", "ls", "projects", "subscribe", "kill",
+       "attach", "input", "resize", "detach")
+MAX_DIM = 1000   # a terminal, not a memory allocator: pyte allocates rows*cols
+PTY_BACKLOG = 16  # queued pty frames per client. OUTBOX was sized for small
+                  # event objects; a pty frame is a 64 KiB read, base64'd
+PTY_INPUT = 4096  # one write into a pty's input buffer. Larger short-writes,
+                  # and a silently truncated paste into an approval prompt is
+                  # worse than an error the client can chunk around
 MAX_LINE = 1 << 20
 STALE_HOURS = 4  # overlap ordering is silent; surface anything sitting still
 SENT = object()   # "this op already queued its own frames" -- see _op_subscribe
@@ -51,6 +61,17 @@ def runtime_dir() -> Path:
 
 def socket_path() -> Path:
     return runtime_dir() / "daemon.sock"
+
+
+def _dim(req: dict, key: str) -> int:
+    """Values off a socket reach `ioctl` and a pyte allocation. Bounded."""
+    try:
+        v = int(req[key])
+    except (KeyError, TypeError, ValueError):
+        raise PipelineError(f"resize needs an integer {key}") from None
+    if not 1 <= v <= MAX_DIM:
+        raise PipelineError(f"{key}={v} out of range (1..{MAX_DIM})")
+    return v
 
 
 def ticket_rows(project: Path, inflight: dict | None = None) -> list[dict]:
@@ -139,6 +160,9 @@ class Conn:
         self.pending = b""      # a partially-sent frame
         self.dropped = 0
         self.subs: dict[int, dict] = {}   # sub id -> {"project": str|None}
+        self.attached: tuple | None = None   # (project, ticket, session)
+        self.pty_sub = None                  # the id its `pty` frames carry
+        self.pty_cb = None                   # this conn's entry in Screen.subs
 
     def send(self, obj: dict) -> None:
         if len(self.out) == self.out.maxlen:
@@ -301,6 +325,7 @@ class Server(Poller):
         conn = self.conns.pop(fd, None)
         self.unwatch(fd)
         if conn is not None:
+            self._detach(conn)   # frees the writer slot; never touches the child
             conn.sock.close()
         self.watch(self.sock.fileno(), lambda _fd: self._accept())  # re-arm
 
@@ -421,7 +446,9 @@ class Server(Poller):
                 conn.send({"sub": rid, "event": ev})
         return SENT
 
-    def _op_kill(self, conn, rid, req) -> dict:
+    def _running(self, req) -> tuple[str, dict]:
+        """(project, in-flight record) for one ticket. `project` is a filter
+        like everywhere else: absent means "whichever project it is in"."""
         want = self._project(req)
         tid = req.get("ticket")
         for proj, inflight in self.states.items():
@@ -429,6 +456,129 @@ class Server(Poller):
                 continue
             rec = inflight.get(tid)
             if rec:
-                rec["proc"].terminate()
-                return {"ticket": tid, "project": proj, "pid": rec["proc"].pid}
+                return proj, rec
         raise PipelineError(f"{tid} is not running")
+
+    def _op_kill(self, conn, rid, req) -> dict:
+        proj, rec = self._running(req)
+        rec["proc"].terminate()
+        return {"ticket": rec["tid"], "project": proj, "pid": rec["proc"].pid}
+
+    # -- interactive stages ------------------------------------------------
+    def _pty(self, conn: Conn) -> dict:
+        """The record this connection is attached to. A stage that has since
+        finished is an error on the next op, not a dangling subscription."""
+        if conn.attached is None:
+            raise PipelineError("not attached")
+        proj, tid, session = conn.attached
+        rec = self.states.get(proj, {}).get(tid)
+        # the SESSION, not just the ticket: `planning` can finish and the next
+        # interactive stage for the same ticket start before this client
+        # notices. Matching on the name alone would silently rebind it -- input
+        # into a terminal it cannot see, and the new session's writer slot held
+        # by someone watching a dead screen.
+        if (rec is None or rec.get("screen") is None or rec.get("pipe") is None
+                or rec.get("session") != session):
+            self._detach(conn)
+            raise PipelineError(f"{tid} is no longer running")
+        return rec
+
+    def _writer(self, rec: dict, conn: Conn) -> bool:
+        """One writer: one variable and one comparison, deliberately. The slot
+        frees when its holder detaches or disconnects, and the next `input`
+        from any attached client claims it -- no lease, no priorities."""
+        w = rec.get("writer")
+        if w is not None and w is not conn and self.conns.get(w.sock.fileno()) is w:
+            return False
+        rec["writer"] = conn
+        return True
+
+    def _detach(self, conn: Conn) -> None:
+        """Detach touches nothing but this connection. The daemon owns the
+        master fd, so a client going away cannot end a session -- which is the
+        entire point of hosting the PTY here."""
+        if conn.attached is None:
+            return
+        proj, tid, session = conn.attached
+        conn.attached = None
+        rec = self.states.get(proj, {}).get(tid) or {}
+        if rec.get("session") != session:
+            rec = {}          # a different session by now: nothing of ours in it
+        screen = rec.get("screen")
+        if screen is not None and conn.pty_cb in screen.subs:
+            screen.subs.remove(conn.pty_cb)
+        if rec.get("writer") is conn:
+            rec["writer"] = None
+        conn.pty_cb = conn.pty_sub = None
+
+    def _op_attach(self, conn, rid, req) -> dict:
+        proj, rec = self._running(req)
+        if rec.get("screen") is None:
+            raise PipelineError(f"{rec['tid']} is running `{rec['stage']}` "
+                                f"headless -- only an interactive stage can be attached")
+        self._detach(conn)                    # one PTY per connection
+        screen = rec["screen"]
+        conn.attached = (proj, rec["tid"], rec.get("session"))
+        conn.pty_sub = rid
+        conn.pty_cb = lambda chunk: self._pty_out(conn, rid, chunk)
+        screen.subs.append(conn.pty_cb)
+        return {"screen": list(screen.display), "writer": self._writer(rec, conn),
+                "rows": screen.rows, "cols": screen.cols,
+                "ticket": rec["tid"], "project": proj, "stage": rec["stage"]}
+
+    def _pty_out(self, conn: Conn, sid, chunk: bytes) -> None:
+        if len(conn.out) >= PTY_BACKLOG:
+            # a client that stopped reading -- a suspended TUI, a stalled ssh
+            # pane -- must not cost the daemon 1000 * 87 KiB. Drop the chunk
+            # and charge the counter; the marker below tells it to re-attach,
+            # and our pyte screen is authoritative anyway.
+            conn.dropped += 1
+            return
+        if conn.dropped:
+            # a wedged client lost frames, so its terminal emulation is now
+            # desynced from ours. Zero FIRST (the marker goes through the same
+            # full outbox), then say so: `attach` again for a fresh screen,
+            # which is authoritative here and costs one round trip.
+            n, conn.dropped = conn.dropped, 0
+            conn.send({"sub": sid, "dropped": n})
+        conn.send({"sub": sid, "pty": base64.b64encode(chunk).decode()})
+        self._pump(conn)
+
+    def _op_input(self, conn, rid, req) -> dict:
+        rec = self._pty(conn)
+        try:
+            data = base64.b64decode(req.get("data") or "", validate=True)
+        except (binascii.Error, ValueError) as e:
+            # decode BEFORE claiming: a junk frame must not take the writer slot
+            raise PipelineError(f"data must be base64: {e}") from None
+        if len(data) > PTY_INPUT:
+            # a pty's input buffer is a few KiB and the master is non-blocking,
+            # so a larger write short-writes and truncates mid-keystroke
+            raise PipelineError(f"input is {len(data)} bytes; send at most "
+                                f"{PTY_INPUT} per op")
+        if not self._writer(rec, conn):
+            raise PipelineError("another client holds the writer")
+        n = os.write(rec["pipe"].fileno(), data)
+        # still possible on an already-full buffer: say so rather than let the
+        # client assume every byte landed
+        return {"written": n, "short": n < len(data)}
+
+    def _op_resize(self, conn, rid, req) -> dict:
+        """MUST-HAVE, not a nicety: a pane and a child that disagree about
+        width render garbage. Writer-only, because it reshapes the terminal
+        the writer is typing into."""
+        rec = self._pty(conn)
+        # bounds BEFORE claiming, exactly as `input` decodes first: a junk
+        # frame must not take a free writer slot on its way to an error
+        rows, cols = _dim(req, "rows"), _dim(req, "cols")
+        if not self._writer(rec, conn):
+            raise PipelineError("another client holds the writer")
+        host.set_winsize(rec["pipe"].fileno(), rows, cols)
+        rec["screen"].resize(rows, cols)
+        return {"rows": rows, "cols": cols}
+
+    def _op_detach(self, conn, rid, req) -> dict:
+        was = conn.attached
+        self._detach(conn)
+        return {"detached": was[1] if was else None}
+
