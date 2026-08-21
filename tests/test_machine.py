@@ -143,3 +143,16 @@ def test_an_approved_plan_is_re_gated_before_it_is_implemented():
     assert "plan_validation_attempts" not in c, "waiting for a human was charged to the plan"
     assert t("revalidating", "fail", c)[0] == "escalated", "an unbounded stale loop"
     assert "revalidating" in M.DISPATCHER_STAGES and "revalidating" in M.KNOWN_STAGES
+
+
+def test_a_small_fix_takes_the_cheap_route():
+    """TICKET-025 changed one line and paid for planning, plan-validation and a
+    full review. A triage that reports the fix is small must route
+    `triage -> implementing -> quick-review -> verifying`, and `quick-review`
+    must be able to promote the ticket back onto the slow path."""
+    assert t("triage", "chore")[0] == "implementing", \
+        "a small fix still pays for planning, plan-validation and the approval gate"
+    assert t("quick-review", "ok")[0] == "verifying"
+    assert t("quick-review", "fail")[0] == "planning", \
+        "a cheap path that cannot promote itself lands a vacuous test unattended"
+    assert "quick-review" in M.KNOWN_STAGES
