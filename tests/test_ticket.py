@@ -1,6 +1,8 @@
 """The ticket file: what survives a save, what is refused, and the thread."""
 import argparse
 import shutil
+import tempfile
+from pathlib import Path
 
 from helpers import FIXTURE, project
 from pipeline.cli.main import cmd_approve
@@ -339,4 +341,16 @@ def test_one_hand_edited_lease_does_not_blank_the_listing_for_every_project():
     # and a lease nobody can read escalates the one ticket carrying it
     supervisor.start(d, d / ".project/tickets/TICKET-003.md", harness("fake"), {})
     assert Ticket.load(d / ".project/tickets/TICKET-003.md").stage == "escalated"
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_project_paths_accept_a_string():
+    """The CLI, the daemon registry and the socket protocol all carry a
+    project as a string. `"/tmp/x" / ".project"` raises a TypeError naming
+    neither the argument nor the function, so the caller has to read the
+    traceback to learn it wanted a Path."""
+    d = tempfile.mkdtemp()
+    assert T.tickets_dir(d) == T.tickets_dir(Path(d))
+    assert T.ticket_path(d, "TICKET-001").name == "TICKET-001.md"
+    assert T.all_tickets(d) == []
     shutil.rmtree(d, ignore_errors=True)

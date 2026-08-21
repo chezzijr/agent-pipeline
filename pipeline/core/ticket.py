@@ -137,15 +137,19 @@ def append_entry(body: str, header: str, text: str) -> str:
     return "".join(lines[:end]).rstrip() + "\n" + entry + (f"\n{rest}" if rest else "")
 
 
-def tickets_dir(project: Path) -> Path:
-    return project / ".project" / "tickets"
+def tickets_dir(project: Path | str) -> Path:
+    # Coerce: every caller here holds a Path, but the CLI, the daemon's
+    # registry and the socket protocol all carry projects as strings, and
+    # `"/tmp/x" / ".project"` is a TypeError naming neither the argument nor
+    # the function.
+    return Path(project) / ".project" / "tickets"
 
 
-def ticket_path(project: Path, tid: str) -> Path:
+def ticket_path(project: Path | str, tid: str) -> Path:
     return tickets_dir(project) / f"{tid}.md"
 
 
-def all_tickets(project: Path) -> list[Path]:
+def all_tickets(project: Path | str) -> list[Path]:
     d = tickets_dir(project)
     return sorted(d.glob("*.md")) if d.is_dir() else []
 
@@ -390,7 +394,7 @@ class Ticket:
                    lease=lease, extra=meta, body=body)
 
     @classmethod
-    def find(cls, project: Path, tid: str) -> "Ticket":
+    def find(cls, project: Path | str, tid: str) -> "Ticket":
         return cls.load(ticket_path(project, tid))
 
     def frontmatter(self) -> dict:
