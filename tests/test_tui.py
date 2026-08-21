@@ -461,4 +461,32 @@ def test_a_read_only_viewer_never_sends_a_resize():
             assert "resize" not in app.stream.ops(), \
                 "resize claims the writer slot on the daemon"
 
+
+def test_raw_mode_routes_every_keystroke_to_the_pty_until_esc_esc():
+    """TICKET-021: `i` must hand the keyboard to the attached pty, not suspend
+    the app to read one line. Arrows and Tab belong to the child while raw mode
+    is on; `Esc Esc` gives them back to the tree."""
+    async def go():
+        app = PipelineApp(client=FakeClient([]))
+        async with app.run_test() as pilot:
+            app.stream = FakeStream()
+            app.attached = ("/tmp/alpha", "TICKET-001")
+            app.pty_screen = Screen(4, 24)
+
+            await pilot.press("i")
+            await pilot.pause()
+            await pilot.press("down", "tab")
+            await pilot.pause()
+            sent = b"".join(base64.b64decode(kw["data"])
+                            for op, kw in app.stream.sent if op == "input")
+            assert sent == b"\x1b[B\t", f"raw mode never reached the pty: {sent!r}"
+
+            await pilot.press("escape", "escape")
+            await pilot.pause()
+            await pilot.press("down")
+            await pilot.pause()
+            after = b"".join(base64.b64decode(kw["data"])
+                             for op, kw in app.stream.sent if op == "input")
+            assert after == sent, f"esc esc did not leave raw mode: {after!r}"
+
     asyncio.run(go())
