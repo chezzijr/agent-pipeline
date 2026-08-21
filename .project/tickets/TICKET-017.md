@@ -1,12 +1,18 @@
 ---
 id: TICKET-017
-stage: new
+stage: triage
 class: bugfix
 branch: ticket/017
 test_file: null
 files_declared: []
-counters: {plan_validation_attempts: 0, review_loops: 0, blocked_count: 0, lease_expiries: 0}
-lease: {holder: null, expires: null}
+counters:
+  plan_validation_attempts: 0
+  review_loops: 0
+  blocked_count: 0
+  lease_expiries: 0
+lease:
+  holder: null
+  expires: null
 ---
 
 ## Summary
@@ -40,3 +46,13 @@ fails identically on base and branch is the reproduction the gate is supposed to
 ## Rollback
 
 ## Thread
+
+### 2026-08-21 03:13:42Z · new · transition · to=triage · result=new
+
+**new -> triage** (result: `new`)
+
+dispatcher pickup
+
+### 2026-08-21 03:18:14Z · triage · note
+
+`triage` was interrupted; lease released

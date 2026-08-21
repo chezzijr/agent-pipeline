@@ -13,6 +13,128 @@ files they touch, so a ticket spanning two areas blocks both.
 
 ---
 
+## THE FIRST REAL RUN — three blockers, found 2026-08-21
+
+The daemon ran real `claude` agents against TICKET-016/017/018 for the first time. It got
+further than ever before (the `--add-dir` fix works — stages spawn, stream, and write
+their `.result`), and then hit three things. **Fix these before the next run.** They are
+listed in the order they bite.
+
+### B1. Every non-read shell command is denied — nothing can ever pass triage  ★ FATAL
+
+TICKET-016's own escalation, verbatim:
+
+> could not reproduce — every non-read shell command (uv/pytest/python/git add/commit)
+> denied by the permission layer; test written but unrun and uncommitted
+
+From the log:
+
+```
+→ Bash({"command": "uv run --with pytest --with pyyaml python -m pytest -q ..."})
+← ERR This command requires approval
+→ Bash({"command": "uv run test_pipeline.py"})
+← ERR This command requires approval
+→ Bash({"command": "python -m pytest -q test_pipeline.py -k base_too"})
+← ERR This command requires approval
+```
+
+`config.py:95` passes `permission_mode=cfg.get("permission_mode", "acceptEdits")`.
+`acceptEdits` auto-accepts *file edits* and nothing else, so every Bash command falls
+through to an interactive approval prompt — and `-p` has nobody to answer it. `Read`,
+`Grep` and `Glob` work, which is why the agent gets all the way to "now run the test" and
+dies there.
+
+Triage's entire job is to write a failing test **and run it**. It can never finish. Every
+ticket therefore escalates at triage, and the pipeline cannot complete a single ticket.
+
+The design already answers this — `CLAUDE.md` invariant 4: *"Hooks decide with code.
+`dangerous-commands.py` is the only layer that makes a promise. Read-only stages get an
+allowlist."* The guard **is** the permission layer. Claude Code's own prompt layer is
+both redundant with it and unanswerable headless.
+
+So the fix is to let the guard be the thing that decides:
+
+- pass `--permission-mode bypassPermissions` for headless stages, **or**
+- have `stage_settings()` write a `permissions.allow` list alongside the hooks.
+
+Prefer the first if it can be verified, because the second means enumerating every
+legitimate command in a settings file, which is exactly the blocklist-shaped thing the
+guard was rewritten as an allowlist to avoid.
+
+**Verify before trusting it:** a `PreToolUse` hook must still fire under
+`bypassPermissions`. I was about to test this and did not — do it first, and do it with a
+command the guard blocks (`sudo ls /` under `PIPELINE_READONLY=1`) so a pass means the
+guard bit, not that nothing ran. If hooks do *not* run in that mode, `bypassPermissions`
+is off the table entirely and the settings-file route is the only option.
+
+### B2. `base = "main"`, but the app lives on `pipeline-app` — agents work on dead code
+
+`.project/pipeline.toml` says `base = "main"`, and `main` is still the pre-refactor tree:
+
+```
+$ git ls-tree --name-only main
+pipeline.py          test_pipeline.py     stages/  hooks/  harnesses/
+```
+
+There is no `pipeline/` package there. So every worktree is cut from the old single-file
+codebase, and TICKET-017/018 — which name `pipeline/core/gate.py` — got handed
+`pipeline.py` instead. The log shows the agent dutifully reading `def gate` out of it.
+
+Any fix produced this way targets code that no longer exists, and `merging` would then
+`--ff-only` it into `main`, further diverging the two.
+
+Fix: either merge `pipeline-app` into `main` first, or set `base = "pipeline-app"` until
+it lands. **Do this before B1** — otherwise the first run that actually works will produce
+correct-looking patches against the wrong tree.
+
+### B3. Stage prompts tell agents to invoke a tool they were not given
+
+```
+→ Skill({"command": "superpowers:systematic-debugging"})
+← ERR Error: No such tool available: Skill. Skill is disabled for this session.
+```
+
+`triage.md`, `planning.md` and `implementing.md` all declare `skills:`, and
+`compose_prompt()` appends "Invoke these before you start; they are here because this
+stage's job depends on them." But the harness passes
+`readonly_tools = "Read,Grep,Glob,Bash"` / `write_tools = "...,Edit,Write"` — no `Skill`.
+
+Every one of those stages burns a turn on a guaranteed error, and the prompt is lying to
+the agent about what it can do. Not fatal on its own, but it is the pipeline instructing
+an agent to do something impossible, which is the failure mode the whole design exists to
+prevent.
+
+Three ways out, and the choice is a real one:
+- add `Skill` to the tool lists — simplest, but see the tension below;
+- drop `skills:` from the stage frontmatter and inline the guidance into the prompt;
+- keep `skills:` but have `compose_prompt()` emit nothing when the harness cannot supply
+  the tool, the way TICKET-009 made `spawn()` refuse a guarded stage on a hookless harness.
+
+Worth noting the tension with `CLAUDE.md`: *"Stage prompts stay harness-neutral — plain
+instructions and shell/git commands, no Claude Code skills, subagents, or slash commands.
+Anything Claude-specific belongs in `harnesses/claude-code.toml`."* The `skills:` frontmatter
+already violates that rule. The third option is the one that resolves it rather than
+entrenching it.
+
+### What did work
+
+Worth recording, because it is everything except the three above: the daemon supervised a
+real multi-ticket run; `--add-dir`'s `--` fix means stages spawn and receive their prompt;
+stream-json parsing rendered live in the TUI; hook events showed up as
+`[hook SessionStart:startup exit=0 success]`; the ticket thread recorded typed entries
+throughout; and TICKET-016 escalated **with an accurate diagnosis of its own failure**,
+which is the bounded-loop-plus-honest-reporting behaviour working exactly as designed.
+
+### State when stopped
+
+- Daemon stopped. `main` never moved (`63e18fe`), so nothing landed anywhere unintended.
+- TICKET-001..015 are `done` — closed **by hand**, implemented during the build before any
+  agent could run. TICKET-016 `escalated` (B1). TICKET-017/018 left mid-`triage`.
+- `.worktrees/TICKET-016..018` still exist, with the escalated evidence in them.
+- `pipeline` / `pipelined` installed editable from this repo.
+
+---
+
 ## 1. No log retention — the only thing here with a real growth curve
 
 `.project/logs/` is gitignored, so it never bloats git, but nothing ever prunes it.

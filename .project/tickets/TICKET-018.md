@@ -1,12 +1,18 @@
 ---
 id: TICKET-018
-stage: new
+stage: triage
 class: bugfix
 branch: ticket/018
 test_file: null
 files_declared: []
-counters: {plan_validation_attempts: 0, review_loops: 0, blocked_count: 0, lease_expiries: 0}
-lease: {holder: null, expires: null}
+counters:
+  plan_validation_attempts: 0
+  review_loops: 0
+  blocked_count: 0
+  lease_expiries: 0
+lease:
+  holder: null
+  expires: null
 ---
 
 ## Summary
@@ -47,3 +53,9 @@ and a superseded one is noted rather than treated as binding.
 ## Rollback
 
 ## Thread
+
+### 2026-08-21 03:13:42Z · new · transition · to=triage · result=new
+
+**new -> triage** (result: `new`)
+
+dispatcher pickup
