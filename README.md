@@ -117,6 +117,26 @@ An interactive stage does **not** survive a daemon restart -- the master fd dies
 with the daemon and the child gets SIGHUP. The lease expiry recovers the ticket
 like any other crash.
 
+## The TUI
+
+```sh
+pipeline tui                              # every registered project
+pipeline --project ~/code/myproject tui   # the same filter `ls` takes
+```
+
+Left pane a tree of projects and their tickets (`*` running, `!` waiting on
+you, `?` untouched for hours), right pane the ticket's stage log rendered the
+way `pipeline logs` renders it, then live events as they arrive. It seeds from
+`ls` and stays current from a `subscribe` on its own connection; with no daemon
+running it reads the ticket files instead and simply does not update itself.
+
+`a` approve, `r` reject, `A` answer, `e` edit, `l` logs, `m` metrics, `k` kill,
+`q` quit. Only `k` is a daemon op -- approve, reject and answer rewrite the
+ticket file, which is the source of truth, and the daemon's next tick notices;
+`e`/`l`/`m` suspend the app and hand you the real terminal. `e` interrupts the
+running stage before opening `$EDITOR`, so your edit cannot trip the
+dispatcher's tamper detection.
+
 ## Concurrency
 
     pipeline --project ~/code/myproject run -j 4

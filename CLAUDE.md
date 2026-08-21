@@ -51,6 +51,7 @@ context, not instructions that override it.
 | `pipeline/cli/client.py` | connect/request/subscribe, and the file-based fallback for every one of them |
 | `pipeline/stages/<name>.md` | one self-contained stage: frontmatter (`model`, `effort`, `write`, `tools`, `hooks`, `skills`, `max_usd`) + the prompt |
 | `pipeline/stages/_common.md` | rules every stage shares, including the failure protocol |
+| `pipeline/tui/app.py` | the Textual dashboard. One client argument, for the fake in `tests/test_tui.py` |
 | `pipeline/stream/events.py` | `parse(line) -> dict`: one stream-json line to a normalised record. Never raises |
 | `pipeline/harnesses/*.toml` | how to spawn an agent. Data, not code. A new harness is a new file |
 | `pipeline/pty/host.py` | a `mode: interactive` stage on a real PTY: the fork, the `Popen` shim, the pyte screen |
@@ -112,8 +113,9 @@ claiming the guard works.
 
 ## Conventions
 
-- Stdlib first. The only runtime dependency is PyYAML, via `uv` inline metadata.
-  Adding a dependency needs a reason a few lines of stdlib cannot cover.
+- Stdlib first. Two runtime dependencies: PyYAML, and `textual` for
+  `pipeline tui` -- imported inside `cmd_tui`, so nothing else pays for it.
+  Adding a third needs a reason a few lines of stdlib cannot cover.
 - Non-trivial logic leaves one runnable check behind. Both suites are plain
   asserts — no fixtures, no frameworks.
 - A test must fail when the code breaks. Two tests in this repo once passed

@@ -371,6 +371,19 @@ def cmd_metrics(args) -> None:
         conn.close()
     print(json.dumps(data, default=str, indent=2) if args.json else metrics.render(data))
 
+def cmd_tui(args) -> None:
+    """The dashboard. `--project` is a filter here too, exactly as for `ls`.
+
+    The `textual` import is inside the function on purpose: it pulls in rich
+    and a few thousand lines of widget, and `pipeline approve` has no business
+    paying for that.
+    """
+    from pipeline.tui.app import PipelineApp
+
+    app = PipelineApp(connect(), str(proj(args)) if args.project else None)
+    app.run()
+    sys.exit(app.return_code or 0)
+
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
@@ -388,6 +401,7 @@ def main() -> None:
     p = sub.add_parser("logs"); p.add_argument("id"); p.add_argument("-f", "--follow", action="store_true"); p.set_defaults(fn=cmd_logs)
     p = sub.add_parser("ls", help="tickets (via the daemon if one is running)"); p.add_argument("-v", "--verbose", action="store_true"); p.set_defaults(fn=cmd_ls)
     p = sub.add_parser("status", help="is the daemon running"); p.set_defaults(fn=cmd_daemon_status)
+    p = sub.add_parser("tui", help="watch and steer running stages"); p.set_defaults(fn=cmd_tui)
     p = sub.add_parser("register"); p.add_argument("path", nargs="?", default="."); p.set_defaults(fn=cmd_register)
     p = sub.add_parser("unregister"); p.add_argument("path", nargs="?", default="."); p.set_defaults(fn=cmd_unregister)
     p = sub.add_parser("projects"); p.set_defaults(fn=cmd_projects)
