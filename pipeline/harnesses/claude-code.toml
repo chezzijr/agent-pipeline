@@ -16,7 +16,20 @@ readonly_tools = "Read,Grep,Glob,Bash"
 write_tools = "Read,Grep,Glob,Bash,Edit,Write"
 max_usd = 5
 
+# Stage output is stream-json so a running stage can be watched instead of
+# arriving as one blob four minutes late. `--verbose` is what makes `-p` emit
+# every event rather than only the last one.
+#
+# Deliberately NOT here, do not "fix" this:
+#   --input-format stream-json     only buys sending a message mid-run, which is
+#                                  a TUI/PTY feature, and it conflicts with the
+#                                  positional prompt below.
+#   --include-partial-messages     ~50x the event volume, every event hitting
+#                                  SQLite, to gain sub-message granularity on a
+#                                  view that is already live.
+# Both flags exist in `claude --help`; re-enabling either is a one-line edit.
 cmd = """claude -p --model {model} {effort_flag} {session_flag} {settings_flag} \
+--output-format stream-json --verbose \
 --append-system-prompt "$(cat {stage_prompt})" \
 --tools "{tools}" \
 --permission-mode {permission_mode} \
