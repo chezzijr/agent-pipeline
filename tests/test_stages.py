@@ -43,10 +43,12 @@ def test_the_composed_prompt_carries_the_stage_view():
 
 def test_every_stage_named_by_the_state_machine_has_a_prompt():
     # `counters` and `klass` are part of the table, not decoration:
-    # `holistic-review` is reachable only for a non-bugfix class, and
-    # `quick-review` only with `cheap_route` set. Varying `result` alone
-    # left both prompts unenforced.
-    variants = [({}, "bugfix"), ({}, "refactor"), ({"cheap_route": 1}, "bugfix")]
+    # `holistic-review` needs a non-bugfix class AND `review_loops > 0` -- it
+    # reviews an accumulated diff, so a review that passed first time routes
+    # straight to `verifying`. `quick-review` needs `cheap_route` set. Varying
+    # `result` alone left both prompts unenforced.
+    variants = [({}, "bugfix"), ({}, "refactor"), ({"cheap_route": 1}, "bugfix"),
+                ({"review_loops": 1}, "refactor")]
     reachable = {M.transition(s, r, c, k)[0] for s in C.agent_stages()
                  for r in ["ok", "fail", "blocked", "rejected", "chore"]
                  for c, k in variants}

@@ -45,13 +45,18 @@ one round — use `AskUserQuestion` when the answer is a choice.
 
   | class | means | bounds it buys |
   |---|---|---|
-  | `bugfix` | something is wrong and you can point at it | 2 review loops, skips holistic review |
-  | `feature` | something absent that should exist | 2 review loops, holistic review |
-  | `refactor` | shape is wrong, behaviour stays | **3** review loops + 3 plan-validation attempts |
+  | `bugfix` | something is wrong and you can point at it | 2 review loops, never a holistic review |
+  | `feature` | something absent that should exist | 2 review loops, holistic review **if review bounced** |
+  | `refactor` | shape is wrong, behaviour stays | **3** review loops + 3 plan-validation attempts, same holistic rule |
 
-  Class is not cosmetic — it sets the loop budgets in `machine.py:BOUNDS` and decides
-  whether a holistic review runs. Getting it wrong makes a ticket escalate early or
-  churn late.
+  Class is not cosmetic — it sets the loop budgets in `machine.py:BOUNDS`. Getting it
+  wrong makes a ticket escalate early or churn late.
+
+  The holistic pass is not bought by class alone (DEC-034): it reviews an
+  *accumulated* diff, so it runs only once `review_loops` has been charged at least
+  once — by a failed review, a failed holistic pass, or a red regression suite. A
+  `feature` whose review passed first time goes straight to `verifying`, exactly as a
+  `bugfix` does.
 
 If the user already gave you a traceback or an exact error string, keep it verbatim for
 step 3 — triage has to reproduce that exact failure, and the gate greps the test output

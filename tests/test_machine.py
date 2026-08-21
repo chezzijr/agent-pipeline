@@ -8,6 +8,18 @@ def t(stage, result, counters=None, klass="bugfix"):
     return M.transition(stage, result, counters or {}, klass)
 
 
+def test_holistic_review_runs_only_on_a_diff_that_bounced():
+    """It reviews an ACCUMULATED diff. A review that passed first time
+    accumulated nothing, so there is nothing for it to find -- 6 runs, 6 `ok`,
+    0 findings before this row learned that. The bounce, not the class, is
+    what makes the pass worth its cost."""
+    for klass in ("feature", "refactor"):
+        assert t("review", "ok", {"review_loops": 0}, klass)[0] == "verifying", klass
+        assert t("review", "ok", {"review_loops": 1}, klass)[0] == "holistic-review", klass
+    # bugfix skips it either way -- its incremental review saw the whole diff
+    assert t("review", "ok", {"review_loops": 1}, "bugfix")[0] == "verifying"
+
+
 def test_happy_path():
     assert t("new", "-")[0] == "triage"
     assert t("triage", "ok")[0] == "planning"
@@ -15,7 +27,7 @@ def test_happy_path():
     assert t("plan-validation", "ok")[0] == "awaiting-approval"
     assert t("implementing", "ok")[0] == "review"
     assert t("review", "ok", klass="bugfix")[0] == "verifying", "bugfix skips holistic"
-    assert t("review", "ok", klass="refactor")[0] == "holistic-review"
+    assert t("review", "ok", {"review_loops": 1}, "refactor")[0] == "holistic-review"
     assert t("holistic-review", "ok")[0] == "verifying"
     assert t("verifying", "clean")[0] == "merging", "`done` must mean landed"
     assert t("verifying", "ok")[0] == "awaiting-merge", "plain `ok` parks for a human"

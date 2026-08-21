@@ -118,7 +118,16 @@ def transition(stage: str, result: str, counters: dict, klass: str = "bugfix"):
             return "planning", c
         case ("review", "ok"):
             # a one-line bugfix's incremental review already saw the whole diff
-            return ("verifying" if klass == "bugfix" else "holistic-review"), c
+            # -- and so did any review that passed on its FIRST pass, whatever
+            # the class. `holistic-review` exists to catch incoherence across
+            # an accumulated diff: a fix in loop 2 half-undoing loop 1's, error
+            # handling drifting between them. With `review_loops == 0` there is
+            # no accumulation, so there is nothing for it to find, and the
+            # measurements agree -- 6 runs, 6 `ok`, 0 findings, against a
+            # `review` that returned `fail` 4 times in 20. A ticket that
+            # bounced still takes the holistic pass; that is its case.
+            return ("verifying" if klass == "bugfix" or not c.get("review_loops")
+                    else "holistic-review"), c
         case ("review", "fail"):
             return charge("review_loops", "implementing")
         case ("holistic-review", "ok"):
