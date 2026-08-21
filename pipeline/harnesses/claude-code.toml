@@ -18,7 +18,15 @@ supports_hooks = true    # PreToolUse hooks registered via --settings
 effort_flag = "--effort {effort}"
 session_flag = "--session-id {session}"
 settings_flag = "--settings {settings}"
-readonly_tools = "Read,Grep,Glob,Bash"
+# `write: false` names the WORKING TREE, not the ticket. Every stage has to
+# write its `.result` sidecar, and `tree_snapshot()` excludes `.project/` for
+# exactly that reason -- so a read-only stage needs a file tool to do it. Given
+# only Bash it cannot: the guard refuses `>`, a heredoc, and `sed -i`, which is
+# the guard working as designed. Two `plan-validation` runs on 2026-08-21
+# produced complete analyses, could not write them anywhere, and escalated with
+# `no_result: 2`. Prevention for the shell (the guard), detection for the file
+# tools (the snapshot escalates `wrote-in-readonly` at reap).
+readonly_tools = "Read,Grep,Glob,Bash,Write,Edit"
 write_tools = "Read,Grep,Glob,Bash,Edit,Write"
 max_usd = 5
 

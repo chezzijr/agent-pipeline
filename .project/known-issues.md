@@ -95,6 +95,33 @@ emits the block only in that same case. `codex.toml` and `fake.toml` declare no
 `skill_tool`, so they now say nothing rather than lie. Tested both directions —
 `tests/test_stages.py::test_declared_skills_reach_the_prompt_only_when_the_harness_grants_the_tool`.
 
+### B4. A read-only stage could not write its `.result` at all — FIXED
+
+Found on the run that followed: `plan-validation` produced a complete analysis for
+TICKET-016 and TICKET-017, twice each, and escalated both with `no_result: 2`.
+
+```
+tools given:  Read,Grep,Glob,Bash                          # write: false
+guard says:   Blocked by the pipeline guard (plan-validation): shell redirection into a file.
+              Blocked ... : command does not parse as a shell command      (heredoc)
+              Blocked ... : sed -n: not an allowed subcommand
+verdict:      `plan-validation` wrote no .result sidecar 2 times
+```
+
+No `Write`, no `Edit`, and the guard correctly refuses `>` — so the one action every
+stage must perform was the one it could not. It hit every read-only stage:
+`plan-validation`, `review`, `holistic-review`.
+
+The guard was not wrong; the tools list was. `write: false` names the **working tree**,
+which is why `tree_snapshot()` excludes `.project/`: "writing to the ticket and the
+.result sidecar is every stage's job, including the read-only ones."
+
+Fix: `readonly_tools = "Read,Grep,Glob,Bash,Write,Edit"`. Prevention stays with the
+guard for the shell; a file tool used outside `.project/` is caught by the snapshot at
+reap and escalates as `wrote-in-readonly`. Regression test asserts every stage's
+rendered toolset contains a file tool — `tests/test_harness.py::
+test_every_stage_can_write_its_result_sidecar`.
+
 ### What did work, and still does
 
 The daemon supervised a real multi-ticket run; `--add-dir`'s `--` fix means stages spawn

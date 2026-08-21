@@ -162,3 +162,16 @@ def test_an_interactive_stage_keeps_the_mode_that_can_ask():
     assert "--permission-mode acceptEdits" in rendered("interactive_cmd")
     assert "--permission-mode bypassPermissions" in rendered("cmd"), \
         "the same stage run headless still must not wait for an approval"
+
+
+def test_every_stage_can_write_its_result_sidecar():
+    """`write: false` names the working tree, not the ticket: `tree_snapshot()`
+    excludes `.project/` precisely so a read-only stage can write its `.result`.
+    Given only Bash it cannot -- the guard refuses `>`, heredocs and `sed -i` --
+    so two `plan-validation` runs produced complete analyses, had nowhere to put
+    them, and escalated with `no_result: 2`. Every stage needs a file tool."""
+    hcfg = config.harness("claude-code")
+    for stage in config.agent_stages():
+        tools = config._tools(hcfg, config.stage_config(stage)).split(",")
+        assert {"Write", "Edit"} & set(tools), \
+            f"{stage} has no file tool, so it cannot write its .result: {tools}"
