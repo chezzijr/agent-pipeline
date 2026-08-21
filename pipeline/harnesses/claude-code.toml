@@ -36,3 +36,17 @@ cmd = """claude -p --model {model} {effort_flag} {session_flag} {settings_flag} 
 --max-budget-usd {cap} \
 --add-dir {project} \
 "Work ticket {id}. Read {ticket} first. When finished write {result_file}" """
+
+# The same stage, hosted on a PTY the daemon owns (`mode: interactive` in the
+# stage's frontmatter). No `-p`: that is the whole point -- under print mode
+# `--permission-mode` is ignored and AskUserQuestion is not in the toolset, so
+# a permission prompt or an option picker cannot exist. `--max-budget-usd` and
+# `--tools` stay: they work outside print mode and they are the money guard.
+# A harness without this key falls back to `cmd` under the PTY.
+interactive_cmd = """claude --model {model} {effort_flag} {session_flag} {settings_flag} \
+--append-system-prompt "$(cat {stage_prompt})" \
+--tools "{tools}" \
+--permission-mode {permission_mode} \
+--max-budget-usd {cap} \
+--add-dir {project} \
+"Work ticket {id}. Read {ticket} first. When finished write {result_file}" """

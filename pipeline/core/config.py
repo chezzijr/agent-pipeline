@@ -66,7 +66,7 @@ def compose_prompt(stage: str) -> Path:
 
 def render(hcfg: dict, cfg: dict, *, tid: str, project: Path, ticket: Path,
            result_file: Path, session: str, prompt: Path,
-           settings: Path | None = None) -> str:
+           settings: Path | None = None, key: str = "cmd") -> str:
     """Fill a harness's `cmd` template. Pulled out of `spawn()` so a harness
     can be exercised -- rendered command asserted -- without ever running an
     agent, which is how `codex.toml` is tested.
@@ -75,12 +75,17 @@ def render(hcfg: dict, cfg: dict, *, tid: str, project: Path, ticket: Path,
     harness's own template reads (`claude-code.toml`'s `$(cat {stage_prompt})`
     via `--append-system-prompt`). "inline" is for a harness with no system
     prompt flag: the composed prompt is read here and prepended to the
-    work-ticket message as one positional `{prompt}` argument."""
+    work-ticket message as one positional `{prompt}` argument.
+
+    `key` picks the template: "cmd" headless, "interactive_cmd" for a stage
+    with `mode: interactive`. A harness with no interactive template falls
+    back to its normal command under the PTY -- what you lose is the
+    harness's interactive flags, not the terminal."""
     ticket_q, result_q = shlex.quote(str(ticket)), shlex.quote(str(result_file))
     work = f"Work ticket {tid}. Read {ticket_q} first. When finished write {result_q}"
     inline = (shlex.quote(prompt.read_text() + "\n\n" + work)
               if hcfg.get("prompt_mode", "system") == "inline" else "")
-    return hcfg["cmd"].format(
+    return (hcfg.get(key) or hcfg["cmd"]).format(
         model=cfg.get("model", "sonnet"),
         effort_flag=(hcfg.get("effort_flag", "").format(effort=cfg["effort"])
                      if cfg.get("effort") else ""),

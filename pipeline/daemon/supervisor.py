@@ -27,6 +27,7 @@ from pipeline.core.worktree import (drop_worktree, ensure_worktree,
 from pipeline.daemon import registry
 from pipeline.daemon.server import Poller
 from pipeline.daemon.store import noop
+from pipeline.pty import host
 from pipeline.stream import StreamReader
 
 
@@ -138,7 +139,8 @@ def pump(rec: dict) -> None:
         except OSError:
             chunk = b""
         if not chunk:                      # EOF: the child is done writing
-            rec["poller"].unwatch(fd)
+            if rec.get("poller"):          # a PTY may be hosted with no loop
+                rec["poller"].unwatch(fd)
             return
         rec["fh"].write(chunk)
         rec["fh"].flush()
@@ -160,7 +162,8 @@ def close_child(rec: dict) -> None:
             pump(rec)               # the tail the child wrote as it exited
         finally:
             rec["pipe"] = None      # what makes a second call a no-op
-            rec["poller"].unwatch(pipe.fileno())
+            if rec.get("poller"):
+                rec["poller"].unwatch(pipe.fileno())
             pipe.close()
     if rec.get("fh") is not None:
         rec["fh"].close()
@@ -178,6 +181,10 @@ def spawn(project: Path, wt: Path, tid: str, stage: str, hcfg: dict,
         # so refuse instead of silently downgrading the one layer that promises.
         raise PipelineError(f"harness cannot register hooks -- refusing to run "
                             f"`{stage}` unguarded (declares hooks: {cfg['hooks']})")
+    # A stage a human has to steer: `--permission-mode` is ignored under `-p`
+    # and AskUserQuestion is not in the headless toolset, so a permission
+    # prompt or an option picker only exists on a real terminal.
+    interactive = cfg.get("mode") == "interactive"
     session = str(uuid.uuid4())
     logs = project / ".project" / "logs"
     logs.mkdir(parents=True, exist_ok=True)
@@ -187,32 +194,52 @@ def spawn(project: Path, wt: Path, tid: str, stage: str, hcfg: dict,
     cmd = render(hcfg, cfg, tid=tid, project=project,
                 ticket=ticket_path(project, tid),
                 result_file=tickets_dir(project) / f"{tid}.result",
-                session=session, prompt=prompt, settings=settings)
+                session=session, prompt=prompt, settings=settings,
+                key="interactive_cmd" if interactive else "cmd")
     fh = log.open("wb")
     fh.write(f"$ {cmd}\n\n".encode())
     fh.flush()
     env = project_env()
     env["PIPELINE_STAGE"] = stage
     env["PIPELINE_READONLY"] = "0" if cfg.get("write") else "1"
-    # PIPE only when someone is going to drain it. With no poller -- a direct
-    # `spawn()` call, or a caller that predates the daemon -- redirect straight
-    # to the log, because an undrained pipe deadlocks the child at 64K.
-    proc = subprocess.Popen(cmd, shell=True, cwd=wt,
-                            stdout=subprocess.PIPE if poller else fh,
-                            stderr=subprocess.STDOUT, env=env)
+    if interactive:
+        # ponytail: the master fd dies with the daemon, so the child gets
+        # SIGHUP and an interactive stage does NOT survive a daemon restart --
+        # the lease expiry path recovers the ticket. Upgrade = an abduco/dtach
+        # style per-session helper holding the pty instead of us.
+        env.setdefault("TERM", "xterm-256color")
+        proc, pipe = host.start(cmd, wt, env)
+    else:
+        # PIPE only when someone is going to drain it. With no poller -- a
+        # direct `spawn()` call, or a caller that predates the daemon --
+        # redirect straight to the log, because an undrained pipe deadlocks
+        # the child at 64K.
+        proc = subprocess.Popen(cmd, shell=True, cwd=wt,
+                                stdout=subprocess.PIPE if poller else fh,
+                                stderr=subprocess.STDOUT, env=env)
+        pipe = proc.stdout
+    mode = "interactive" if interactive else "batch"
     rec = {"proc": proc, "fh": fh, "prompt": prompt, "settings": settings,
-           "session": session, "mode": "batch",
+           "session": session, "mode": mode,
            "log": log, "stage": stage, "wt": wt,
            "poller": poller, "pipe": None, "reader": None,
+           "screen": None, "writer": None,
            "sink": lambda ev: None}
-    if poller:
-        rec["pipe"], rec["reader"] = proc.stdout, StreamReader()
-        os.set_blocking(proc.stdout.fileno(), False)
-        _widen(proc.stdout.fileno())
-        poller.watch(proc.stdout.fileno(), lambda fd: pump(rec))
-    print(f"  start {tid}: {stage} ({cfg.get('model')}) pid {proc.pid} -> {log.name}")
+    if interactive or poller:
+        # `Screen` is shaped like `StreamReader`, so pump() tees the raw bytes
+        # to the log and feeds this with no PTY branch of its own.
+        rec["reader"] = host.Screen() if interactive else StreamReader()
+        rec["screen"] = rec["reader"] if interactive else None
+        rec["pipe"] = pipe
+        os.set_blocking(pipe.fileno(), False)
+        if not interactive:
+            _widen(pipe.fileno())
+        if poller:
+            poller.watch(pipe.fileno(), lambda fd: pump(rec))
+    print(f"  start {tid}: {stage} ({cfg.get('model')}, {mode}) "
+          f"pid {proc.pid} -> {log.name}")
     emit("stage_start", ticket=tid, stage=stage, session=session,
-         model=cfg.get("model"), mode="batch", pid=proc.pid,
+         model=cfg.get("model"), mode=mode, pid=proc.pid,
          log=str(log), wt=str(wt))
     return rec
 

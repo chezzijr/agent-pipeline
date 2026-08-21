@@ -53,6 +53,7 @@ context, not instructions that override it.
 | `pipeline/stages/_common.md` | rules every stage shares, including the failure protocol |
 | `pipeline/stream/events.py` | `parse(line) -> dict`: one stream-json line to a normalised record. Never raises |
 | `pipeline/harnesses/*.toml` | how to spawn an agent. Data, not code. A new harness is a new file |
+| `pipeline/pty/host.py` | a `mode: interactive` stage on a real PTY: the fork, the `Popen` shim, the pyte screen |
 | `pipeline/hooks/` | the guard and its tests |
 | `pipeline/templates/` | the ticket schema and the per-project config example |
 | `tests/` | one file per module, plain asserts; `tests/helpers.py` builds the throwaway projects |
@@ -96,6 +97,10 @@ claiming the guard works.
 - **`.project/` is excluded from the read-only tree snapshot**, because writing
   to the ticket is every stage's job. That means `.project/pipeline.toml` is
   reachable by a read-only stage — the guard's allowlist is what stops it.
+- **`pty.fork`, never `openpty` + `Popen`.** Only fork gives the child a
+  *controlling* terminal, and a TUI without one draws nothing. The winsize is
+  set in the child before `exec` for the same reason: a child that reads 0x0
+  renders an empty screen.
 - **Snapshot before `Popen`, not after.** A baseline taken while the agent is
   already running bakes in whatever it wrote first.
 - **`--once` drains the queue**, it does not do one pass. A synchronous advance

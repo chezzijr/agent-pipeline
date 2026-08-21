@@ -1,5 +1,6 @@
 ---
 model: opus
+mode: interactive
 write: true
 max_usd: 5
 hooks: [dangerous-commands]
