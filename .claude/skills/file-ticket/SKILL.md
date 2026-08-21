@@ -135,7 +135,6 @@ failure. Read the line it prints, not the exit code.
   so it runs headless and finishes on its own. Unattended = `pipeline run`.
 - Whichever you use, the main checkout has to be sitting on the base branch, or
   `merging` refuses to land the ticket and escalates it with the work already done.
-  the queue in the foreground and watch it
 
 Then tell the user what to expect and how to watch:
 
