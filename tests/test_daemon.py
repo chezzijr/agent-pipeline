@@ -13,6 +13,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import types
 from pathlib import Path
 
 from helpers import ROOT, project
@@ -488,3 +489,151 @@ def test_a_too_long_socket_path_says_so_instead_of_raising_oserror():
     finally:
         store.close()
         shutil.rmtree(d, ignore_errors=True)
+
+
+# --------------------------------------------------------------------------
+# integration: the seams between 011, 012 and 013
+# --------------------------------------------------------------------------
+def _pump_fixture(sink) -> None:
+    """Drive the real `pump()` over the stream fixture on a real pipe, with a
+    spawn-shaped record. Not `reader.feed()` directly: the sink is only
+    reachable through `pump`, which is the code path that was empty."""
+    tmp = Path(tempfile.mkdtemp())
+    r, w = os.pipe()
+    os.write(w, (ROOT / "tests/fixtures/stream-planning.ndjson").read_bytes())
+    os.close(w)
+    os.set_blocking(r, False)
+    rec = {"proc": None, "fh": (tmp / "x.log").open("wb"), "log": tmp / "x.log",
+           "poller": None, "pipe": os.fdopen(r, "rb", 0),
+           "reader": StreamReader(), "sink": sink}
+    supervisor.pump(rec)
+    supervisor.close_child(rec)
+
+
+def test_parsed_stream_events_reach_the_event_log():
+    """TICKET-012 parses stream-json, TICKET-011 stores events, and nothing
+    connected them: `rec["sink"]` dropped every record, so `result` and
+    `hook_response` never landed and metrics views 3 and 5 read "no data"
+    against a live system."""
+    tmp = Path(tempfile.mkdtemp())
+    s = store(tmp)
+    _pump_fixture(supervisor.event_sink("TICKET-001", "planning", "sess-1",
+                                        s.emitter("/p")))
+    rows = s.since(0)
+    kinds = [r["kind"] for r in rows]
+    assert "result" in kinds and "hook_response" in kinds, kinds
+    assert "other" not in kinds, "an unparseable line must not become a row"
+
+    hook = [r for r in rows if r["kind"] == "hook_response"][0]
+    # the guard biting: the one event a human actually wants to watch live
+    assert hook["data"]["exit_code"] == 2, hook
+    assert "guard" in hook["data"]["stderr"], hook
+    assert (hook["ticket"], hook["stage"], hook["session"]) == \
+        ("TICKET-001", "planning", "sess-1"), hook
+    assert [r for r in rows if r["kind"] == "result"][0]["data"]["total_cost_usd"] \
+        == 0.3412
+
+    # an emit that raises is history lost, never a stranded lease
+    def boom(kind, **kw):
+        raise sqlite3.OperationalError("disk I/O error")
+    _pump_fixture(supervisor.event_sink("TICKET-001", "planning", "s", boom))
+    s.close()
+
+
+def test_spawn_wires_the_sink_to_the_store():
+    """The gap was in `spawn()`, not in the sink: a record whose `sink` still
+    defaults to dropping stores nothing however good the sink is."""
+    from pipeline.core.config import harness
+    d = project()
+    s = store(Path(tempfile.mkdtemp()))
+    rec = supervisor.spawn(d, d, "TICKET-001", "review", harness("fake"),
+                           None, s.emitter(str(d)))
+    rec["proc"].wait()
+    supervisor.close_child(rec)
+    rec["sink"]({"kind": "result", "total_cost_usd": 1.5})
+    rec["sink"]({"kind": "other", "raw_type": None})
+    got = [r for r in s.since(0) if r["kind"] == "result"]
+    assert len(got) == 1 and got[0]["data"]["total_cost_usd"] == 1.5, s.since(0)
+    assert got[0]["stage"] == "review" and got[0]["session"] == rec["session"]
+    s.close()
+    shutil.rmtree(d, ignore_errors=True)
+
+
+TRANSCRIPT = """\
+{"type":"assistant","message":{"model":"claude-opus-4-5","usage":{"input_tokens":10,\
+"output_tokens":2,"cache_read_input_tokens":100,"cache_creation_input_tokens":7}}}
+{"type":"user","message":{"role":"user","content":"no usage here"}}
+{"type":"assistant","message":{"model":"claude-opus-4-5","usage":{"input_tokens":20,\
+"output_tokens":3}}}
+{"type":"assistant","message":{"model":"claude-haiku-4-5","usage":{"input_tokens":1,\
+"output_tokens":1}}}
+not json at all
+"""
+
+
+def _with_home(home: Path, fn):
+    old = os.environ.get("HOME")
+    os.environ["HOME"] = str(home)
+    try:
+        return fn()
+    finally:
+        os.environ["HOME"] = old or ""
+
+
+def test_a_pty_stage_bills_from_its_session_transcript():
+    """An interactive stage never gets a `result` event, so its cost is not in
+    the stream at all. The transcript has no cost key at any depth either --
+    but every assistant line has `message.model` and `message.usage`, and the
+    file is found by globbing the session uuid rather than reimplementing the
+    cwd-to-slug rule."""
+    home = Path(tempfile.mkdtemp())
+    sess = "6f1c0a2e-1111-4c5f-9a3d-0b2e4d6f8a10"
+    # a worktree slug with the dots and `.worktrees` that make the rule
+    # not worth reimplementing
+    d = home / ".claude/projects/-home-u-proj-worktrees-t-001-v1.2"
+    d.mkdir(parents=True)
+    (d / f"{sess}.jsonl").write_text(TRANSCRIPT)
+
+    got = {u["model"]: u for u in _with_home(home,
+                                             lambda: supervisor.usage_events(sess))}
+    assert got["claude-opus-4-5"] == {
+        "model": "claude-opus-4-5", "input_tokens": 30, "output_tokens": 5,
+        "cache_read": 100, "cache_creation": 7}, got
+    assert got["claude-haiku-4-5"]["input_tokens"] == 1, got
+    # a stage that died before writing one is not an error
+    assert _with_home(home, lambda: supervisor.usage_events("no-such-session")) == []
+
+
+def test_finish_emits_usage_for_an_interactive_stage_only():
+    """The wiring, not the parser: `finish()` is where a PTY stage's cost has
+    to be billed, because nothing else knows the stage is over."""
+    home = Path(tempfile.mkdtemp())
+    sess = "6f1c0a2e-1111-4c5f-9a3d-0b2e4d6f8a10"
+    d = home / ".claude/projects/-p"
+    d.mkdir(parents=True)
+    (d / f"{sess}.jsonl").write_text(TRANSCRIPT)
+
+    def run(mode):
+        proj = project()
+        s = store(Path(tempfile.mkdtemp()))
+        path = proj / ".project/tickets/TICKET-001.md"
+        log = proj / "x.log"
+        rec = {"proc": types.SimpleNamespace(returncode=0, pid=1),
+               "fh": log.open("wb"), "log": log, "poller": None, "pipe": None,
+               "reader": None, "sink": lambda ev: None, "prompt": None,
+               "settings": None, "path": path, "tid": "TICKET-001",
+               "stage": "planning", "session": sess, "wt": proj,
+               "meta": Ticket.load(path), "before": None, "mode": mode}
+        supervisor.finish(proj, rec, s.emitter(str(proj)))
+        out = [r for r in s.since(0) if r["kind"] == "usage"]
+        s.close()
+        shutil.rmtree(proj, ignore_errors=True)
+        return out
+
+    got = _with_home(home, lambda: run("interactive"))
+    assert {u["data"]["model"] for u in got} == {"claude-opus-4-5",
+                                                "claude-haiku-4-5"}, got
+    assert got[0]["ticket"] == "TICKET-001" and got[0]["stage"] == "planning"
+    # a headless stage's `result` event is authoritative -- billing it twice
+    # from the transcript as well would double every merged ticket's cost
+    assert _with_home(home, lambda: run("batch")) == []

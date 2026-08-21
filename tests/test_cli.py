@@ -1,5 +1,8 @@
 """The CLI as a human runs it: a real process, not an in-process call."""
+import json
+import os
 import shutil
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -9,10 +12,10 @@ from helpers import ROOT
 from pipeline.core.ticket import Ticket
 
 
-def cli(project, *args):
+def cli(project, *args, env=None):
     return subprocess.run([sys.executable, "-m", "pipeline",
                            "--project", str(project), *args],
-                          cwd=ROOT, capture_output=True, text=True)
+                          cwd=ROOT, capture_output=True, text=True, env=env)
 
 
 def test_resume_refuses_a_stage_that_does_not_exist():
@@ -100,3 +103,59 @@ def test_logs_pretty_prints_a_stream_json_log():
     assert "exit=2" in r.stdout and "== success $0.3412" in r.stdout, r.stdout
     assert cli(d, "logs", "TICKET-002").returncode != 0   # no log, no guessing
     shutil.rmtree(d)
+
+
+def test_a_human_gate_records_the_moment_the_human_acted():
+    """View 6 measures time parked in a human gate: entering it is a
+    `transition` event, and leaving it was "the next transition on that
+    ticket" -- which, with nothing emitted here, was the *following stage's*
+    transition. Every parked span therefore carried a whole stage's run time
+    on top of the human's actual wait.
+
+    These commands run in this process, not the daemon's, so they open the
+    store themselves.
+    """
+    d = Path(tempfile.mkdtemp())
+    state = Path(tempfile.mkdtemp())
+    env = {**os.environ, "XDG_STATE_HOME": str(state)}
+    cli(d, "new", "t", env=env)
+    cli(d, "resume", "TICKET-001", "--stage", "awaiting-approval", env=env)
+    r = cli(d, "approve", "TICKET-001", env=env)
+    assert r.returncode == 0, r.stderr
+
+    db = state / "pipeline" / "events.db"
+    assert db.is_file(), f"no event log at {db}: {r.stdout} {r.stderr}"
+    conn = sqlite3.connect(db)
+    rows = [(t, s, k, json.loads(dat)) for t, s, k, dat in conn.execute(
+        "SELECT ticket, stage, kind, data FROM events")]
+    conn.close()
+    assert rows, "approve emitted nothing at all"
+    tid, stage, kind, data = rows[-1]
+    assert (tid, stage, kind) == ("TICKET-001", "awaiting-approval",
+                                 "transition"), rows
+    assert data["from"] == "awaiting-approval" and data["to"] == "revalidating", data
+    assert data["result"] == "approved", data
+    shutil.rmtree(d)
+    shutil.rmtree(state)
+
+
+def test_answer_and_reject_record_too():
+    """One command emitting and the other two not is the same bug with a
+    smaller blast radius."""
+    d = Path(tempfile.mkdtemp())
+    state = Path(tempfile.mkdtemp())
+    env = {**os.environ, "XDG_STATE_HOME": str(state)}
+    cli(d, "new", "t", env=env)
+    cli(d, "resume", "TICKET-001", "--stage", "needs-input", env=env)
+    assert cli(d, "answer", "TICKET-001", "use the cache", env=env).returncode == 0
+    cli(d, "resume", "TICKET-001", "--stage", "awaiting-approval", env=env)
+    assert cli(d, "reject", "TICKET-001", "wrong layer", env=env).returncode == 0
+
+    conn = sqlite3.connect(state / "pipeline" / "events.db")
+    got = [(s, json.loads(dat)["to"], json.loads(dat)["result"]) for s, dat
+           in conn.execute("SELECT stage, data FROM events WHERE kind='transition'")]
+    conn.close()
+    assert got == [("needs-input", "planning", "answered"),
+                   ("awaiting-approval", "planning", "rejected")], got
+    shutil.rmtree(d)
+    shutil.rmtree(state)

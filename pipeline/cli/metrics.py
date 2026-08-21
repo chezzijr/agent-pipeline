@@ -269,12 +269,12 @@ def gate_failure_reasons(conn: sqlite3.Connection, since: float = 0.0,
 
 
 # -- view 5: guard blocks by rule --------------------------------------------
-# Needs `hook_response` events in the log. Nothing in this codebase writes
-# one today -- `rec["sink"]` (supervisor.py) is a no-op, so the stream parser
-# TICKET-012 built is never wired to `store.emit()`. That is a structural
-# absence, not "zero blocks happened", so this returns `None` -- a sentinel
-# `render()`/`--json` both turn into a truthful "no data" rather than an
-# empty table that reads as a clean guard.
+# Needs `hook_response` events in the log, which `supervisor.event_sink()`
+# writes for every headless stage. A log with none at all has never seen a
+# stream event -- an interactive-only or pre-wiring database -- which is a
+# structural absence rather than "zero blocks happened", so this returns
+# `None`: a sentinel `render()`/`--json` both turn into a truthful "no data"
+# rather than an empty table that reads as a clean guard.
 def guard_blocks(conn: sqlite3.Connection, since: float = 0.0,
                  project: str | None = None) -> list[dict] | None:
     any_hook_events = conn.execute(
@@ -430,8 +430,8 @@ def render(data: dict) -> str:
     out.append("guard blocks:")
     gb = data["guard_blocks"]
     if gb is None:
-        out.append("  no data -- needs stream events (nothing emits `hook_response` "
-                  "into the event log yet)")
+        out.append("  no data -- no stream events in this log at all "
+                  "(an interactive-only run emits none)")
     elif not gb:
         out.append("  none in this window")
     else:

@@ -133,7 +133,7 @@ def test_metrics_views_over_a_canned_event_log():
         data = metrics.collect(conn)
         text = metrics.render(data)
         assert "planning" in text
-        assert "no data -- needs stream events" in text
+        assert "no data -- no stream events in this log at all" in text
         assert "$2.25" in text
     finally:
         conn.close()

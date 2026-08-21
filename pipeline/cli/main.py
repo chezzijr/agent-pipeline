@@ -70,6 +70,31 @@ def cmd_gate(args) -> None:
     sys.exit(0 if ok else 1)
 
 
+def record(project: Path, t: Ticket, frm: str, result: str) -> None:
+    """A human gate is left in THIS process, not the daemon's.
+
+    With nothing emitted here, "time parked in a human gate" (metrics view 6)
+    closed each span at the *next* transition on the ticket -- which is the
+    following stage's, so every span carried a whole agent run on top of the
+    human's actual wait. `transition` with the same shape `advance()` emits is
+    the whole fix; the vocabulary already has it.
+
+    Observability, so it never fails the command that did the real work: the
+    ticket file is the source of truth and it is already saved.
+    """
+    try:
+        store = Store()
+        try:
+            store.emit(str(project), "transition", ticket=t.id, stage=frm,
+                       **{"from": frm, "to": t.stage, "result": result,
+                          "counters": t.counters})
+        finally:
+            store.close()
+    except Exception as e:
+        print(f"note: not recorded in the event log "
+              f"({e.__class__.__name__}: {e})", file=sys.stderr)
+
+
 def cmd_approve(args) -> None:
     project = proj(args)
     t = Ticket.find(project, args.id)
@@ -84,6 +109,7 @@ def cmd_approve(args) -> None:
     t.append("human", "approval", f"**approved by {t.extra['approved_by']}**",
              by=t.extra["approved_by"])
     t.save()
+    record(project, t, "awaiting-approval", "approved")
     print(f"{args.id}: -> revalidating")
 
 
@@ -109,6 +135,7 @@ def cmd_reject(args) -> None:
     t.stage = "planning"
     t.append("human", "rejection", args.reason)
     t.save()
+    record(project, t, "awaiting-approval", "rejected")
     print(f"{args.id}: -> planning")
 
 
@@ -121,6 +148,7 @@ def cmd_answer(args) -> None:
     t.append("human", "answer",
              f"**answer from {os.environ.get('USER', 'human')}**\n\n{args.text}")
     t.save()
+    record(project, t, "needs-input", "answered")
     print(f"{args.id}: -> planning")
 
 
