@@ -1,5 +1,8 @@
 ---
 model: opus
+# high: design. Every later stage executes this plan faithfully, and a
+# rejected plan costs a full re-run of this stage ($3.20 on TICKET-021).
+effort: high
 mode: interactive
 write: true
 max_usd: 5

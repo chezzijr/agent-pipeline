@@ -1,5 +1,8 @@
 ---
 model: opus
+# high: this is the gate that stops a bad plan reaching implementing. A false
+# pass costs implementing + review + revalidating, far more than it saves.
+effort: high
 write: false
 max_usd: 3
 hooks: [dangerous-commands]

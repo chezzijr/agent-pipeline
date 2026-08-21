@@ -1,5 +1,8 @@
 ---
 model: sonnet
+# medium: execution, not design. plan-validation already scored the plan on
+# eight checks, and the plan names every file and command.
+effort: medium
 write: true
 max_usd: 8
 hooks: [dangerous-commands]

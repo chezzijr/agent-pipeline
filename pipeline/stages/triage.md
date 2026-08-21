@@ -1,5 +1,7 @@
 ---
 model: opus
+# low: reproduce one named failure and run one command. Already declared;
+# this adds the reason the other five now carry.
 effort: low
 write: true
 max_usd: 3
