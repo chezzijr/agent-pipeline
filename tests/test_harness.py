@@ -214,3 +214,36 @@ def test_a_stage_does_not_inherit_the_developers_mcp_servers():
     for key in ("cmd", "interactive_cmd"):
         assert "--strict-mcp-config" in hcfg[key], \
             f"claude-code {key} lets ~/.claude MCP servers into the session"
+
+
+def test_a_harness_edit_mid_run_reaches_the_next_spawn():
+    """TICKET-028: `run()` reads the harness once, before its loop, so every
+    spawn for the life of the process reuses that dict. A stage prompt is
+    re-read per spawn; the harness must not be the odd file out."""
+    import shutil
+    import tempfile
+
+    from helpers import project
+    tmp = Path(tempfile.mkdtemp())
+    shutil.copy(config.HARNESSES_DIR / "fake.toml", tmp / "fake.toml")
+    d = project()
+    seen, orig_dir, orig_tick = [], config.HARNESSES_DIR, supervisor.tick
+
+    def fake_tick(proj, hcfg, *a, **kw):
+        seen.append(hcfg)
+        if len(seen) == 1:      # a harness change lands between two ticks
+            p = tmp / "fake.toml"
+            p.write_text(p.read_text() + '\nmarker = "TICKET-028"\n')
+            return True         # worked -- --once keeps draining
+        return False
+
+    config.HARNESSES_DIR = tmp
+    supervisor.tick = fake_tick
+    try:
+        supervisor.run(d, once=True, interval=0, harness_name="fake")
+    finally:
+        supervisor.tick, config.HARNESSES_DIR = orig_tick, orig_dir
+
+    assert len(seen) == 2, f"expected two ticks, got {len(seen)}"
+    assert seen[1].get("marker") == "TICKET-028", \
+        "dispatcher spawned with a stale harness: the edit never reached tick 2"
