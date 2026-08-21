@@ -20,6 +20,7 @@ import shlex
 import socket
 import subprocess
 import sys
+import time
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from types import SimpleNamespace
@@ -130,12 +131,23 @@ class PipelineApp(App):
         self.keys_out = b""           # keystrokes the daemon has not taken yet
         self.keys_flight = None       # (request id, chunk) currently with it
 
+    def notify(self, message: str, **kw) -> None:
+        """Everything this app notifies with is text it did not write -- an
+        exception string, a daemon error, a path with brackets in it. Rich
+        markup is the wrong reading of all of them, and a bad one raises."""
+        kw.setdefault("markup", False)
+        super().notify(str(message), **kw)
+
     def compose(self) -> ComposeResult:
         with Horizontal():
             yield Tree("pipelines", id="tree")
             with Vertical():
                 yield RichLog(id="log", wrap=True, max_lines=2000)
-                yield Static(id="pty")
+                # markup=False: `Static` renders Rich markup by default and
+                # this pane is fed raw terminal output. One bracketed path on
+                # the attached screen (`ls [/home/x]`) raises MarkupError
+                # inside the frame handler and takes the pane down.
+                yield Static(id="pty", markup=False)
         yield Static("", id="status")
         yield Footer()
 
@@ -496,6 +508,24 @@ class PipelineApp(App):
         p = self.selected[0] if self.selected else (self.projects or ["."])[0]
         self._sh(f"{self._pipeline(p)} metrics 2>&1 | less -R")
 
+    def _stopped(self, key: tuple[str, str], tries: int = 20) -> bool:
+        """Has the stage actually stopped? `kill` is a SIGTERM, not a join.
+
+        The daemon reaps on its next tick and `_finish` then writes the ticket
+        from its PRE-SPAWN snapshot -- over whatever the human saved in the
+        meantime, silently, last writer wins. `running` goes false when the
+        daemon has dropped the record, which is after that write.
+        """
+        # ponytail: a 5s blocking poll on the UI thread, like the three keys
+        # that suspend the app. Upgrade = an async worker, if anyone ever
+        # notices the pause.
+        for _ in range(tries):
+            self.refresh_tree()
+            if not self.rows.get(key, {}).get("running"):
+                return True
+            time.sleep(0.25)
+        return False
+
     def action_edit(self) -> None:
         """Interrupt the stage, then open the editor.
 
@@ -503,12 +533,19 @@ class PipelineApp(App):
         stage. A human editing one mid-run would trip that, so the stage is
         stopped first -- which narrows tamper detection back to the case it
         exists for: an *agent* rewriting its own control fields.
+
+        "Stopped" means reaped, not signalled: opening the editor on a ticket
+        the daemon is still going to rewrite loses one of the two edits with
+        no sign of which.
         """
         key = self._target()
         if key is None:
             return
         if self.rows.get(key, {}).get("running"):
             self._kill(key)
+            if not self._stopped(key):
+                return self.notify("the stage has not stopped yet -- the daemon "
+                                   "would overwrite your edit. Try again.")
         self._sh(f"{os.environ.get('EDITOR') or os.environ.get('VISUAL') or 'vi'} "
                  f"{shlex.quote(str(ticket_path(Path(key[0]), key[1])))}")
         self.refresh_tree()

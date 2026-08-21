@@ -102,6 +102,21 @@ claiming the guard works.
   *controlling* terminal, and a TUI without one draws nothing. The winsize is
   set in the child before `exec` for the same reason: a child that reads 0x0
   renders an empty screen.
+- **An interactive stage is only interactive if something can attach.**
+  `spawn()` asks `poller.attachable` -- `Server` sets it, the bare `Poller`
+  `pipeline run` builds does not. Gating on `poller is not None` was wrong:
+  `run()` passes one, and the stage parked at a REPL nobody could reach.
+- **A REPL does not exit when the agent writes `.result`.** `finish()` fires on
+  `proc.poll()`, so `end_interactive()` SIGTERMs an interactive child once its
+  sidecar appears. Without it the lease expires twice and the ticket escalates
+  with its work already done.
+- **`lease.expires` is hostile input like every other field.** Unquoted, YAML
+  parses it as a `datetime`, not a `str`. `lease_expiry()` is total and
+  `validate_meta()` escalates what it cannot read -- `lease_active()` runs in
+  `ls`, before anything has validated anything.
+- **Only one merge runs at a time.** Two tickets merging in one tick both
+  `git merge base`, and the first fast-forward moves base under the second.
+  `start()` waits, exactly like `files_conflict` does.
 - **Snapshot before `Popen`, not after.** A baseline taken while the agent is
   already running bakes in whatever it wrote first.
 - **`--once` drains the queue**, it does not do one pass. A synchronous advance
@@ -113,9 +128,12 @@ claiming the guard works.
 
 ## Conventions
 
-- Stdlib first. Two runtime dependencies: PyYAML, and `textual` for
-  `pipeline tui` -- imported inside `cmd_tui`, so nothing else pays for it.
-  Adding a third needs a reason a few lines of stdlib cannot cover.
+- Stdlib first. Three runtime dependencies, and that is the budget: PyYAML;
+  `pyte`, for the screen an interactive stage is attached to, imported
+  *eagerly* (`cli/main.py` -> `daemon/supervisor.py` -> `pty/host.py`) because
+  the supervisor hosts the PTY; and `textual` for `pipeline tui`, imported
+  inside `cmd_tui` so nothing else pays for it. Adding a fourth needs a reason
+  a few lines of stdlib cannot cover.
 - Non-trivial logic leaves one runnable check behind. Both suites are plain
   asserts — no fixtures, no frameworks.
 - A test must fail when the code breaks. Two tests in this repo once passed

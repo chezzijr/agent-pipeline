@@ -35,8 +35,13 @@ MAX_SUBS = 8     # subscriptions per connection
 OPS = ("ping", "ls", "projects", "subscribe", "kill",
        "attach", "input", "resize", "detach")
 MAX_DIM = 1000   # a terminal, not a memory allocator: pyte allocates rows*cols
-PTY_BACKLOG = 16  # queued pty frames per client. OUTBOX was sized for small
-                  # event objects; a pty frame is a 64 KiB read, base64'd
+PTY_BACKLOG = 16  # outbox depth past which PTY frames are the ones dropped.
+                  # NOT a pty-only queue: `conn.out` is shared with event and
+                  # replay frames, and the pty is what yields, because OUTBOX
+                  # was sized for small event objects while a pty frame is a
+                  # 64 KiB read, base64'd. Our pyte screen is authoritative,
+                  # so a dropped frame costs one re-attach; a dropped event is
+                  # gone.
 PTY_INPUT = 4096  # one write into a pty's input buffer. Larger short-writes,
                   # and a silently truncated paste into an approval prompt is
                   # worse than an error the client can chunk around
@@ -88,26 +93,32 @@ def ticket_rows(project: Path, inflight: dict | None = None) -> list[dict]:
     for path in all_tickets(project):
         try:
             t = Ticket.load(path)
-        except PipelineError as e:
+            rec = inflight.get(t.id)
+            summary = t.section("Summary").strip().splitlines()
+            leased = t.lease_active()   # NOT `lease.expires`: release_lease()
+                                        # nulls it, an expiry does not, so a
+                                        # dead lease still has one and would
+                                        # read as held
+            out.append({
+                "project": str(project), "id": t.id, "stage": t.stage,
+                "class": t.klass, "counters": t.counters, "lease": t.lease,
+                "running": rec is not None, "leased": leased,
+                "stale": (t.stage not in TERMINAL | HUMAN_GATES and not leased
+                          and now() - datetime.fromtimestamp(path.stat().st_mtime,
+                                                             timezone.utc)
+                          > timedelta(hours=STALE_HOURS)),
+                "last_session": t.extra.get("last_session"),
+                "mode": (rec or {}).get("mode", "batch"),
+                "title": summary[0] if summary else ""})
+        except Exception as e:
+            # Exception, not PipelineError, and around the WHOLE row: `_op_ls`
+            # answers for every project at once, so anything one ticket raises
+            # -- frontmatter nobody can parse, a lease nobody can read, a file
+            # deleted mid-listing -- would otherwise blank the listing for all
+            # of them, and `cmd_ls`'s file fallback would re-raise past the
+            # CLI's handler. The row says so instead.
             out.append({"project": str(project), "id": path.stem,
                         "stage": "unreadable", "error": str(e)})
-            continue
-        rec = inflight.get(t.id)
-        summary = t.section("Summary").strip().splitlines()
-        leased = t.lease_active()   # NOT `lease.expires`: release_lease() nulls
-                                    # it, an expiry does not, so a dead lease
-                                    # still has one and would read as held
-        out.append({
-            "project": str(project), "id": t.id, "stage": t.stage,
-            "class": t.klass, "counters": t.counters, "lease": t.lease,
-            "running": rec is not None, "leased": leased,
-            "stale": (t.stage not in TERMINAL | HUMAN_GATES and not leased
-                      and now() - datetime.fromtimestamp(path.stat().st_mtime,
-                                                         timezone.utc)
-                      > timedelta(hours=STALE_HOURS)),
-            "last_session": t.extra.get("last_session"),
-            "mode": (rec or {}).get("mode", "batch"),
-            "title": summary[0] if summary else ""})
     return out
 
 
@@ -115,6 +126,12 @@ class Poller:
     """`watch`/`unwatch`/`poll` over one selector. The Server is this plus a
     listening socket; `pipeline run` standalone uses the bare Poller, which is
     what keeps the child-stdout pipe drained with no daemon in sight."""
+
+    # Can a human reach a child hosted here? A bare Poller has no socket, so
+    # nothing can ever `attach` to a PTY it drains -- which is exactly the
+    # question `spawn()` has to answer before it starts a stage nobody could
+    # steer. `poller is not None` was the wrong test: `run()` passes one.
+    attachable = False
 
     def __init__(self) -> None:
         self.sel = selectors.DefaultSelector()
@@ -189,6 +206,8 @@ class Conn:
 
 
 class Server(Poller):
+    attachable = True   # there is a socket: `attach`/`input` can reach a PTY
+
     def __init__(self, store, path: Path | None = None) -> None:
         super().__init__()
         self.store = store
@@ -275,6 +294,20 @@ class Server(Poller):
         self.lock.close()
 
     # -- plumbing ----------------------------------------------------------
+    def poll(self, timeout: float) -> None:
+        """Re-arm the listener, then poll.
+
+        `_accept` steps off the listener on EMFILE/ENFILE -- a level-triggered
+        listener with no free fd is a 100% spin -- and the only other re-arm
+        is a client disconnecting. With the fds exhausted by children and no
+        client connected, nothing ever re-armed it: `status`, `tui`, `attach`
+        and `kill` stayed dead until a restart, long after the fds freed. One
+        dict lookup per pass buys the recovery.
+        """
+        if self.sock.fileno() not in self.sel.get_map():
+            self.watch(self.sock.fileno(), lambda fd: self._accept())
+        super().poll(timeout)
+
     def _accept(self) -> None:
         while True:
             try:

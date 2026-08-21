@@ -72,3 +72,33 @@ def test_data_files_live_inside_the_package_so_they_survive_install():
         assert p.exists(), p
         assert C.PKG in p.parents, f"{p} is outside {C.PKG} -> lost on install"
     assert (C.HOOKS_DIR / "dangerous-commands.py").is_file()
+
+
+def test_the_docs_name_the_dependencies_and_the_targets_the_code_has():
+    """Two rules the review caught asserting something false.
+
+    `CLAUDE.md` claimed two runtime dependencies with `textual` lazy; three are
+    declared and `pyte` is imported eagerly (`cli/main` -> `daemon/supervisor`
+    -> `pty/host`), so `pipeline approve` fails at import without it. The
+    README claimed a stale re-gate bounces to `plan-validation`; `machine.py`
+    returns `planning`, with a comment arguing why. A rule file that is wrong
+    is worse than no rule file.
+    """
+    import re
+    import tomllib
+
+    root = C.PKG.parent
+    deps = tomllib.loads((root / "pyproject.toml").read_text())["project"]["dependencies"]
+    names = [re.split(r"[<>=!~ \[]", d)[0] for d in deps]
+    claude_md = (root / "CLAUDE.md").read_text().lower()
+    for name in names:
+        assert name.lower() in claude_md, \
+            f"{name} is a runtime dependency no rule mentions"
+
+    readme = (root / "README.md").read_text()
+    target = M.transition("revalidating", "fail", {})[0]
+    assert target == "planning"
+    stale = [ln for ln in readme.splitlines() if "stale_regate" in ln]
+    assert stale, "the README stopped documenting the stale re-gate"
+    around = readme[readme.index("stale_regate") - 300:readme.index("stale_regate")]
+    assert f"`{target}`" in around, around

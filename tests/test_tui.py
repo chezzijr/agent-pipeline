@@ -314,3 +314,58 @@ def test_the_pane_stops_claiming_to_be_live_when_the_stage_ends():
             assert app.query_one("#pty").display is False
 
     asyncio.run(go())
+
+
+def test_a_bracketed_path_on_the_attached_screen_does_not_crash_the_pane():
+    """`Static` renders Rich markup by default and this pane is fed raw
+    terminal output. `ls [/home/x]` on the attached screen raised MarkupError
+    inside the frame handler -- the pane died on a perfectly ordinary line.
+    The same class of text reaches `notify()`."""
+    async def go():
+        app = PipelineApp(client=FakeClient([]))
+        async with app.run_test() as pilot:
+            app.pty_screen = Screen(4, 40)
+            app.pty_id = 1
+            app.on_frame({"sub": 1, "pty": base64.b64encode(
+                b"$ ls [/home/x] [bold]\r\n").decode()})
+            await pilot.pause()
+            assert "[/home/x]" in pty_pane(app), pty_pane(app)
+
+            app.notify("attach: TICKET-001 is not running [/tmp/p]")
+            await pilot.pause()
+            assert app.is_running
+
+    asyncio.run(go())
+
+
+def test_edit_waits_for_the_stage_to_actually_stop():
+    """`kill` is a SIGTERM, not a join: the daemon reaps on its next tick and
+    `_finish` then writes the ticket from its pre-spawn snapshot -- over
+    whatever the human saved meanwhile, silently. The docstring claimed the
+    stage was stopped first; make it so."""
+    async def go():
+        d = make_project()
+        running = row(d, "TICKET-001", "implementing", running=True)
+        fake = FakeClient([running])
+        app = PipelineApp(client=fake)
+        opened = []
+        app._sh = lambda cmd: opened.append(cmd)
+        async with app.run_test() as pilot:
+            app.query_one(Tree).focus()
+            await pilot.press("down", "down")
+            assert app.selected == (str(d), "TICKET-001")
+
+            app._stopped = lambda key, tries=20: False   # never reaped
+            await pilot.press("e")
+            await pilot.pause()
+            assert "kill" in fake.sent, fake.sent
+            assert opened == [], "the editor opened on a file the daemon owns"
+
+            # the daemon has now reaped it: the real `_stopped` sees that
+            fake.rows = [row(d, "TICKET-001", "implementing", running=False)]
+            del app._stopped
+            await pilot.press("e")
+            await pilot.pause()
+            assert len(opened) == 1, opened
+
+    asyncio.run(go())

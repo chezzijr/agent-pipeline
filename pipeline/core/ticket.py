@@ -30,6 +30,27 @@ SAFE_TEST = re.compile(r"^[A-Za-z0-9._/-]{1,200}(::[A-Za-z0-9_\[\].-]{1,100})*$"
 SAFE_FILE = re.compile(r"^[A-Za-z0-9._/-]{1,200}$")
 
 
+def lease_expiry(exp) -> datetime | None:
+    """`lease.expires` -> an aware datetime, or None if it is not a timestamp.
+
+    Total, because this field is hostile like every other one: an unquoted
+    `expires: 2026-08-21 10:00:00` is a YAML *datetime* (not a str, so
+    `fromisoformat` raised TypeError) and a naive ISO string compares against
+    an aware `now()` with another TypeError. Naive means UTC here -- the
+    dispatcher writes UTC and the only other author is a human editing the
+    file it wrote.
+    """
+    if isinstance(exp, datetime):
+        return exp if exp.tzinfo else exp.replace(tzinfo=timezone.utc)
+    if not isinstance(exp, str):
+        return None
+    try:
+        d = datetime.fromisoformat(exp)
+    except ValueError:
+        return None
+    return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+
+
 def validate_meta(meta: dict) -> list[str]:
     """Every one of these fields reaches a shell command or the state machine,
     and every one of them sits in a file an agent can write. Validate on the way
@@ -46,6 +67,19 @@ def validate_meta(meta: dict) -> list[str]:
     for f in meta.get("files_declared") or []:
         if not SAFE_FILE.match(str(f)) or ".." in str(f) or str(f).startswith("/"):
             bad.append(f"files_declared entry {f!r} is not a plain relative path")
+    # The lease decides whether a second agent is spawned onto a live stage, so
+    # a shape nobody can read is as unusable as a hostile branch name. It was
+    # the one field this function never looked at (CLAUDE.md invariant 5 named
+    # the other four), so a hand-edited one crashed `lease_active()` instead of
+    # escalating the ticket: `ls` died for every project and the tick aborted
+    # that project's whole pass, every tick, forever.
+    lease = meta.get("lease")
+    if lease is not None and not isinstance(lease, dict):
+        bad.append(f"lease {lease!r} is not a mapping")
+    elif isinstance(lease, dict):
+        exp = lease.get("expires")
+        if exp is not None and lease_expiry(exp) is None:
+            bad.append(f"lease.expires {exp!r} is not an ISO-8601 timestamp")
     return bad
 
 
@@ -415,8 +449,11 @@ class Ticket:
 
     # -- lease ------------------------------------------------------------
     def lease_active(self) -> bool:
-        exp = (self.lease or {}).get("expires")
-        return bool(exp) and now() < datetime.fromisoformat(exp)
+        """Total: an unreadable `expires` is not a lease. `validate_meta` is
+        what escalates the ticket carrying one -- this must still answer, or
+        `ls` (which runs before any validation) dies on one bad file."""
+        exp = lease_expiry((self.lease or {}).get("expires"))
+        return exp is not None and now() < exp
 
     def take_lease(self, holder: str, minutes: int = LEASE_MINUTES) -> None:
         self.lease = {"holder": holder,

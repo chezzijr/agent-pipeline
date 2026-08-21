@@ -66,7 +66,9 @@ check and `ping` returns the pid.
 
 **The daemon is an accelerator, never a dependency.** `pipeline run --project X`
 is the same supervisor minus the socket, and every client command falls back to
-reading the ticket files when nothing answers the socket. Ticket files stay the
+reading the ticket files when nothing answers the socket. It runs every stage,
+including the interactive ones -- headless, since nothing can attach to a
+supervisor with no socket (see *Interactive stages*). Ticket files stay the
 source of truth; the database holds the event log only, so `rm events.db` loses
 history and nothing else.
 
@@ -94,6 +96,19 @@ This is not a nicer view of a headless stage. Under `-p` the harness *ignores*
 `--permission-mode` and `AskUserQuestion` is not in the toolset, so a permission
 prompt and an option picker simply do not exist there. A PTY is the only mode in
 which a human can steer a stage.
+
+`mode: interactive` means "interactive when a human can reach it". `pipeline
+run` has no socket, so nothing could ever `attach`, and a REPL nobody attaches
+to would sit at its prompt until its lease expired twice -- which would make
+the daemon a dependency for every ticket that reaches `planning`. Without an
+attachable supervisor the stage runs **headless** instead, and says so on
+stdout. Nothing is lost but the steering: `planning`'s own escape hatch is
+`result: needs-input`, which parks the ticket at a human gate for
+`pipeline answer`.
+
+An interactive session also ends on its `.result` sidecar, not on `/exit`: a
+REPL does not exit when the agent reports a verdict, so the supervisor sends it
+SIGTERM once the sidecar lands and reaps it like any other child.
 
 ```
 -> {"id":7,"op":"attach","ticket":"TICKET-003"}      # "project" optional, a filter
@@ -169,9 +184,10 @@ days while other tickets land on base, so the Tier A facts behind its plan --
 suite green, the new test the only red -- describe a tree that no longer exists.
 `approve` therefore hands the ticket to `revalidating`, which rebases the branch
 onto current `base` and re-runs the gate before any implementation. A gate that
-now fails bounces back to `plan-validation` against its own counter
-(`stale_regate`), never `plan_validation_attempts`: the plan was fine, the world
-moved. A rebase conflict escalates and keeps the worktree, exactly like a merge
+now fails bounces back to `planning` against its own counter (`stale_regate`),
+never `plan_validation_attempts`: the plan was fine, the world moved -- and
+re-validating the same stale plan would rerun the identical gate and fail
+identically, so re-planning is the only thing that can fix it. A rebase conflict escalates and keeps the worktree, exactly like a merge
 conflict.
 
 Two tickets whose `files_declared` intersect never run at the same time -- the

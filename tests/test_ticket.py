@@ -279,3 +279,64 @@ def test_the_dispatcher_writes_typed_thread_entries():
         "a dispatcher write came back freeform"
     assert next(e for e in entries if e.kind == "gate").attrs["verdict"] == "PASS"
     shutil.rmtree(d)
+
+
+def test_a_lease_nobody_can_read_escalates_instead_of_crashing():
+    """`lease.expires` is the field `validate_meta` never checked. Unquoted,
+    YAML hands back a `datetime` and `fromisoformat` raised TypeError; a naive
+    ISO string raised on the comparison instead. Neither is caught anywhere:
+    `ls` died for every project, and the tick aborted that project's whole
+    pass, every tick, forever."""
+    from datetime import datetime, timedelta, timezone
+    ok = {"id": "TICKET-001", "branch": "ticket/001"}
+    assert T.validate_meta({**ok, "lease": {"holder": None, "expires": None}}) == []
+
+    for value in (datetime(2026, 8, 21, 10), "2026-08-21 10:00:00",
+                  "2026-08-21T10:00:00+00:00"):
+        # readable: a shape a human plausibly typed, and it must still answer
+        t = Ticket(path=None, id="TICKET-001", branch="ticket/001",
+                   lease={"holder": "x", "expires": value})
+        assert t.errors() == [], (value, t.errors())
+        assert isinstance(t.lease_active(), bool), value
+
+    for value in ("whenever", 17, [], "2026-13-45"):
+        t = Ticket(path=None, id="TICKET-001", branch="ticket/001",
+                   lease={"holder": "x", "expires": value})
+        assert t.errors(), f"{value!r} accepted as a lease expiry"
+        assert t.lease_active() is False, value
+    assert T.validate_meta({**ok, "lease": "held"}), "a non-mapping lease accepted"
+
+    # and the two readable shapes still mean what they say
+    soon = (T.now() + timedelta(minutes=5)).replace(tzinfo=None)
+    assert Ticket(path=None, id="TICKET-001", branch="ticket/001",
+                  lease={"holder": "x", "expires": soon.isoformat()}).lease_active()
+    assert not Ticket(path=None, id="TICKET-001", branch="ticket/001",
+                      lease={"holder": "x",
+                             "expires": datetime(2000, 1, 1, tzinfo=timezone.utc)}
+                      ).lease_active()
+
+
+def test_one_hand_edited_lease_does_not_blank_the_listing_for_every_project():
+    """`ticket_rows` runs before anything has validated anything -- `_op_ls`
+    answers for every registered project from it, and `cmd_ls` falls back to
+    it. One unreadable ticket must cost that ticket's row, not the listing."""
+    from pipeline.core.config import harness
+    from pipeline.daemon.server import ticket_rows
+    # unquoted: YAML hands back a datetime, not a str
+    d = project(FIXTURE.replace("lease: {holder: null, expires: null}",
+                                "lease: {holder: x, expires: 2026-08-21 10:00:00}"))
+    (d / ".project/tickets/TICKET-002.md").write_text(
+        FIXTURE.replace("id: TICKET-001", "id: TICKET-002"))
+    (d / ".project/tickets/TICKET-003.md").write_text(
+        FIXTURE.replace("id: TICKET-001", "id: TICKET-003")
+               .replace("lease: {holder: null, expires: null}",
+                        "lease: {holder: x, expires: whenever}"))
+
+    rows = {r["id"]: r for r in ticket_rows(d)}
+    assert set(rows) == {"TICKET-001", "TICKET-002", "TICKET-003"}, rows
+    assert rows["TICKET-002"]["stage"] == "plan-validation", rows
+
+    # and a lease nobody can read escalates the one ticket carrying it
+    supervisor.start(d, d / ".project/tickets/TICKET-003.md", harness("fake"), {})
+    assert Ticket.load(d / ".project/tickets/TICKET-003.md").stage == "escalated"
+    shutil.rmtree(d, ignore_errors=True)

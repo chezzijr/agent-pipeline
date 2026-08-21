@@ -124,6 +124,16 @@ def test_init_honours_project_like_every_other_command():
                         "init", str(other)], cwd=ROOT, capture_output=True, text=True)
     assert r.returncode == 0, r.stderr
     assert (other / ".project" / "pipeline.toml").is_file(), "positional dir ignored"
+
+    # and neither: `--project` documents "default: cwd", and `proj()` means it
+    # everywhere else. `Path(None)` raised a TypeError straight past `die()`.
+    bare = d / "bare"
+    bare.mkdir()
+    r = subprocess.run([sys.executable, "-m", "pipeline", "init"], cwd=bare,
+                       capture_output=True, text=True,
+                       env={**os.environ, "PYTHONPATH": str(ROOT)})
+    assert r.returncode == 0, r.stderr
+    assert (bare / ".project" / "pipeline.toml").is_file(), r.stdout + r.stderr
     shutil.rmtree(d, ignore_errors=True)
 
 

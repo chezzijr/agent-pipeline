@@ -14,6 +14,10 @@ import json
 
 MAX_TEXT = 4000    # the bound `run_cmd` already uses; a `git diff` result is a MB
 MAX_BUF = 8 << 20  # untrusted subprocess output is a memory boundary
+# `type` is what we dispatch on; `kind` is our normalised answer to it; the rest
+# are `Store.emit()`'s own columns. No parsed record may carry any of them out
+# of a passthrough branch -- see the `rate_limit_event` case below.
+RESERVED = ("type", "kind", "project", "ticket", "stage", "session")
 
 
 def _blocks(ev: dict) -> list:
@@ -94,8 +98,13 @@ def _norm(ev: dict) -> dict:
                 "subtype": sub}
 
     if typ == "rate_limit_event":
-        # passthrough, but `kind` is ours: a payload key must not spoof it
-        return {**{k: v for k, v in ev.items() if k != "type"}, "kind": "rate_limit"}
+        # Passthrough, because the useful fields here are the harness's to
+        # name (`remaining_fraction` today, whatever it adds tomorrow) -- but
+        # not of `RESERVED`: `kind` is ours, and the rest are the event log's
+        # own columns, which a payload key must not be able to fill. The
+        # store's writer excludes them too; both, not either.
+        return {**{k: v for k, v in ev.items() if k not in RESERVED},
+                "kind": "rate_limit"}
 
     return {"kind": "other", "raw_type": typ, "subtype": sub}
 

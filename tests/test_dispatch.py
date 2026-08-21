@@ -373,3 +373,141 @@ def test_escalate_and_advance_do_not_both_emit_for_one_ticket():
                        lambda kind, **kw: seen.append(kind))
     assert seen == ["transition", "escalated"], seen
     shutil.rmtree(d, ignore_errors=True)
+
+
+# --------------------------------------------------------------------------
+# the adversarial review's confirmed findings
+# --------------------------------------------------------------------------
+def test_a_harness_that_cannot_register_hooks_escalates_one_ticket():
+    """`spawn()` refuses a stage whose hooks a harness cannot register
+    (invariant 4). That refusal came out AFTER `take_lease()/save()`, through
+    `tick` and `run`, and `finally: shut_down` then terminated every other
+    in-flight agent: one ticket's harness mismatch killed the dispatcher.
+    Invariant 6 -- the library raises, one broken ticket does not take the
+    loop down."""
+    d, _ = git_project()
+    path = d / ".project/tickets/TICKET-001.md"
+    path.write_text(FIXTURE.replace("stage: plan-validation", "stage: implementing"))
+    assert not harness("codex").get("supports_hooks")
+    assert config.stage_config("implementing").get("hooks")
+
+    did, rec = supervisor.start(d, path, harness("codex"), {})
+
+    assert (did, rec) == (True, None), "the refusal escaped start()"
+    t = Ticket.load(path)
+    assert t.stage == "escalated", t.stage
+    assert not t.lease_active(), "escalated with the lease it took still held"
+    assert "hooks" in t.section("Thread"), t.section("Thread")
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_a_ticket_that_raises_in_start_does_not_take_the_tick_down():
+    """The general form of the same invariant: whatever `start()` raises for
+    one ticket, the other tickets in the pass still get their turn and the
+    in-flight agents keep their leases."""
+    d = project()
+    boom = []
+    real = supervisor.start
+
+    def explode(project, path, *a, **kw):
+        boom.append(path)
+        raise RuntimeError("kaboom")
+
+    supervisor.start = explode
+    try:
+        supervisor.tick(d, harness("fake"), {})
+    finally:
+        supervisor.start = real
+    assert boom, "the ticket was never tried"
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_two_tickets_never_merge_in_the_same_tick():
+    """Both would `git merge base` against the same base; the first
+    `--ff-only` to land moves base, and the second -- a fully verified,
+    non-overlapping ticket -- escalates for a merge that succeeds a tick
+    later. `transition("merging","fail")` has no retry, by design."""
+    d, sh = git_project()
+    paths = []
+    for n, files in (("001", "[f.py]"), ("002", "[g.py]")):
+        p = d / f".project/tickets/TICKET-{n}.md"
+        p.write_text(FIXTURE.replace("stage: plan-validation", "stage: merging")
+                     .replace("id: TICKET-001", f"id: TICKET-{n}")
+                     .replace("branch: ticket/001", f"branch: ticket/{n}")
+                     .replace("files_declared: [thing.py]", f"files_declared: {files}"))
+        wt = supervisor.ensure_worktree(
+            d, {"id": f"TICKET-{n}", "branch": f"ticket/{n}"}, {"base": "main"})
+        (wt / f"{n}.py").write_text("the fix\n")
+        _commit(wt, f"'commit {n}'")
+        paths.append(p)
+
+    inflight = {}
+    supervisor.tick(d, harness("fake"), inflight)
+    assert len(inflight) == 1, "two merges ran against one base"
+
+    for _ in range(6):                       # drain: one merge per tick
+        for rec in list(inflight.values()):
+            rec["proc"].wait()
+        supervisor.tick(d, harness("fake"), inflight)
+
+    stages = [Ticket.load(p).stage for p in paths]
+    assert stages == ["done", "done"], stages
+    log = sh("git log --oneline main").stdout
+    assert "commit 001" in log and "commit 002" in log, log
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_an_escalation_before_any_child_still_ends_the_stage():
+    """View 1 is `escalated / stage_end` per stage. `escalate()`'s pre-spawn
+    call sites emitted only the numerator, so one completed run plus two
+    lease-expiry escalations rendered a 200% escalation rate."""
+    d = project()
+    path = d / ".project/tickets/TICKET-001.md"
+    path.write_text(FIXTURE.replace("stage: plan-validation", "stage: implementing")
+                    .replace("counters: {}", "counters: {lease_expiries: 1}")
+                    .replace("lease: {holder: null, expires: null}",
+                             "lease: {holder: 'implementing-1', expires: '2000-01-01T00:00:00+00:00'}"))
+    s = Store(Path(tempfile.mkdtemp()) / "events.db")
+    supervisor.start(d, path, harness("fake"), {}, None, s.emitter(str(d)))
+
+    assert Ticket.load(path).stage == "escalated"
+    conn = metrics.connect(s.path)
+    try:
+        rates = {r["stage"]: r for r in metrics.escalation_rates(conn)}
+        r = rates["implementing"]
+        assert r["escalated"] == 1 and r["runs"] == 1, r
+        assert r["rate"] == 1.0, r
+    finally:
+        conn.close()
+    s.close()
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_a_child_log_that_is_not_utf8_still_advances_the_ticket():
+    """`read_text()` decodes strict utf-8 over output we did not write. One
+    stray byte from git or a test runner raised inside `finish()`, `reap()`
+    caught and printed it, and the lease was held until it expired."""
+    d, _ = git_project()
+    path = d / ".project/tickets/TICKET-001.md"
+    path.write_text(FIXTURE.replace("stage: plan-validation", "stage: verifying"))
+    (d / ".project/pipeline.toml").write_text(
+        "test_one='true'\ntest_suite='exit 1'\n"
+        "test_suite_without_new='true'\nbase='main'\n")
+
+    _, rec = supervisor.start(d, path, harness("fake"), {})
+    rec["proc"].wait()
+    # the child writes to this fd directly, so this is exactly what a test
+    # runner emitting one latin-1 byte leaves behind
+    with rec["log"].open("ab") as fh:
+        fh.write(b"E: caf\xe9 not found\n")
+    try:
+        rec["log"].read_text()
+        assert False, "the log decodes cleanly -- this test proves nothing"
+    except UnicodeDecodeError:
+        pass
+    supervisor.finish(d, rec)
+
+    t = Ticket.load(path)
+    assert t.stage == "implementing", "the verdict never reached advance()"
+    assert not t.lease_active(), "the lease outlived the child"
+    shutil.rmtree(d, ignore_errors=True)

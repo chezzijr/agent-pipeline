@@ -373,16 +373,62 @@ def test_planning_is_interactive_and_never_rendered_under_print_mode():
     assert "--append-system-prompt" in cmd and "--settings /s.json" in cmd
 
 
-def test_an_interactive_stage_refuses_to_spawn_with_nothing_draining_it():
-    """No poller means nothing reads the master: the child blocks at a full
-    buffer holding its lease, and nobody could attach to it anyway."""
-    from pipeline.core import PipelineError
+class Attachable(Poller):
+    """A poller a client could reach -- what `Server` is, without the socket."""
+    attachable = True
+
+
+def test_an_interactive_stage_runs_headless_when_nothing_can_attach():
+    """`pipeline run` builds a bare `Poller`: no socket, so no client can ever
+    `attach`, and a REPL nobody attaches to sits at its prompt until its lease
+    expires twice and the ticket escalates. Gating on `poller is not None` did
+    not see that -- `run()` passes one.
+
+    Headless is what the stage did before it grew a PTY, and `planning`'s own
+    `needs-input` result is the escape hatch that keeps the human in the loop.
+    """
+    tmp = Path(tempfile.mkdtemp())
+    plain, attachable = Poller(), Attachable()
     try:
-        supervisor.spawn(Path("/nonexistent"), Path("/nonexistent"),
-                         "TICKET-001", "planning", harness("claude-code"))
-        assert False, "spawned an interactive stage with no loop to host it"
-    except PipelineError as e:
-        assert "poller" in str(e), e
+        rec = supervisor.spawn(tmp, tmp, "TICKET-001", "planning",
+                               harness("fake"), plain)
+        assert rec["mode"] == "batch", "a stage nobody can attach to still ran a REPL"
+        assert rec["screen"] is None
+        rec["proc"].wait()
+        supervisor.close_child(rec)
+
+        rec = supervisor.spawn(tmp, tmp, "TICKET-001", "planning",
+                               harness("fake"), attachable)
+        assert rec["mode"] == "interactive", "a daemon-hosted stage lost its PTY"
+        assert rec["screen"] is not None
+    finally:
+        rec["proc"].terminate()
+        rec["proc"].wait()
+        supervisor.close_child(rec)
+        plain.close()
+        attachable.close()
+
+
+def test_an_interactive_stage_ends_when_its_result_lands():
+    """A REPL does not exit because the agent wrote its verdict, and `finish()`
+    fires on `proc.poll()`. Without this the session sat at its prompt, the
+    lease expired twice, and the ticket escalated with its plan already
+    written."""
+    tmp = Path(tempfile.mkdtemp())
+    (tmp / ".project" / "tickets").mkdir(parents=True)
+    rec = child(tmp, cmd="read x; read y; read z")
+    inflight = {"TICKET-001": rec}
+    try:
+        supervisor.end_interactive(tmp, inflight)
+        assert rec["proc"].poll() is None, "ended a session that reported nothing"
+
+        (tmp / ".project" / "tickets" / "TICKET-001.result").write_text(
+            "result: ok\nsummary: planned\n")
+        supervisor.end_interactive(tmp, inflight)
+        assert rec["proc"].wait(5) is not None, "the REPL was left holding its lease"
+    finally:
+        rec["proc"].kill()
+        rec["fh"].close()
 
 
 def test_a_harness_with_no_interactive_template_falls_back_to_its_command():

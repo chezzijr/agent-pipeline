@@ -40,7 +40,9 @@ def cmd_init(args) -> None:
     # other command takes `--project`, so accepting only the positional means
     # `pipeline --project X init` silently scaffolds the current directory
     # instead -- and says "initialised" while doing it.
-    project = Path(args.dir or args.project).resolve()
+    # ... and neither given is the documented default for `--project`: the
+    # cwd. `Path(None)` raised a bare TypeError past main()'s handler.
+    project = proj(args) if not args.dir else Path(args.dir).resolve()
     tickets_dir(project).mkdir(parents=True, exist_ok=True)
     (project / ".project" / "decisions").mkdir(exist_ok=True)
     cfg = project / ".project" / "pipeline.toml"
