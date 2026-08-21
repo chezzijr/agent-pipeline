@@ -5,8 +5,8 @@ import shutil
 from pathlib import Path
 
 from pipeline.core.config import project_config
-from pipeline.core.ticket import (Ticket, active_decisions, decisions_dir,
-                                  ticket_path)
+from pipeline.core.ticket import (Ticket, _fenced, active_decisions,
+                                  decisions_dir, ticket_path)
 from pipeline.core.worktree import base_checkout, base_ref, run_cmd
 
 # `## Thread` is deliberately absent: it starts empty on every ticket and the
@@ -202,8 +202,46 @@ def gate(project: Path, tid: str, workdir: Path | None = None) -> tuple[bool, li
     if plan.strip():
         steps: list[str] = []
         in_step = False
-        for raw in plan.splitlines():
-            line = raw.rstrip()
+        raws = plan.splitlines()
+        # `_fenced()` and not a local scan: it is what `sections()` already
+        # uses to split THIS file, so a second opinion on what counts as code
+        # would let the gate and the section splitter disagree. It carries
+        # CommonMark's rules -- `~~~` as well as backticks, a closing fence at
+        # least as long as its opener, and `^ {0,3}`, so a fence indented four
+        # spaces is not a fence at all but a continuation of the step above,
+        # which is the form PLAN_STEP_RULE tells the writer to use.
+        fenced = _fenced(raws)
+        i = 0
+        while i < len(raws):
+            line = raws[i].rstrip()
+            if fenced[i]:
+                opener = raws[i]
+                while i < len(raws) and fenced[i]:
+                    i += 1
+                # Indented under a step, at ANY depth, is the continuation form
+                # PLAN_STEP_RULE asks for -- absorb it silently. `FENCE_RE` is
+                # `^ {0,3}`, so three spaces still opens a real fence: without
+                # this branch a plan that took the rule's advice failed with a
+                # finding telling it to do what it had already done, and
+                # `plan_validation_attempts` ran out on the re-try.
+                #
+                # At column 0 it is a violation, reported ONCE for the block.
+                # Reporting per line put 262 findings in TICKET-031's thread,
+                # which every later stage reads through `stage_view()`. Never
+                # skip it SILENTLY, which was tried: a numbered step hidden in
+                # a fence reaches `implementing` -- which reads the section
+                # whole -- unchecked against `files_declared`, the declaration
+                # `files_conflict()` trusts to keep two tickets off one file.
+                #
+                # `in_step` survives either way. Clearing it made the line
+                # AFTER the block read as fresh prose, so one fence produced
+                # three findings rather than the one this branch promises.
+                if not (in_step and opener[:1].isspace()):
+                    findings.append(
+                        "plan line is not a numbered step -- the plan reads as "
+                        f"prose: {opener.strip()!r} -- {PLAN_STEP_RULE}")
+                continue
+            i += 1
             if not line.strip():
                 continue
             if re.match(r"^\s*\d+[.)]", line):

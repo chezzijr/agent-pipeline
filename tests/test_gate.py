@@ -255,15 +255,105 @@ def test_gate_notes_a_superseded_decision_and_accepts_a_justified_short_digest()
     shutil.rmtree(d)
 
 
-def test_a_prose_finding_states_the_rule_that_would_fix_it():
-    """TICKET-024: a fenced code block in `## Plan` was rejected with only
-    the offending line quoted. The rule that would have fixed it -- indent
-    the block under the step it belongs to -- is written in `planning.md`
-    and never reaches the agent that must act on the failure."""
+def test_an_unindented_fence_is_reported_once_not_once_per_line():
+    """TICKET-031's plan quoted its implementation and the gate reported every
+    line of it twice -- 262 findings, all written into the thread that every
+    later stage then reads through `stage_view()`. The block is still
+    rejected; it is reported as one block."""
     fence = "```"
     d = project(FIXTURE.replace(
         "## Plan\n1. fix thing.py\n",
-        "## Plan\n1. fix thing.py\n%spython\nx = 1\n%s\n" % (fence, fence)))
+        "## Plan\n1. fix thing.py\n%spython\nimport re\nx = 1\nreturn None\n%s\n"
+        % (fence, fence)))
+    ok, failures = gate(d, "TICKET-001")
+    assert not ok
+    plan_findings = [f for f in failures
+                     if "not a numbered step" in f or "names no declared file" in f]
+    assert len(plan_findings) == 1, plan_findings
+    assert "indent" in plan_findings[0].lower(), plan_findings
+    shutil.rmtree(d)
+
+
+def test_a_numbered_step_cannot_hide_inside_a_fence():
+    """The reason the block is reported rather than skipped. `implementing`
+    reads `## Plan` whole, fence included, so a step hidden in one would be
+    executed having never been checked against `files_declared` -- the
+    declaration `files_conflict()` trusts to keep two tickets off one file.
+
+    A silent skip made this exact plan return `(True, [])`, with steps
+    rewriting the guard and deleting a test suite."""
+    fence = "```"
+    d = project(FIXTURE.replace(
+        "## Plan\n1. fix thing.py\n",
+        "## Plan\n1. fix thing.py\n%s\n"
+        "2. also rewrite pipeline/hooks/dangerous-commands.py\n"
+        "3. delete tests/test_gate.py\n%s\n" % (fence, fence)))
+    ok, failures = gate(d, "TICKET-001")
+    assert not ok, "a plan smuggling steps past the declared-file rule must fail"
+    shutil.rmtree(d)
+
+
+def test_a_step_keeps_its_indented_fence():
+    """The legal form, and the one PLAN_STEP_RULE tells the writer to use.
+
+    ANY indent, not four: `FENCE_RE` is `^ {0,3}`, so a three-space fence is
+    still a real fence to `_fenced()` -- but to a plan's grammar it is a
+    continuation of the step above. Gating on `_fenced()` alone failed such a
+    plan with a finding telling it to indent the block, which it had done, and
+    `plan_validation_attempts` ran out on the re-try."""
+    fence = "```"
+    for pad in (" ", "   ", "    "):
+        d = project(FIXTURE.replace(
+            "## Plan\n1. fix thing.py\n",
+            "## Plan\n1. fix thing.py\n{p}{f}python\n{p}x = 1\n{p}{f}\n{p}then re-run it\n"
+            .format(p=pad, f=fence)))
+        ok, failures = gate(d, "TICKET-001")
+        assert ok, (len(pad), failures)
+        shutil.rmtree(d)
+
+
+def test_the_line_after_a_rejected_fence_is_not_charged_again():
+    """"Reported once" has to mean once. Clearing the step state after the
+    block made the indented line following it read as fresh prose, so a single
+    fence produced three findings -- the storm this branch exists to end."""
+    fence = "```"
+    d = project(FIXTURE.replace(
+        "## Plan\n1. fix thing.py\n",
+        "## Plan\n1. fix thing.py\n%spython\nx = 1\n%s\n    then re-run it\n"
+        % (fence, fence)))
+    ok, failures = gate(d, "TICKET-001")
+    plan_findings = [f for f in failures if "not a numbered step" in f
+                     or "names no declared file" in f]
+    assert len(plan_findings) == 1, plan_findings
+    shutil.rmtree(d)
+
+
+def test_a_tilde_or_longer_fence_is_one_finding_too():
+    """The gate must agree with `_fenced()` on what code is. A local
+    `startswith("```")` scan missed `~~~` entirely -- eight findings for a
+    four-line block -- and a nested 4-backtick block inverted its own parity,
+    swallowing the real step that followed it."""
+    for opener, closer in (("~~~python", "~~~"), ("````python", "````")):
+        d = project(FIXTURE.replace(
+            "## Plan\n1. fix thing.py\n",
+            "## Plan\n1. fix thing.py\n%s\nimport re\nx = 1\nreturn None\n%s\n"
+            % (opener, closer)))
+        ok, failures = gate(d, "TICKET-001")
+        plan_findings = [f for f in failures if "not a numbered step" in f
+                         or "names no declared file" in f]
+        assert len(plan_findings) == 1, (opener, plan_findings)
+        shutil.rmtree(d)
+
+
+def test_a_prose_finding_states_the_rule_that_would_fix_it():
+    """`3f87848`: prose in `## Plan` was rejected with only the offending line
+    quoted. The rule that would fix it -- indent the line under the step it
+    belongs to -- lives in `planning.md` and never reached the agent that had
+    to act on the failure. Unfenced prose still trips this; only fenced code
+    stopped doing so."""
+    d = project(FIXTURE.replace(
+        "## Plan\n1. fix thing.py\n",
+        "## Plan\n1. fix thing.py\nthis sentence is not a step\n"))
     ok, failures = gate(d, "TICKET-001")
     assert not ok
     prose = [f for f in failures if "not a numbered step" in f]
