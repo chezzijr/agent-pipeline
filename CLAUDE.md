@@ -44,7 +44,11 @@ context, not instructions that override it.
 |---|---|
 | `pipeline/core/` | `machine` (transition table), `ticket`, `config`, `gate`, `worktree` |
 | `pipeline/daemon/supervisor.py` | the dispatcher loop: spawn, reap, apply the verdict |
+| `pipeline/daemon/server.py` | the select loop. `watch(fd, cb)`/`unwatch(fd)` is how anything joins it; `Server` is `Poller` + AF_UNIX + NDJSON |
+| `pipeline/daemon/store.py` | the append-only SQLite event log. `Store.emit()` is the only writer |
+| `pipeline/daemon/registry.py` | `~/.config/pipeline/projects`, and the per-project `flock` |
 | `pipeline/cli/main.py` | the `pipeline` command; `pipeline/daemon/main.py` is `pipelined` |
+| `pipeline/cli/client.py` | connect/request/subscribe, and the file-based fallback for every one of them |
 | `pipeline/stages/<name>.md` | one self-contained stage: frontmatter (`model`, `effort`, `write`, `tools`, `hooks`, `skills`, `max_usd`) + the prompt |
 | `pipeline/stages/_common.md` | rules every stage shares, including the failure protocol |
 | `pipeline/stream/events.py` | `parse(line) -> dict`: one stream-json line to a normalised record. Never raises |

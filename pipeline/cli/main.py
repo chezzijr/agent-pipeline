@@ -3,21 +3,27 @@ import argparse
 import json
 import os
 import re
+import signal
+import subprocess
 import sys
 import time
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from pipeline.cli.client import connect
 from pipeline.core import PipelineError
 from pipeline.core.config import CONFIG_TEMPLATE, TICKET_TEMPLATE
 from pipeline.core.gate import gate
-from pipeline.core.machine import HUMAN_GATES, KNOWN_STAGES, TERMINAL
-from pipeline.core.ticket import Ticket, all_tickets, now, tickets_dir
+from pipeline.core.machine import KNOWN_STAGES
+from pipeline.core.ticket import Ticket, now, tickets_dir
 from pipeline.core.worktree import worktree
+from pipeline.daemon import registry
+from pipeline.daemon.server import STALE_HOURS, socket_path, ticket_rows
+from pipeline.daemon.store import Store, state_dir
 from pipeline.daemon.supervisor import run
 from pipeline.stream import StreamReader
 
-STALE_HOURS = 4  # overlap ordering is silent; surface anything sitting still
+def proj(args) -> Path:
+    return Path(args.project or ".").resolve()
 
 
 def die(msg: str) -> None:
@@ -38,7 +44,7 @@ def cmd_init(args) -> None:
 
 
 def cmd_new(args) -> None:
-    project = Path(args.project).resolve()
+    project = proj(args)
     d = tickets_dir(project)
     d.mkdir(parents=True, exist_ok=True)
     n = 1 + max((int(m.group(1)) for p in d.glob("TICKET-*.md")
@@ -52,7 +58,7 @@ def cmd_new(args) -> None:
 
 
 def cmd_gate(args) -> None:
-    project = Path(args.project).resolve()
+    project = proj(args)
     wt = worktree(project, Ticket.find(project, args.id).frontmatter())
     # the ticket's test lives on its branch; running in the main checkout would
     # report a bogus "test file does not exist" straight into the thread
@@ -64,7 +70,7 @@ def cmd_gate(args) -> None:
 
 
 def cmd_approve(args) -> None:
-    project = Path(args.project).resolve()
+    project = proj(args)
     t = Ticket.find(project, args.id)
     if t.stage != "awaiting-approval":
         die(f"{args.id} is in `{t.stage}`, not `awaiting-approval`")
@@ -88,7 +94,7 @@ def cmd_reject(args) -> None:
     look", and one already is, holding the keyboard. The counter is lifetime,
     not "in a row" -- like every other counter here it only clears via an
     explicit `--reset`, which is why the escape hatch below names it."""
-    project = Path(args.project).resolve()
+    project = proj(args)
     if not args.reason.strip():
         die("a rejection needs a reason -- that's the whole point")
     t = Ticket.find(project, args.id)
@@ -106,7 +112,7 @@ def cmd_reject(args) -> None:
 
 
 def cmd_answer(args) -> None:
-    project = Path(args.project).resolve()
+    project = proj(args)
     t = Ticket.find(project, args.id)
     if t.stage != "needs-input":
         die(f"{args.id} is in `{t.stage}`, not `needs-input`")
@@ -118,7 +124,7 @@ def cmd_answer(args) -> None:
 
 
 def cmd_resume(args) -> None:
-    project = Path(args.project).resolve()
+    project = proj(args)
     if args.stage not in KNOWN_STAGES:
         die(f"`{args.stage}` is not a stage: {', '.join(sorted(KNOWN_STAGES))}")
     t = Ticket.find(project, args.id)
@@ -132,21 +138,129 @@ def cmd_resume(args) -> None:
     print(f"{args.id}: -> {args.stage}")
 
 
-def cmd_status(args) -> None:
-    for p in all_tickets(Path(args.project).resolve()):
-        t = Ticket.load(p)
-        stale = ""
-        if (t.stage not in TERMINAL | HUMAN_GATES
-                and not t.lease_active()
-                and now() - datetime.fromtimestamp(p.stat().st_mtime, timezone.utc)
-                > timedelta(hours=STALE_HOURS)):
-            stale = f"STALE>{STALE_HOURS}h"  # probably waiting behind an overlap
-        lease = "LEASED" if t.lease_active() else stale
-        print(f"{t.id:<12} {t.stage:<17} {t.klass:<9} {t.counters} {lease}")
-        last = t.extra.get("last_session")
+def cmd_ls(args) -> None:
+    """`--project` is a filter, not a target: without one, every registered
+    project. The daemon and the files answer with the same rows, built by the
+    same `ticket_rows()` -- a fallback that reported different columns would
+    make `ls` mean two things.
+
+    The fallback is also wider than the daemon on purpose: the daemon can only
+    speak for projects it watches, but a named `--project` is just a directory,
+    so `pipeline --project X ls` works whether or not X was ever registered.
+    """
+    c = connect()
+    rows = None
+    if c is not None:
+        try:
+            rows = c.request("ls", project=str(proj(args))
+                             if args.project else None)
+        except PipelineError:
+            rows = None    # unregistered, or a daemon in trouble: read the files
+        finally:
+            c.close()
+    if rows is None:
+        targets = [proj(args)] if args.project else registry.projects()
+        rows = [r for p in targets for r in ticket_rows(p)]
+    for r in rows:
+        mark = ("LEASED" if r.get("running") or r.get("leased")
+                else f"STALE>{STALE_HOURS}h" if r.get("stale") else "")
+        print(f"{r['id']:<12} {r.get('stage', '?'):<17} "
+              f"{r.get('class', '?'):<9} {r.get('counters', {})} {mark}")
+        last = r.get("last_session")
         if last and args.verbose:
             print(f"{'':<12} last: {last['stage']} log={last['log']} "
                   f"replay=`claude --resume {last['id']}`")
+
+
+# -- the registry -------------------------------------------------------
+def cmd_register(args) -> None:
+    print(f"registered {registry.register(Path(args.path))}")
+
+
+def cmd_unregister(args) -> None:
+    p = Path(args.path).resolve()
+    print(f"unregistered {p}" if registry.unregister(p) else f"{p} was not registered")
+
+
+def cmd_projects(args) -> None:
+    c = connect()
+    watched = set()
+    if c is not None:
+        try:
+            watched = {r["project"] for r in c.request("projects") if r["watched"]}
+        except PipelineError:
+            pass
+        finally:
+            c.close()
+    for p in registry.projects():
+        print(f"{p} {'watched' if str(p) in watched else ''}".rstrip())
+
+
+# -- daemon control (no --project: there is one daemon) -----------------
+def cmd_daemon_status(args) -> None:
+    c = connect()
+    if c is None:
+        print(f"pipelined: not running ({socket_path()})")
+        sys.exit(1)
+    try:
+        d = c.request("ping")
+    finally:
+        c.close()
+    print(f"pipelined {d['version']}: pid {d['pid']} on {d['socket']}, "
+          f"{d['projects']} project(s) watched")
+
+
+def cmd_start(args) -> None:
+    c = connect()
+    if c is not None:
+        c.close()
+        die("pipelined is already running")
+    logdir = state_dir()
+    logdir.mkdir(parents=True, exist_ok=True)
+    log = (logdir / "daemon.log").open("a")
+    # start_new_session: the daemon outlives the terminal that started it,
+    # which is the whole point of it existing.
+    subprocess.Popen([sys.executable, "-m", "pipeline.daemon.main",
+                      "--interval", str(args.interval),
+                      "--harness", args.harness,
+                      "-j", str(args.max_parallel)],
+                     stdout=log, stderr=subprocess.STDOUT,
+                     stdin=subprocess.DEVNULL, start_new_session=True)
+    for _ in range(100):
+        c = connect()
+        if c is not None:
+            try:
+                d = c.request("ping")
+            finally:
+                c.close()
+            return print(f"pipelined {d['version']}: pid {d['pid']} on {d['socket']}")
+        time.sleep(0.05)
+    die(f"pipelined did not come up within 5s -- see {logdir / 'daemon.log'}")
+
+
+def cmd_stop(args) -> None:
+    c = connect()
+    if c is None:
+        die("pipelined is not running")
+    try:
+        pid = c.request("ping")["pid"]
+    finally:
+        c.close()
+    os.kill(pid, signal.SIGTERM)
+    # Watch the PID, not the socket. A daemon inside shut_down() waits up to
+    # 10s per child before releasing its leases and unlinking the socket, and
+    # while it is in there it accepts nothing -- so a failed connect would mean
+    # "still busy" just as often as "gone", and reporting `stopped` while the
+    # flocks are still held is the one answer that must never be wrong.
+    for _ in range(1200):                      # 60s
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return print(f"pipelined {pid}: stopped")
+        except PermissionError:
+            break                              # not ours to watch; not ours to wait on
+        time.sleep(0.05)
+    die(f"pipelined {pid} did not stop within 60s -- still holding its leases")
 
 
 def _one(s, n: int = 160) -> str:
@@ -190,7 +304,7 @@ def cmd_logs(args) -> None:
     the stage's `result` event lands. Today the log file is the stream: the
     child writes it, this reads it. When the daemon (TICKET-011) owns the
     child's fd it feeds the same `StreamReader` from the pipe instead."""
-    project = Path(args.project).resolve()
+    project = proj(args)
     logs = sorted((project / ".project" / "logs").glob(f"{args.id}-*.log"),
                   key=lambda p: p.stat().st_mtime)
     if not logs:
@@ -219,7 +333,8 @@ def cmd_logs(args) -> None:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--project", default=".", help="target project dir")
+    ap.add_argument("--project", help="project dir; a filter for `ls`, "
+                    "the target for everything else (default: cwd)")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     p = sub.add_parser("init"); p.add_argument("dir", nargs="?", default="."); p.set_defaults(fn=cmd_init)
@@ -230,14 +345,20 @@ def main() -> None:
     p = sub.add_parser("answer"); p.add_argument("id"); p.add_argument("text"); p.set_defaults(fn=cmd_answer)
     p = sub.add_parser("resume"); p.add_argument("id"); p.add_argument("--stage", required=True); p.add_argument("--reset", nargs="*"); p.set_defaults(fn=cmd_resume)
     p = sub.add_parser("logs"); p.add_argument("id"); p.add_argument("-f", "--follow", action="store_true"); p.set_defaults(fn=cmd_logs)
-    p = sub.add_parser("status"); p.add_argument("-v", "--verbose", action="store_true"); p.set_defaults(fn=cmd_status)
-    p = sub.add_parser("run"); p.add_argument("--once", action="store_true"); p.add_argument("--interval", type=int, default=10); p.add_argument("--harness", default="claude-code"); p.add_argument("-j", "--max-parallel", type=int, default=3); p.set_defaults(fn=None)
+    p = sub.add_parser("ls", help="tickets (via the daemon if one is running)"); p.add_argument("-v", "--verbose", action="store_true"); p.set_defaults(fn=cmd_ls)
+    p = sub.add_parser("status", help="is the daemon running"); p.set_defaults(fn=cmd_daemon_status)
+    p = sub.add_parser("register"); p.add_argument("path", nargs="?", default="."); p.set_defaults(fn=cmd_register)
+    p = sub.add_parser("unregister"); p.add_argument("path", nargs="?", default="."); p.set_defaults(fn=cmd_unregister)
+    p = sub.add_parser("projects"); p.set_defaults(fn=cmd_projects)
+    p = sub.add_parser("start", help="start the one daemon"); p.add_argument("--interval", type=int, default=10); p.add_argument("--harness", default="claude-code"); p.add_argument("-j", "--max-parallel", type=int, default=3); p.set_defaults(fn=cmd_start)
+    p = sub.add_parser("stop"); p.set_defaults(fn=cmd_stop)
+    p = sub.add_parser("run", help="one project, no daemon, no socket"); p.add_argument("--once", action="store_true"); p.add_argument("--interval", type=int, default=10); p.add_argument("--harness", default="claude-code"); p.add_argument("-j", "--max-parallel", type=int, default=3); p.set_defaults(fn=None)
 
     args = ap.parse_args()
     try:
         if args.cmd == "run":
-            run(Path(args.project).resolve(), args.once, args.interval,
-                args.harness, args.max_parallel)
+            run(proj(args), args.once, args.interval,
+                args.harness, args.max_parallel, Store())
         else:
             args.fn(args)
     except PipelineError as e:

@@ -6,3 +6,4 @@ __pycache__/
 .superpowers/
 .venv/
 uv.lock
+.project/.lock

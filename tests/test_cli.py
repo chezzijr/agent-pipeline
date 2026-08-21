@@ -25,12 +25,14 @@ def test_resume_refuses_a_stage_that_does_not_exist():
     shutil.rmtree(d)
 
 
-def test_cli_new_then_status():
+def test_cli_new_then_ls():
+    """`ls` lists tickets; `status` is the daemon's own liveness -- there is
+    one daemon and many projects, so they cannot be the same command."""
     d = Path(tempfile.mkdtemp())
     r = cli(d, "new", "cache leaks", "--class", "bugfix")
     assert r.returncode == 0, r.stderr
     assert (d / ".project/tickets/TICKET-001.md").is_file()
-    r = cli(d, "status")
+    r = cli(d, "ls")
     assert "TICKET-001" in r.stdout and "new" in r.stdout, r.stdout
     r = cli(d, "approve", "TICKET-001")
     assert r.returncode != 0, "approve must refuse a ticket that is not awaiting-approval"
