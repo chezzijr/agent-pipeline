@@ -662,3 +662,42 @@ def test_a_rebase_conflict_at_revalidating_leaves_a_way_back():
     shutil.rmtree(d, ignore_errors=True)
     assert t.stage not in M.TERMINAL, \
         f"a rebase conflict parked the ticket at {t.stage} with no way back"
+
+
+def test_a_merged_dispatcher_change_reaches_the_running_loop():
+    """A harness `.toml` edit reaches the next tick (`_harness_reloader`), but
+    a merged change to the dispatcher's own Python does not: the loop keeps
+    running the code it imported at startup. `run()` must notice its source
+    changed and return, so whatever supervises it starts the new code."""
+    import os
+
+    src = Path(supervisor.__file__)
+    before = src.stat().st_mtime
+
+    class Stop(Exception):
+        pass
+
+    d = project()
+    seen, orig_tick = [], supervisor.tick
+
+    def fake_tick(proj, hcfg, *a, **kw):
+        seen.append(len(seen))
+        if len(seen) == 1:
+            os.utime(src, (before + 10, before + 10))  # a merge lands
+        if len(seen) >= 3:
+            raise Stop("still running the code it imported at startup")
+        return False
+
+    supervisor.tick = fake_tick
+    try:
+        supervisor.run(d, once=False, interval=0, harness_name="fake")
+    except Stop as e:
+        raise AssertionError(
+            f"dispatcher source changed at tick 1, still looping at tick 3: {e}")
+    finally:
+        supervisor.tick = orig_tick
+        os.utime(src, (before, before))
+        shutil.rmtree(d, ignore_errors=True)
+
+    assert len(seen) == 2, \
+        f"expected the loop to exit after tick 2, got {len(seen)} ticks"
