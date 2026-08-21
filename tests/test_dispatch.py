@@ -567,6 +567,7 @@ def test_the_marker_record_names_the_agents_summary_and_nothing_else():
     tight, _ = run("✓planned")           # loose_result() ate the space
     bare, bare_body = run("planned")
     pickup, pickup_body = run("dispatcher pickup", agent=False)
+    none_case, _ = run(None)             # summary: with no value parses to None
 
     assert marked["marker"] is True
     assert tight["marker"] is True, "match the character, not character+space"
@@ -574,6 +575,7 @@ def test_the_marker_record_names_the_agents_summary_and_nothing_else():
     assert "marker=yes" in marked_body and "marker=no" in bare_body
     assert "marker" not in pickup, pickup
     assert "marker=" not in pickup_body
+    assert none_case["marker"] is False
 
 
 def test_a_missing_marker_changes_no_transition_and_no_counter():

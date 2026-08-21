@@ -84,7 +84,7 @@ def has_marker(note: str) -> bool:
     YAML broke arrives with the space already gone, and a `"✓ "` prefix
     test would report a marked stage as unmarked.
     """
-    return note.lstrip().startswith(MARKER)
+    return str(note or "").lstrip().startswith(MARKER)
 
 
 def advance(project: Path, t: Ticket, result: str, note: str, emit=noop,
