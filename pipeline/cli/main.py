@@ -35,7 +35,12 @@ def die(msg: str) -> None:
 
 
 def cmd_init(args) -> None:
-    project = Path(args.dir).resolve()
+    # `init` is the one command with a positional target, because
+    # `pipeline init ~/code/myproject` reads better than the flag. But every
+    # other command takes `--project`, so accepting only the positional means
+    # `pipeline --project X init` silently scaffolds the current directory
+    # instead -- and says "initialised" while doing it.
+    project = Path(args.dir or args.project).resolve()
     tickets_dir(project).mkdir(parents=True, exist_ok=True)
     (project / ".project" / "decisions").mkdir(exist_ok=True)
     cfg = project / ".project" / "pipeline.toml"
@@ -391,7 +396,7 @@ def main() -> None:
                     "the target for everything else (default: cwd)")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
-    p = sub.add_parser("init"); p.add_argument("dir", nargs="?", default="."); p.set_defaults(fn=cmd_init)
+    p = sub.add_parser("init"); p.add_argument("dir", nargs="?", default=None); p.set_defaults(fn=cmd_init)
     p = sub.add_parser("new"); p.add_argument("title"); p.add_argument("--class", dest="cls", default="bugfix"); p.set_defaults(fn=cmd_new)
     p = sub.add_parser("gate"); p.add_argument("id"); p.set_defaults(fn=cmd_gate)
     p = sub.add_parser("approve"); p.add_argument("id"); p.add_argument("--by"); p.set_defaults(fn=cmd_approve)

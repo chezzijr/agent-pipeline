@@ -100,3 +100,25 @@ def test_logs_pretty_prints_a_stream_json_log():
     assert "exit=2" in r.stdout and "== success $0.3412" in r.stdout, r.stdout
     assert cli(d, "logs", "TICKET-002").returncode != 0   # no log, no guessing
     shutil.rmtree(d)
+
+
+def test_init_honours_project_like_every_other_command():
+    """`init` takes a positional dir, every other command takes `--project`.
+    Accepting only the positional made `pipeline --project X init` scaffold the
+    CURRENT directory and print "initialised" while doing it -- the wrong tree,
+    silently, with a success message."""
+    d = Path(tempfile.mkdtemp())
+    target, other = d / "target", d / "other"
+    target.mkdir(); other.mkdir()
+
+    r = cli(target, "init")
+    assert r.returncode == 0, r.stderr
+    assert (target / ".project" / "pipeline.toml").is_file(), "--project was ignored"
+    assert not (Path(ROOT) / "cwd").exists()
+
+    # the positional form the README documents still wins when both are given
+    r = subprocess.run([sys.executable, "-m", "pipeline", "--project", str(target),
+                        "init", str(other)], cwd=ROOT, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    assert (other / ".project" / "pipeline.toml").is_file(), "positional dir ignored"
+    shutil.rmtree(d, ignore_errors=True)
