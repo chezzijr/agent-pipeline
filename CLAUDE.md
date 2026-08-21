@@ -137,6 +137,13 @@ claiming the guard works.
   read it once above their loop, so a harness change that merged mid-run
   reached nothing until the dispatcher restarted. A failed re-read keeps the
   last good dict instead of killing the loop.
+- **A merged change to the dispatcher's own Python is inert until restart.**
+  `_source_watcher()` in `pipeline/daemon/supervisor.py` snapshots the mtimes of
+  the loaded `pipeline` modules. When one moves, `run()` and `serve()` stop
+  claiming tickets, reap what is inflight and return -- so whatever started them
+  runs the merged code. Nothing restarts them: after that message, run
+  `pipeline start` (or `pipeline run`) again. Never `importlib.reload()`; live
+  child records, an open SQLite handle and signal handlers outlive the modules.
 
 ## Conventions
 

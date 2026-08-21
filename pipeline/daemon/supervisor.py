@@ -7,6 +7,7 @@ import re
 import shlex
 import signal
 import subprocess
+import sys
 import uuid
 from dataclasses import replace
 from pathlib import Path
@@ -966,6 +967,36 @@ def _harness_reloader(name: str):
     return reload
 
 
+def _mtime(path: str) -> float:
+    try:
+        return os.stat(path).st_mtime
+    except OSError:
+        return -1.0            # a module file that vanished is a change too
+
+
+def _source_watcher():
+    """The mtimes of the loaded `pipeline` modules, sampled once at the top of
+    a loop. `_harness_reloader()` does this for harness *data*; a Python module
+    already imported does not change because its file did, so the loop reports
+    and ends instead. Never `importlib.reload()`: the supervisor holds live
+    child records, an open SQLite handle and registered signal handlers, and
+    reloading swaps classes out from under objects that already exist.
+
+    Code only. Stage prompts are read per spawn and the harness `.toml` per
+    tick (DEC-028); ending the loop for those would undo that."""
+    mods = {n: m.__file__ for n, m in list(sys.modules.items())
+            if n.startswith("pipeline") and getattr(m, "__file__", None)}
+    snap = {n: _mtime(f) for n, f in mods.items()}
+
+    def changed() -> str | None:
+        for n, f in mods.items():
+            if _mtime(f) != snap[n]:
+                return n
+        return None
+
+    return changed
+
+
 def run(project: Path, once: bool, interval: int, harness_name: str,
         max_parallel: int = 3, store=None) -> None:
     """Standalone: the daemon minus the socket server. One supervisor
@@ -989,11 +1020,17 @@ def run(project: Path, once: bool, interval: int, harness_name: str,
     poller = Poller()
     stopping, wake, wake_w, old_handlers = _stopper()
     poller.watch(wake, lambda fd: os.read(fd, 4096))
+    stale, moved = _source_watcher(), None
 
     try:
         while not stopping():
+            moved = moved or stale()
+            if moved and not inflight:
+                print(f"  dispatcher source changed ({moved}) -- ending the "
+                      f"loop so a restart runs the merged code")
+                return
             worked = tick(project, reload(), inflight, max_parallel, poller,
-                          emit, stopping)
+                          emit, (lambda: True) if moved else stopping)
             if once and not inflight and not worked:
                 return  # --once drains the queue, it does not do a single pass
             poller.poll(1 if inflight else interval)
@@ -1027,6 +1064,7 @@ def serve(interval: int, harness_name: str, max_parallel: int, store, server,
     store.emit("", "daemon_start", pid=os.getpid(), version=__version__,
                socket=str(server.path))
     print(f"pipelined {__version__}: pid {os.getpid()} on {server.path}")
+    stale, moved = _source_watcher(), None
 
     def release(key: str) -> None:
         shut_down(Path(key), states.pop(key, {}))
@@ -1036,6 +1074,11 @@ def serve(interval: int, harness_name: str, max_parallel: int, store, server,
 
     try:
         while not stopping():
+            moved = moved or stale()
+            if moved and not any(states.values()):
+                print(f"  dispatcher source changed ({moved}) -- ending the "
+                      f"loop so a restart runs the merged code")
+                return
             hcfg = reload()
             wanted = {str(p): p for p in registry.projects()}
             for key in [k for k in states if k not in wanted]:
@@ -1056,7 +1099,8 @@ def serve(interval: int, harness_name: str, max_parallel: int, store, server,
                     print(f"  watching {key}")
                 try:
                     worked |= tick(proj, hcfg, states[key], max_parallel,
-                                   server, store.emitter(key), stopping)
+                                   server, store.emitter(key),
+                                   (lambda: True) if moved else stopping)
                 except Exception as e:
                     # one broken project must never take the other projects'
                     # agents down with it

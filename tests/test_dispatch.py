@@ -699,5 +699,86 @@ def test_a_merged_dispatcher_change_reaches_the_running_loop():
         os.utime(src, (before, before))
         shutil.rmtree(d, ignore_errors=True)
 
-    assert len(seen) == 2, \
-        f"expected the loop to exit after tick 2, got {len(seen)} ticks"
+    assert len(seen) == 1, \
+        f"expected the loop to exit at the first tick boundary, got {len(seen)} ticks"
+
+
+def test_a_merged_dispatcher_change_ends_the_daemon_loop_too():
+    """`serve()` is `run()`'s loop with `run()`'s defect. Triage covered
+    `run()` only."""
+    import os
+    import tempfile
+
+    from pipeline.daemon import registry
+    from pipeline.daemon.server import Server
+
+    src = Path(supervisor.__file__)
+    before = src.stat().st_mtime
+    tmp = Path(tempfile.mkdtemp())
+    d = project()
+    store = Store(tmp / "events.db")
+    server = Server(store, tmp / "daemon.sock")
+    seen, orig_tick = [], supervisor.tick
+
+    class Stop(BaseException):     # serve() catches Exception around tick()
+        pass
+
+    def fake_tick(proj, hcfg, *a, **kw):
+        seen.append(len(seen))
+        if len(seen) == 1:
+            os.utime(src, (before + 10, before + 10))   # a merge lands
+        if len(seen) >= 3:
+            raise Stop("still running the code it imported at startup")
+        return False
+
+    supervisor.tick = fake_tick
+    registry.register(d)
+    try:
+        supervisor.serve(0, "fake", 1, store, server, once=False)
+    except Stop as e:
+        raise AssertionError(
+            f"daemon source changed at tick 1, still looping at tick 3: {e}")
+    finally:
+        supervisor.tick = orig_tick
+        os.utime(src, (before, before))
+        registry.unregister(d)
+        shutil.rmtree(d, ignore_errors=True)
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    assert len(seen) == 1, f"expected serve() to exit after tick 1, got {len(seen)}"
+
+
+def test_a_stale_dispatcher_reaps_its_children_before_it_exits():
+    """The exit is at a tick boundary with no children running: a stale loop
+    stops claiming tickets (`tick()` sees `stopping() is True`) and keeps
+    reaping until `inflight` is empty."""
+    import os
+
+    src = Path(supervisor.__file__)
+    before = src.stat().st_mtime
+    d = project()
+    seen, flags, orig_tick = [], [], supervisor.tick
+
+    def fake_tick(proj, hcfg, inflight, max_parallel, poller, emit, stopping):
+        seen.append(len(seen))
+        flags.append(stopping())
+        if len(seen) == 1:
+            inflight["TICKET-001"] = {"fake": True}   # a child is running
+            os.utime(src, (before + 10, before + 10))
+        if len(seen) == 2:
+            inflight.clear()                          # it finished; shut_down
+        if len(seen) >= 4:                            # must not see the fake
+            raise AssertionError("a stale loop never exited")
+        return False
+
+    supervisor.tick = fake_tick
+    try:
+        supervisor.run(d, once=False, interval=0, harness_name="fake")
+    finally:
+        supervisor.tick = orig_tick
+        os.utime(src, (before, before))
+        shutil.rmtree(d, ignore_errors=True)
+
+    assert len(seen) == 2, f"expected a reaping tick 2, got {len(seen)} ticks"
+    assert flags == [False, True], \
+        f"a stale loop must stop claiming tickets: stopping() was {flags}"
