@@ -139,7 +139,7 @@ def pump(rec: dict) -> None:
         except OSError:
             chunk = b""
         if not chunk:                      # EOF: the child is done writing
-            if rec.get("poller"):          # a PTY may be hosted with no loop
+            if rec.get("poller"):          # a test may host a PTY with no loop
                 rec["poller"].unwatch(fd)
             return
         rec["fh"].write(chunk)
@@ -185,6 +185,11 @@ def spawn(project: Path, wt: Path, tid: str, stage: str, hcfg: dict,
     # and AskUserQuestion is not in the headless toolset, so a permission
     # prompt or an option picker only exists on a real terminal.
     interactive = cfg.get("mode") == "interactive"
+    if interactive and poller is None:
+        # nothing would drain the master, so the child blocks at a full buffer
+        # holding its lease -- and nobody could attach to it anyway
+        raise PipelineError(f"`{stage}` is interactive and needs a poller to "
+                            f"host its PTY")
     session = str(uuid.uuid4())
     logs = project / ".project" / "logs"
     logs.mkdir(parents=True, exist_ok=True)
@@ -573,6 +578,10 @@ def shut_down(project: Path, inflight: dict) -> None:
                 proc.wait(timeout=10)
             except subprocess.TimeoutExpired:
                 proc.kill()
+                try:
+                    proc.wait(timeout=5)   # a PtyProc is reaped here or never
+                except subprocess.TimeoutExpired:
+                    pass
         close_child(rec)
         if rec.get("prompt"):
             rec["prompt"].unlink(missing_ok=True)
@@ -702,7 +711,12 @@ def serve(interval: int, harness_name: str, max_parallel: int, store, server,
             wanted = {str(p): p for p in registry.projects()}
             for key in [k for k in states if k not in wanted]:
                 print(f"  unregistered: releasing {key}")
-                release(key)
+                try:
+                    release(key)
+                except Exception as e:
+                    # same reason `tick` is wrapped: one project's teardown
+                    # must not strand every other project's leases
+                    print(f"  {key}: release failed ({e.__class__.__name__}: {e})")
             worked = False
             for key, proj in wanted.items():
                 if key not in states:

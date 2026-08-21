@@ -39,14 +39,16 @@ def drive(poller: Poller, check, timeout: float = 5.0) -> bool:
     return bool(check())
 
 
-def child(tmp: Path, poller: Poller | None = None, cmd: str = CMD) -> dict:
+def child(tmp: Path, poller: Poller | None = None, cmd: str = CMD,
+          session: str = "s1") -> dict:
     """A record shaped exactly like `spawn()`'s interactive one."""
     proc, pipe = host.start(cmd, tmp, dict(os.environ, TERM="xterm-256color"))
     screen = host.Screen()
     rec = {"proc": proc, "pipe": pipe, "reader": screen, "screen": screen,
            "writer": None, "fh": (tmp / "stage.log").open("wb"),
            "poller": poller, "sink": lambda ev: None, "mode": "interactive",
-           "tid": "TICKET-001", "stage": "planning", "log": tmp / "stage.log"}
+           "session": session, "tid": "TICKET-001", "stage": "planning",
+           "log": tmp / "stage.log"}
     if poller:
         poller.watch(pipe.fileno(), lambda fd: supervisor.pump(rec))
     return rec
@@ -99,6 +101,21 @@ def test_pty_screen_and_detach_does_not_kill():
     assert proc.wait(timeout=5) is not None
     # the raw stream is on disk, which is what covers replay past the screen
     assert b"hello" in (tmp / "stage.log").read_bytes()
+
+
+def test_the_master_fd_does_not_reach_the_next_interactive_child():
+    """PEP 446 does not cover `os.forkpty`: its master comes back
+    *inheritable*, so without the explicit clear the second interactive stage
+    inherits the first one's master and can type into another ticket's
+    permission prompt. `subprocess` never had this hole -- it closes fds."""
+    tmp = Path(tempfile.mkdtemp())
+    rec = child(tmp, cmd="read x")
+    try:
+        assert os.get_inheritable(rec["pipe"].fileno()) is False, \
+            "the pty master survives exec into every later child"
+    finally:
+        rec["proc"].terminate()
+        supervisor.close_child(rec)
 
 
 def test_a_pty_proc_is_shaped_like_popen():
@@ -232,6 +249,84 @@ def test_resize_reaches_both_the_child_and_the_screen():
         server.close()
 
 
+def test_input_after_the_session_is_replaced_does_not_reach_the_new_one():
+    """`conn.attached` is a name plus a session. Matching on the name alone
+    would rebind a stale client to whatever runs for that ticket next: it
+    would type into a terminal it cannot see, and hold that session's writer
+    slot while watching a dead screen."""
+    tmp = Path(tempfile.mkdtemp())
+    st = Store(tmp / "events.db")
+    server = Server(st, tmp / "d.sock")
+    old_rec = child(tmp, server, cmd="read x", session="s1")
+    server.states["/p"] = {"TICKET-001": old_rec}
+    a, _peer = client(server)
+    try:
+        assert ask(server, a, id=1, op="attach", ticket="TICKET-001")["ok"]
+
+        # the stage finished and the NEXT interactive stage for the same
+        # ticket started, all before this client sent another frame
+        new_rec = child(tmp, server, cmd="read x", session="s2")
+        server.states["/p"]["TICKET-001"] = new_rec
+
+        r = ask(server, a, id=2, op="input", data=b64("y\n"))
+        assert not r["ok"] and "no longer running" in r["error"], r
+        assert new_rec["writer"] is None, "a stale client took the new writer"
+        assert a.attached is None, "the stale attachment was not dropped"
+    finally:
+        for rec in (old_rec, new_rec):
+            rec["proc"].terminate()
+            supervisor.close_child(rec)
+        server.close()
+
+
+def test_one_write_into_a_pty_is_bounded():
+    """A pty input buffer is a few KiB and the master is non-blocking, so an
+    oversized write truncates mid-keystroke into a session that is being asked
+    to approve commands. Refuse it; the client can chunk."""
+    from pipeline.daemon.server import PTY_INPUT
+    tmp = Path(tempfile.mkdtemp())
+    st = Store(tmp / "events.db")
+    server = Server(st, tmp / "d.sock")
+    rec = child(tmp, server, cmd="read x")
+    server.states["/p"] = {"TICKET-001": rec}
+    a, _peer = client(server)
+    try:
+        ask(server, a, id=1, op="attach", ticket="TICKET-001")
+        r = ask(server, a, id=2, op="input", data=b64("x" * (PTY_INPUT + 1)))
+        assert not r["ok"] and "at most" in r["error"], r
+        r = ask(server, a, id=3, op="input", data=b64("ok\n"))
+        assert r["ok"] and r["data"]["short"] is False, r
+    finally:
+        rec["proc"].terminate()
+        supervisor.close_child(rec)
+        server.close()
+
+
+def test_a_client_that_stops_reading_drops_frames_instead_of_hoarding_them():
+    """A pty frame is a 64 KiB read, base64'd. `OUTBOX` was sized for small
+    event objects, so 1000 of them is ~87 MB per stalled client and the daemon
+    holds every project's flock and every lease."""
+    from pipeline.daemon.server import PTY_BACKLOG
+    tmp = Path(tempfile.mkdtemp())
+    st = Store(tmp / "events.db")
+    server = Server(st, tmp / "d.sock")
+    rec = child(tmp, server, cmd="read x")
+    server.states["/p"] = {"TICKET-001": rec}
+    a, _peer = client(server)
+    try:
+        ask(server, a, id=1, op="attach", ticket="TICKET-001")
+        a.out.clear()
+        for _ in range(PTY_BACKLOG):          # a client that stopped reading
+            a.out.append(b"{}\n")
+        rec["screen"].feed(b"more output\r\n")
+        assert len(a.out) == PTY_BACKLOG, "the backlog grew past its bound"
+        assert a.dropped == 1, "a dropped chunk was not counted"
+    finally:
+        rec["proc"].terminate()
+        supervisor.close_child(rec)
+        server.close()
+
+
 def test_attach_refuses_a_headless_stage_and_a_finished_one():
     tmp = Path(tempfile.mkdtemp())
     st = Store(tmp / "events.db")
@@ -276,6 +371,18 @@ def test_planning_is_interactive_and_never_rendered_under_print_mode():
     assert "--permission-mode" in cmd, "the whole point of the PTY"
     assert "--max-budget-usd 5" in cmd, "the money guard works outside print mode"
     assert "--append-system-prompt" in cmd and "--settings /s.json" in cmd
+
+
+def test_an_interactive_stage_refuses_to_spawn_with_nothing_draining_it():
+    """No poller means nothing reads the master: the child blocks at a full
+    buffer holding its lease, and nobody could attach to it anyway."""
+    from pipeline.core import PipelineError
+    try:
+        supervisor.spawn(Path("/nonexistent"), Path("/nonexistent"),
+                         "TICKET-001", "planning", harness("claude-code"))
+        assert False, "spawned an interactive stage with no loop to host it"
+    except PipelineError as e:
+        assert "poller" in str(e), e
 
 
 def test_a_harness_with_no_interactive_template_falls_back_to_its_command():

@@ -35,6 +35,11 @@ MAX_SUBS = 8     # subscriptions per connection
 OPS = ("ping", "ls", "projects", "subscribe", "kill",
        "attach", "input", "resize", "detach")
 MAX_DIM = 1000   # a terminal, not a memory allocator: pyte allocates rows*cols
+PTY_BACKLOG = 16  # queued pty frames per client. OUTBOX was sized for small
+                  # event objects; a pty frame is a 64 KiB read, base64'd
+PTY_INPUT = 4096  # one write into a pty's input buffer. Larger short-writes,
+                  # and a silently truncated paste into an approval prompt is
+                  # worse than an error the client can chunk around
 MAX_LINE = 1 << 20
 STALE_HOURS = 4  # overlap ordering is silent; surface anything sitting still
 SENT = object()   # "this op already queued its own frames" -- see _op_subscribe
@@ -155,7 +160,7 @@ class Conn:
         self.pending = b""      # a partially-sent frame
         self.dropped = 0
         self.subs: dict[int, dict] = {}   # sub id -> {"project": str|None}
-        self.attached: tuple | None = None   # (project, ticket) of the PTY
+        self.attached: tuple | None = None   # (project, ticket, session)
         self.pty_sub = None                  # the id its `pty` frames carry
         self.pty_cb = None                   # this conn's entry in Screen.subs
 
@@ -465,9 +470,15 @@ class Server(Poller):
         finished is an error on the next op, not a dangling subscription."""
         if conn.attached is None:
             raise PipelineError("not attached")
-        proj, tid = conn.attached
+        proj, tid, session = conn.attached
         rec = self.states.get(proj, {}).get(tid)
-        if rec is None or rec.get("screen") is None or rec.get("pipe") is None:
+        # the SESSION, not just the ticket: `planning` can finish and the next
+        # interactive stage for the same ticket start before this client
+        # notices. Matching on the name alone would silently rebind it -- input
+        # into a terminal it cannot see, and the new session's writer slot held
+        # by someone watching a dead screen.
+        if (rec is None or rec.get("screen") is None or rec.get("pipe") is None
+                or rec.get("session") != session):
             self._detach(conn)
             raise PipelineError(f"{tid} is no longer running")
         return rec
@@ -488,9 +499,11 @@ class Server(Poller):
         entire point of hosting the PTY here."""
         if conn.attached is None:
             return
-        proj, tid = conn.attached
+        proj, tid, session = conn.attached
         conn.attached = None
         rec = self.states.get(proj, {}).get(tid) or {}
+        if rec.get("session") != session:
+            rec = {}          # a different session by now: nothing of ours in it
         screen = rec.get("screen")
         if screen is not None and conn.pty_cb in screen.subs:
             screen.subs.remove(conn.pty_cb)
@@ -505,7 +518,8 @@ class Server(Poller):
                                 f"headless -- only an interactive stage can be attached")
         self._detach(conn)                    # one PTY per connection
         screen = rec["screen"]
-        conn.attached, conn.pty_sub = (proj, rec["tid"]), rid
+        conn.attached = (proj, rec["tid"], rec.get("session"))
+        conn.pty_sub = rid
         conn.pty_cb = lambda chunk: self._pty_out(conn, rid, chunk)
         screen.subs.append(conn.pty_cb)
         return {"screen": list(screen.display), "writer": self._writer(rec, conn),
@@ -513,6 +527,13 @@ class Server(Poller):
                 "ticket": rec["tid"], "project": proj, "stage": rec["stage"]}
 
     def _pty_out(self, conn: Conn, sid, chunk: bytes) -> None:
+        if len(conn.out) >= PTY_BACKLOG:
+            # a client that stopped reading -- a suspended TUI, a stalled ssh
+            # pane -- must not cost the daemon 1000 * 87 KiB. Drop the chunk
+            # and charge the counter; the marker below tells it to re-attach,
+            # and our pyte screen is authoritative anyway.
+            conn.dropped += 1
+            return
         if conn.dropped:
             # a wedged client lost frames, so its terminal emulation is now
             # desynced from ours. Zero FIRST (the marker goes through the same
@@ -530,9 +551,17 @@ class Server(Poller):
         except (binascii.Error, ValueError) as e:
             # decode BEFORE claiming: a junk frame must not take the writer slot
             raise PipelineError(f"data must be base64: {e}") from None
+        if len(data) > PTY_INPUT:
+            # a pty's input buffer is a few KiB and the master is non-blocking,
+            # so a larger write short-writes and truncates mid-keystroke
+            raise PipelineError(f"input is {len(data)} bytes; send at most "
+                                f"{PTY_INPUT} per op")
         if not self._writer(rec, conn):
             raise PipelineError("another client holds the writer")
-        return {"written": os.write(rec["pipe"].fileno(), data)}
+        n = os.write(rec["pipe"].fileno(), data)
+        # still possible on an already-full buffer: say so rather than let the
+        # client assume every byte landed
+        return {"written": n, "short": n < len(data)}
 
     def _op_resize(self, conn, rid, req) -> dict:
         """MUST-HAVE, not a nicety: a pane and a child that disagree about
@@ -552,3 +581,4 @@ class Server(Poller):
         was = conn.attached
         self._detach(conn)
         return {"detached": was[1] if was else None}
+

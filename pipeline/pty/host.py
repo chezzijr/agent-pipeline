@@ -66,7 +66,16 @@ class PtyProc:
         # signal the group, or claude's own children outlive the stage
         try:
             os.killpg(self.pid, sig)
-        except (ProcessLookupError, PermissionError):
+        except ProcessLookupError:
+            # `setsid()` happens in the child AFTER fork returns here, so a
+            # kill in that first millisecond finds no such group. The process
+            # exists; signal it directly rather than report a success we did
+            # not achieve.
+            try:
+                os.kill(self.pid, sig)
+            except ProcessLookupError:
+                pass
+        except PermissionError:
             pass
 
     def terminate(self) -> None:
@@ -123,9 +132,11 @@ def start(cmd: str, cwd, env: dict, rows: int = ROWS, cols: int = COLS):
     returns; on Linux it reports `EIO` rather than EOF once the child is gone,
     which `supervisor.pump` already treats as end-of-stream.
 
-    Every fd this process holds -- the socket, the flocks, the event DB, the
-    other children's masters -- is CLOEXEC (Python's default since PEP 446),
-    so `execvpe` is the fd hygiene; there is nothing to close by hand.
+    PEP 446 makes every fd Python opens non-inheritable, so `execvpe` closes
+    the socket, the flocks and the event DB for us -- but it does NOT cover
+    `os.forkpty`, which hands back an inheritable master. Left alone, the
+    second interactive stage would inherit the first one's master and could
+    type into another ticket's permission prompt, so we clear it by hand.
     """
     pid, fd = pty.fork()
     if pid == 0:                      # child: nothing here may return
@@ -140,5 +151,6 @@ def start(cmd: str, cwd, env: dict, rows: int = ROWS, cols: int = COLS):
         except BaseException:
             pass
         os._exit(127)
+    os.set_inheritable(fd, False)   # see the docstring: forkpty is the gap
     os.set_blocking(fd, False)
     return PtyProc(pid), os.fdopen(fd, "rb", buffering=0)
