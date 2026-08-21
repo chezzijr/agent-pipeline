@@ -11,7 +11,8 @@ from pathlib import Path
 
 from pipeline.core import PipelineError
 from pipeline.core.config import (compose_prompt, harness, is_readonly,
-                                  project_config, stage_config, stage_settings)
+                                  project_config, render, stage_config,
+                                  stage_settings)
 from pipeline.core.gate import gate
 from pipeline.core.machine import (CLEANUP_STAGES, CONTROL_FIELDS, HUMAN_GATES,
                                    MAX_ATTEMPTS, TERMINAL, apply_claims,
@@ -54,29 +55,23 @@ def spawn(project: Path, wt: Path, tid: str, stage: str, hcfg: dict) -> dict:
     """Start an agent and return immediately. The dispatcher never blocks on an
     agent, which is what makes this a pipeline rather than a call tree."""
     cfg = stage_config(stage)
+    if cfg.get("hooks") and not hcfg.get("supports_hooks", True):
+        # invariant 4: a hook is the only layer that decides with code. A
+        # harness that cannot register one would run this stage with only the
+        # tree-snapshot backstop -- detection after the fact, not prevention --
+        # so refuse instead of silently downgrading the one layer that promises.
+        raise PipelineError(f"harness cannot register hooks -- refusing to run "
+                            f"`{stage}` unguarded (declares hooks: {cfg['hooks']})")
     session = str(uuid.uuid4())
     logs = project / ".project" / "logs"
     logs.mkdir(parents=True, exist_ok=True)
     log = logs / f"{tid}-{stage}-{session[:8]}.log"
     prompt = compose_prompt(stage)
     settings = stage_settings(stage, cfg)
-    cmd = hcfg["cmd"].format(
-        model=cfg.get("model", "sonnet"),
-        effort_flag=(hcfg.get("effort_flag", "").format(effort=cfg["effort"])
-                     if cfg.get("effort") else ""),
-        session_flag=hcfg.get("session_flag", "").format(session=session),
-        settings_flag=(hcfg.get("settings_flag", "").format(
-            settings=shlex.quote(str(settings))) if settings else ""),
-        permission_mode=cfg.get("permission_mode", "acceptEdits"),
-        stage_prompt=shlex.quote(str(prompt)),
-        tools=cfg.get("tools") or (hcfg["write_tools"] if cfg.get("write")
-                                   else hcfg["readonly_tools"]),
-        cap=cfg.get("max_usd", hcfg.get("max_usd", 5)),
-        project=shlex.quote(str(project)),
-        ticket=shlex.quote(str(ticket_path(project, tid))),
-        result_file=shlex.quote(str(tickets_dir(project) / f"{tid}.result")),
-        id=tid,
-    )
+    cmd = render(hcfg, cfg, tid=tid, project=project,
+                ticket=ticket_path(project, tid),
+                result_file=tickets_dir(project) / f"{tid}.result",
+                session=session, prompt=prompt, settings=settings)
     fh = log.open("w")
     fh.write(f"$ {cmd}\n\n")
     fh.flush()

@@ -160,11 +160,43 @@ branch, diff, and revert with the code they describe.
 
 ## Porting to another harness
 
-Everything except `pipeline/harnesses/claude-code.toml` is plain files and Python. A new
-harness needs a `cmd` template that can (a) take a system prompt, (b) run in a
-directory, and (c) write a file. Do not write one speculatively -- run real
-tickets on one harness first; the second harness is what shows where the seam
-actually belongs.
+`pipeline/harnesses/codex.toml` is a second harness written to find out where the
+abstraction's seam actually sits -- untested against a real run (no codex account),
+tested instead by asserting the rendered `cmd` string, the same way `fake.toml` is
+exercised without a real agent (`tests/test_harness.py`).
+
+Three of the five capability gaps between `claude` and `codex exec` were already
+expressible with no code change: `effort_flag`, `session_flag` and `settings_flag`
+are optional and default to `""` (`fake.toml` proved this first), and `max_usd`
+maps to nothing simply by never appearing in the `cmd` template. `readonly_tools`/
+`write_tools` also ported as-is -- codex has no per-tool allowlist, but it does
+have a writability switch (`-s/--sandbox`), and both pairs express the same fact
+("may this stage write?") in the harness's own vocabulary.
+
+Two gaps forced the harness TOML format itself to grow a key:
+
+- **No `--append-system-prompt`.** `prompt_mode = "system" | "inline"`. `"system"`
+  (the default, what `claude-code.toml` declares) passes the composed prompt as a
+  path the harness's own template reads. `"inline"` (what `codex.toml` declares)
+  has `render()` read the composed prompt and prepend it to the work-ticket
+  message as codex's one positional `PROMPT` argument.
+- **No settings/hooks file.** `supports_hooks = true | false`. A stage that
+  declares `hooks:` on a harness with `supports_hooks = false` makes `spawn()`
+  raise instead of running the stage unguarded -- a hook is the only layer that
+  decides with code (see `CLAUDE.md` invariant 4), and a harness that cannot
+  register one gets refused, not silently downgraded to the tree-snapshot
+  backstop alone. Every stage in this repo declares hooks, so every stage is
+  refused on `codex.toml` today; that refusal, in code, is the honest answer for
+  a harness with no hook mechanism.
+
+`spawn()` used to build its command with one inline `.format()` call; that block
+is now `config.render()`, a separable function a test can call without spawning
+anything. The extraction is itself part of what porting to a second harness
+found: the render step wasn't factored out until something needed to call it
+without a subprocess.
+
+Do not write a third harness speculatively -- this one only exists to answer
+"does the seam hold," and it does, at the cost of exactly the two keys above.
 
 ## Tests
 
