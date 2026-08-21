@@ -48,8 +48,24 @@ corrected in the same commit). The guard stays the perimeter, which is what inva
 asks for; the settings-file allowlist route was not needed and was not taken.
 
 Fix: `permission_mode = "bypassPermissions"` in `claude-code.toml`, and `render()` reads
-stage frontmatter → harness → `acceptEdits`, so a harness that declares nothing is
-unchanged.
+stage frontmatter → the harness's default for *this template* → `acceptEdits`, so a
+harness that declares nothing is unchanged.
+
+**Headless only.** The first run after the fix cleared triage and then parked `planning`
+(`mode: interactive`, on the PTY) at Claude Code's terminal modal:
+
+```
+running in Bypass Permissions mode.
+❯ 1. No, exit
+  2. Yes, I accept
+```
+
+A stage sitting on that dialog is a stage nobody is steering. `interactive_cmd` exists
+precisely because an attended stage *can* answer a prompt, so it takes the opposite
+default: `interactive_permission_mode = "acceptEdits"`. Consequence worth knowing before
+starting an unattended run: an interactive `planning` still waits for a human on its first
+Bash command — attach with `pipeline tui`, or use `pipeline run` (no socket, nothing can
+attach, so `planning` runs headless with the guard as its only gate).
 
 ### B2. `base = "main"` while the app lived on `pipeline-app` — agents worked on dead code
 

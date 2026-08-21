@@ -99,11 +99,13 @@ def render(hcfg: dict, cfg: dict, *, tid: str, project: Path, ticket: Path,
         session_flag=hcfg.get("session_flag", "").format(session=session),
         settings_flag=(hcfg.get("settings_flag", "").format(
             settings=shlex.quote(str(settings))) if settings else ""),
-        # stage frontmatter wins, then the harness's own default; a harness
-        # that says nothing keeps the pre-2026-08-21 value. See
-        # `claude-code.toml`: `acceptEdits` denies every Bash command headless.
-        permission_mode=cfg.get("permission_mode",
-                                hcfg.get("permission_mode", "acceptEdits")),
+        # stage frontmatter wins, then the harness's default for THIS template
+        # (headless and interactive want opposite answers -- see
+        # `claude-code.toml`), then the pre-2026-08-21 value for a harness that
+        # declares nothing.
+        permission_mode=cfg.get("permission_mode", hcfg.get(
+            "interactive_permission_mode" if key == "interactive_cmd"
+            else "permission_mode", "acceptEdits")),
         stage_prompt=shlex.quote(str(prompt)),
         prompt=inline,
         tools=_tools(hcfg, cfg),

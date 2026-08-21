@@ -102,12 +102,12 @@ def test_headless_stages_get_the_harness_permission_mode_not_a_prompt():
     hcfg = config.harness("claude-code")
     assert hcfg["permission_mode"] == "bypassPermissions"
 
-    def rendered(stage_cfg, h=hcfg):
+    def rendered(stage_cfg, h=hcfg, key="cmd"):
         prompt = config.compose_prompt("review", h)
         cmd = config.render(h, stage_cfg, tid="TICKET-001", project=Path("/proj"),
                             ticket=Path("/proj/t.md"),
                             result_file=Path("/proj/t.result"), session="s1",
-                            prompt=prompt, settings=Path("/proj/s.json"))
+                            prompt=prompt, settings=Path("/proj/s.json"), key=key)
         prompt.unlink()
         return cmd
 
@@ -137,3 +137,28 @@ def test_the_skill_tool_is_granted_only_where_skills_are_declared():
     quiet = dict(hcfg); quiet.pop("skill_tool")
     assert "Skill" not in config._tools(quiet, config.stage_config("implementing")).split(","), \
         "a harness that cannot supply the tool must not have it invented for it"
+
+
+def test_an_interactive_stage_keeps_the_mode_that_can_ask():
+    """`bypassPermissions` on a real terminal opens a modal before the session
+    starts, and a stage parked on "Yes, I accept" is a stage nobody is
+    steering -- TICKET-016's planning run sat there until it was killed. The
+    interactive template is the one place a prompt CAN be answered, so it takes
+    the opposite default from the headless one."""
+    hcfg = config.harness("claude-code")
+    stage_cfg = config.stage_config("planning")
+    assert stage_cfg.get("mode") == "interactive", \
+        "fixture assumption broken: `planning` is no longer interactive"
+
+    def rendered(key):
+        prompt = config.compose_prompt("planning", hcfg)
+        cmd = config.render(hcfg, stage_cfg, tid="TICKET-001", project=Path("/proj"),
+                            ticket=Path("/proj/t.md"),
+                            result_file=Path("/proj/t.result"), session="s1",
+                            prompt=prompt, settings=Path("/proj/s.json"), key=key)
+        prompt.unlink()
+        return cmd
+
+    assert "--permission-mode acceptEdits" in rendered("interactive_cmd")
+    assert "--permission-mode bypassPermissions" in rendered("cmd"), \
+        "the same stage run headless still must not wait for an approval"

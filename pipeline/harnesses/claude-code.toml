@@ -32,6 +32,14 @@ max_usd = 5
 # (triage)") and a legitimate write command runs with no approval error.
 permission_mode = "bypassPermissions"
 
+# ...but ONLY headless. On a real terminal `bypassPermissions` opens a modal
+# ("Yes, I accept" / "No, exit") before the session starts, and a stage parked
+# on that dialog is a stage nobody is steering -- TICKET-016's planning run sat
+# there until it was killed. An interactive stage is the one place a permission
+# prompt can be answered, which is why `interactive_cmd` exists at all, so it
+# keeps the mode that asks.
+interactive_permission_mode = "acceptEdits"
+
 # The tool that lets a stage's `skills:` frontmatter mean anything. A harness
 # that omits this key gets no skills block in its prompt at all -- telling an
 # agent to invoke a tool it was not given is the failure mode the pipeline
