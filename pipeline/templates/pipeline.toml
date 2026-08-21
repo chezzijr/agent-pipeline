@@ -3,4 +3,5 @@
 test_one                = "pytest -x {test}"
 test_suite              = "pytest"
 test_suite_without_new  = "pytest --deselect {test}"
+# The branch tickets are cut from, and the one Tier A re-runs {test} against.
 base                    = "main"
