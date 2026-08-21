@@ -104,11 +104,44 @@ def write_atomic(path: Path, text: str) -> None:
     os.replace(tmp, path)
 
 
+FENCE_RE = re.compile(r"^ {0,3}(?P<f>`{3,}|~{3,})(?P<info>.*)$")
+
+
+def _fenced(lines: list[str]) -> list[bool]:
+    """One bool per line: is it inside a fenced code block (delimiters count)?
+
+    Every heading scan in this module consults this. Ticket bodies carry raw
+    test output inside fences -- gate.py embeds up to 1200 chars of it -- so a
+    `## ` or `### ` line in that output is captured data, not a heading.
+    Reading it as one splits the section and truncates the thread, and every
+    later entry becomes unreachable to a stage reading the thread as data.
+
+    CommonMark's closing rule, because the cheap version gets the embeds
+    wrong: a closing fence is the same character, at least as long as the
+    opener, and carries no info string.
+    """
+    out: list[bool] = []
+    fence: tuple[str, int] | None = None
+    for line in lines:
+        m = FENCE_RE.match(line)
+        if m is None:
+            out.append(fence is not None)
+            continue
+        out.append(True)  # a delimiter is never a heading either way
+        f, info = m.group("f"), m.group("info")
+        if fence is None:
+            fence = (f[0], len(f))
+        elif f[0] == fence[0] and len(f) >= fence[1] and not info.strip():
+            fence = None
+    return out
+
+
 def sections(body: str) -> dict[str, str]:
     """Map '## Name' -> its content. Content may be empty."""
     out, name, buf = {}, None, []
-    for line in body.splitlines():
-        m = re.match(r"^##\s+(.+?)\s*$", line)
+    lines = body.splitlines()
+    for line, fenced in zip(lines, _fenced(lines)):
+        m = None if fenced else re.match(r"^##\s+(.+?)\s*$", line)
         if m:
             if name is not None:
                 out[name] = "\n".join(buf).strip()
@@ -127,12 +160,13 @@ def append_entry(body: str, header: str, text: str) -> str:
     written past it land outside the thread and `thread()` stops seeing them."""
     entry = f"\n### {header}\n\n{text.strip()}\n"
     lines = body.splitlines(keepends=True)
+    fenced = _fenced([l.rstrip("\n") for l in lines])
     start = next((i for i, l in enumerate(lines)
-                  if re.match(r"^##\s+Thread\s*$", l)), None)
+                  if not fenced[i] and re.match(r"^##\s+Thread\s*$", l)), None)
     if start is None:
         return body.rstrip() + "\n\n## Thread\n" + entry
     end = next((i for i in range(start + 1, len(lines))
-                if re.match(r"^##\s+\S", lines[i])), len(lines))
+                if not fenced[i] and re.match(r"^##\s+\S", lines[i])), len(lines))
     rest = "".join(lines[end:])
     return "".join(lines[:end]).rstrip() + "\n" + entry + (f"\n{rest}" if rest else "")
 
@@ -440,8 +474,9 @@ class Ticket:
     def thread(self) -> list[ThreadEntry]:
         out: list[ThreadEntry] = []
         head, buf = None, []
-        for line in self.section("Thread").splitlines():
-            if line.startswith("### "):
+        lines = self.section("Thread").splitlines()
+        for line, fenced in zip(lines, _fenced(lines)):
+            if line.startswith("### ") and not fenced:
                 if head is not None:
                     out.append(ThreadEntry(*head, "\n".join(buf).strip()))
                 head, buf = _parse_header(line[4:]), []
