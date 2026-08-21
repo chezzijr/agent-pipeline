@@ -9,8 +9,10 @@ process sits holding context while it waits, and nothing dies because its caller
 did. Tickets are the queue; agents are stateless workers pulled off it.
 
     triage -> planning -> plan-validation -> [human] -> revalidating
-                                                              |
-             done <- merging <- verifying <- review <- implementing
+      |                                                       |
+      |    done <- merging <- verifying <- review <- implementing
+      |                          |
+      +-- (chore) -> implementing -> quick-review --+
 
 ## Why
 
@@ -226,7 +228,7 @@ the same log file -- otherwise both of those stop working.
    `reap()` collects finished processes on the next tick. A stage that hangs
    burns its own lease and nothing else.
 1. **An agent never writes `stage` — enforced, not requested.** It writes
-   `.project/tickets/<ID>.result` with `result: ok|fail|blocked|rejected`;
+   `.project/tickets/<ID>.result` with `result: ok|chore|fail|blocked|rejected`;
    `transition()` maps that to the next stage. The agent *can* edit the ticket
    file, so the dispatcher restores every control field (`stage`, `counters`,
    `branch`, `lease`, …) from a snapshot taken before the spawn, and escalates

@@ -33,5 +33,12 @@ depends on this field, so a triage that omits it has not finished.
 
 `result`:
 - `ok` -- reproduced, failing test committed
-- `rejected` -- cannot reproduce, or the ticket is invalid. Append everything
-  you tried to `## Thread` first; a rejection nobody can audit is worthless.
+- `chore` -- reproduced, failing test committed, AND the fix is small: you
+  can name every file it touches, each edit is a few lines, and no design
+  choice is left to make. The ticket then skips planning, plan-validation
+  and the approval gate, so `ok` is the safe answer whenever you are
+  unsure. Name the files you expect the fix to touch in `## Thread`;
+  `quick-review` checks the diff against them.
+- `rejected` -- cannot reproduce, or the ticket is invalid. Append
+  everything you tried to `## Thread` first; a rejection nobody can audit
+  is worthless.

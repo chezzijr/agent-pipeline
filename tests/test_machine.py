@@ -154,3 +154,26 @@ def test_a_rebase_conflict_returns_to_triage_and_is_bounded():
     assert c["rebase_conflicts"] == 1
     assert "stale_regate" not in c
     assert t("revalidating", "conflict", c)[0] == "escalated", "an unbounded conflict loop"
+
+
+def test_a_small_fix_takes_the_cheap_route():
+    """TICKET-025 changed one line and paid for planning, plan-validation and a
+    full review. A triage that reports the fix is small must route
+    `triage -> implementing -> quick-review -> verifying`, and `quick-review`
+    must be able to promote the ticket back onto the slow path."""
+    assert t("triage", "chore")[0] == "implementing", \
+        "a small fix still pays for planning, plan-validation and the approval gate"
+    assert t("quick-review", "ok")[0] == "verifying"
+    assert t("quick-review", "fail")[0] == "planning", \
+        "a cheap path that cannot promote itself lands a vacuous test unattended"
+    assert "quick-review" in M.KNOWN_STAGES
+    nxt, c = t("triage", "chore")
+    assert c["cheap_route"] == 1, "nothing carries the route as far as `implementing`"
+    assert t("implementing", "ok", c) == ("quick-review", {}), \
+        "the cheap route pays for the full review, or leaks its flag past the stage that consumes it"
+    assert t("implementing", "ok", {})[0] == "review", "the full route changed"
+    assert t("implementing", "blocked", {"cheap_route": 1})[0] == "planning", \
+        "a blocked chore re-gates a plan that does not exist"
+    assert t("quick-review", "fail", {"cheap_route": 1})[0] == "planning"
+    assert "cheap_route" not in M.BOUNDS.get("bugfix", {}), \
+        "a route flag is not a bounded loop counter"
