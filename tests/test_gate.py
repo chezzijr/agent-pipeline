@@ -87,6 +87,7 @@ def test_gate_blocks_a_plan_step_citing_an_undeclared_path():
     ok, failures = gate(d, "TICKET-001")
     assert not ok
     assert any("names no declared file" in f for f in failures), failures
+    assert any("files_declared" in f for f in failures), failures
     shutil.rmtree(d)
 
 
