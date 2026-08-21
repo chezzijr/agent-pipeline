@@ -1,4 +1,5 @@
 """Tier A gate: the checks that must not be talkable-out-of."""
+import re
 import shutil
 import subprocess
 import tempfile
@@ -7,6 +8,24 @@ from pathlib import Path
 from helpers import FIXTURE, project
 from pipeline.core import ticket as T
 from pipeline.core.gate import gate
+
+
+def _set_digest(body: str) -> str:
+    """FIXTURE with its `## Digest` content replaced by `body`.
+
+    Derived from the fixture rather than matched against a copy of its digest
+    text: a `.replace()` of a literal that has drifted no-ops *silently* and
+    leaves the test asserting against an unmodified fixture. The assert below
+    is what makes that drift loud.
+
+    Deliberately local to this file, and stdlib-only, rather than a constant
+    imported from `helpers`: DEC-017 -- the gate copies THIS file onto a
+    checkout of base and imports it there, so a name that exists only on the
+    branch turns the base run into a collection error."""
+    out, n = re.subn(r"(?<=^## Digest\n).*?(?=^## Decisions checked$)",
+                     body, FIXTURE, flags=re.S | re.M)
+    assert n == 1, "FIXTURE's `## Digest` section moved -- _set_digest is stale"
+    return out
 
 
 def _git_ticket_project(base_py: str, branch_py: str):
@@ -46,7 +65,7 @@ def test_gate_passes_a_complete_ticket():
 
 
 def test_gate_blocks_an_empty_digest():
-    d = project(FIXTURE.replace("## Digest\nthing.py holds it\n", "## Digest\n"))
+    d = project(_set_digest(""))
     ok, failures = gate(d, "TICKET-001")
     assert not ok and any("Digest" in f for f in failures), failures
     shutil.rmtree(d)
@@ -206,10 +225,30 @@ def test_gate_blocks_a_one_word_digest_and_an_unresolvable_decision_id():
     """Both Tier A content checks are non-emptiness only: a digest of one word
     passes, and a cited `DEC-999` passes though no such record exists in
     `.project/decisions/`."""
-    d = project(FIXTURE.replace("## Digest\nthing.py holds it\n", "## Digest\nx\n")
-                       .replace("none relevant (grepped: cache, evict)", "DEC-999"))
+    d = project(_set_digest("x\n")
+                .replace("none relevant (grepped: cache, evict)", "DEC-999"))
     ok, failures = gate(d, "TICKET-001")
     assert not ok, "one-word digest and unresolvable DEC-999 both passed the gate"
     assert any("Digest" in f for f in failures), failures
     assert any("DEC-999" in f for f in failures), failures
+    shutil.rmtree(d)
+
+
+def test_gate_notes_a_superseded_decision_and_accepts_a_justified_short_digest():
+    """A cited id that resolves must not fail; a superseded one is history, not
+    a finding; and a short digest passes only when it says why it is short."""
+    d = project(_set_digest("digest-short: one file, one line\n"
+                            "- thing.py holds it\n")
+                .replace("none relevant (grepped: cache, evict)",
+                         "checked DEC-002 (superseded) and DEC-003"))
+    dec = d / ".project" / "decisions"
+    dec.mkdir()
+    (dec / "DEC-002.md").write_text(
+        "# DEC-002\n\nold\n\n%s\n- superseded-by: DEC-003 (2026-08-21)\n"
+        % T.SUPERSEDED_MARKER)
+    (dec / "DEC-003.md").write_text("# DEC-003\n\nstill binding\n")
+    ok, failures = gate(d, "TICKET-001")
+    assert ok, failures
+    text = (d / ".project/tickets/TICKET-001.md").read_text()
+    assert "DEC-002 is superseded" in text, text
     shutil.rmtree(d)
