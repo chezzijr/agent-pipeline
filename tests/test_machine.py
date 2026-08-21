@@ -39,6 +39,21 @@ def test_bounds_escalate_on_the_second_failure():
         assert c[key] == 2
 
 
+def test_a_fenced_file_is_gated_before_merge():
+    """CLAUDE.md fences four things off from unattended merge:
+    `pipeline/hooks/dangerous-commands.py`, `transition()`, `validate_meta()`
+    and `CONTROL_FIELDS`. The dispatcher holds no such list, and no human gate
+    stands between `implementing` and `done` -- a diff touching a fenced file
+    lands with the plan gate as its only human."""
+    assert getattr(M, "FENCED", None), "no fenced-file list in the dispatcher"
+
+    stage, c, path = "implementing", {}, []
+    while stage not in M.TERMINAL and len(path) < 10:
+        stage, c = M.transition(stage, "ok", c, "feature")
+        path.append(stage)
+    assert set(path) & M.HUMAN_GATES, f"no human gate between implementing and done: {path}"
+
+
 def test_bounds_come_from_the_ticket_class():
     """A refactor gets a third review loop; a bugfix does not."""
     assert t("review", "fail", {"review_loops": 1}, "refactor")[0] == "implementing"
