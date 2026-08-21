@@ -283,6 +283,23 @@ def test_the_dispatcher_writes_typed_thread_entries():
     shutil.rmtree(d)
 
 
+def test_a_heading_inside_a_fenced_block_is_not_a_section():
+    """The gate and `verifying` embed raw test output inside ``` fences. A
+    `## ` line in that output must not open a section: it truncates the thread
+    and every later entry becomes unreachable to a stage reading it as data."""
+    thread = ("\n### entry one\n\n"
+              "```\n## Acceptance criteria\ncaptured output, not a heading\n```\n"
+              "\n### entry two\n\nmust stay reachable\n")
+    s = T.sections("## Summary\nx\n## Thread\n" + thread)
+    assert "Acceptance criteria" not in s, "a fenced `## ` line opened a section"
+    assert "must stay reachable" in s["Thread"], "the thread was truncated"
+
+    d = project(FIXTURE + thread)
+    t = Ticket.load(d / ".project/tickets/TICKET-001.md")
+    assert len(t.thread()) == 2, [e.text for e in t.thread()]
+    shutil.rmtree(d)
+
+
 def test_a_lease_nobody_can_read_escalates_instead_of_crashing():
     """`lease.expires` is the field `validate_meta` never checked. Unquoted,
     YAML hands back a `datetime` and `fromisoformat` raised TypeError; a naive
