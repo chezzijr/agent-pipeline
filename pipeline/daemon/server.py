@@ -539,9 +539,11 @@ class Server(Poller):
         width render garbage. Writer-only, because it reshapes the terminal
         the writer is typing into."""
         rec = self._pty(conn)
+        # bounds BEFORE claiming, exactly as `input` decodes first: a junk
+        # frame must not take a free writer slot on its way to an error
+        rows, cols = _dim(req, "rows"), _dim(req, "cols")
         if not self._writer(rec, conn):
             raise PipelineError("another client holds the writer")
-        rows, cols = _dim(req, "rows"), _dim(req, "cols")
         host.set_winsize(rec["pipe"].fileno(), rows, cols)
         rec["screen"].resize(rows, cols)
         return {"rows": rows, "cols": cols}

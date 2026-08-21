@@ -217,6 +217,15 @@ def test_resize_reaches_both_the_child_and_the_screen():
                     {"rows": "big", "cols": 80}, {"cols": 80}):
             r = ask(server, a, id=4, op="resize", **bad)
             assert not r["ok"], f"{bad} was accepted"
+
+        # a refused op must not take a free writer slot on its way out
+        b, _bpeer = client(server)
+        ask(server, b, id=5, op="attach", ticket="TICKET-001")
+        ask(server, a, id=6, op="detach")
+        assert rec["writer"] is None
+        assert not ask(server, b, id=7, op="resize", rows=0, cols=80)["ok"]
+        assert not ask(server, b, id=8, op="input", data="not base64!!")["ok"]
+        assert rec["writer"] is None, "a refused op claimed the writer"
     finally:
         rec["proc"].terminate()
         supervisor.close_child(rec)
