@@ -111,3 +111,10 @@ def test_the_docs_name_the_dependencies_and_the_targets_the_code_has():
     assert stale, "the README stopped documenting the stale re-gate"
     around = readme[readme.index("stale_regate") - 300:readme.index("stale_regate")]
     assert f"`{target}`" in around, around
+
+
+def test_every_stage_declares_the_effort_its_job_needs():
+    """`effort` is per-stage. A stage that declares none drops the flag from the
+    spawn command entirely and runs at whatever the harness defaults to."""
+    missing = [s for s in C.agent_stages() if not C.stage_config(s).get("effort")]
+    assert not missing, f"stages with no effort in frontmatter: {missing}"
