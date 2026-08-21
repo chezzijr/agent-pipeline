@@ -20,6 +20,14 @@ The plan is already researched and approved. Execute it.
    opportunistic cleanups, no "while I was in here".
 4. Confirm the ticket's failing test now passes and commit.
 
+A ticket on the cheap route has no `## Plan` and no `## Digest`: `triage`
+judged the fix small, and the dispatcher skipped planning. If `## Plan` is
+empty, work from `## Summary` and `## Reproduction` instead, keep the diff
+inside the files those two sections name, and report every file you touched
+in `files_declared`. If the fix needs a file the ticket never names, that
+is `blocked`, not a wider diff -- `blocked` sends it to `planning`, which
+is where a fix that size belonged.
+
 If the plan turns out to be wrong -- an API does not work as the plan assumed,
 a step is impossible, the fix would require touching files outside
 `files_declared` -- **do not improvise a different plan**:

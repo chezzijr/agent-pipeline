@@ -145,8 +145,12 @@ pipeline tui                     # live view; a/r/A act on the human gates
 pipeline logs TICKET-003 -f      # one stage's stream
 ```
 
-The ticket will stop at `awaiting-approval` for the human — that gate is the point, so
-do not describe filing as "it will be fixed automatically".
+The ticket stops at `awaiting-approval` for the human, unless `triage` judges the fix
+small enough for the cheap route (`triage -> implementing -> quick-review -> verifying
+-> merging`), which has no human gate; `quick-review` returns it to `planning`, and so
+to the approval gate, if the diff or the test does not hold up. The class table below
+does not change: there is no `chore` class, and a human cannot request the cheap route.
+That gate is the point, so do not describe filing as "it will be fixed automatically".
 
 ## Do not
 

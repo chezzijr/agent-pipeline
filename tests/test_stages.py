@@ -42,8 +42,16 @@ def test_the_composed_prompt_carries_the_stage_view():
 
 
 def test_every_stage_named_by_the_state_machine_has_a_prompt():
-    reachable = {M.transition(s, r, {})[0] for s in C.agent_stages()
-                 for r in ["ok", "fail", "blocked", "rejected"]}
+    # `counters` and `klass` are part of the table, not decoration:
+    # `holistic-review` is reachable only for a non-bugfix class, and
+    # `quick-review` only with `cheap_route` set. Varying `result` alone
+    # left both prompts unenforced.
+    variants = [({}, "bugfix"), ({}, "refactor"), ({"cheap_route": 1}, "bugfix")]
+    reachable = {M.transition(s, r, c, k)[0] for s in C.agent_stages()
+                 for r in ["ok", "fail", "blocked", "rejected", "chore"]
+                 for c, k in variants}
+    assert {"quick-review", "holistic-review"} <= reachable, \
+        "a variant stopped covering the class- or route-dependent rows"
     for stage in reachable - M.TERMINAL - M.HUMAN_GATES - M.DISPATCHER_STAGES:
         assert (C.STAGES_DIR / f"{stage}.md").is_file(), f"no prompt for `{stage}`"
 
