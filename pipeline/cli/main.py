@@ -312,18 +312,27 @@ def cmd_logs(args) -> None:
     log = logs[-1]
     print(f"-- {log.relative_to(project)}")
     reader = StreamReader()
+    shown = False
     try:
         with log.open("rb") as fh:
             while True:
                 chunk = fh.read(1 << 16)
                 if not chunk:
                     if not args.follow:
+                        # an interactive stage's log is raw terminal output, so
+                        # there is no stream-json in it to render. Say so, or
+                        # this prints a header and nothing else and looks broken
+                        if not shown:
+                            print(f"(no stream-json here -- an interactive "
+                                  f"stage's log is the raw terminal stream: "
+                                  f"cat {log})")
                         return
                     time.sleep(0.4)
                     continue
                 for ev in reader.feed(chunk):
                     line = render(ev)
                     if line:
+                        shown = True
                         print(line, flush=True)
                     if ev["kind"] == "result":
                         return
