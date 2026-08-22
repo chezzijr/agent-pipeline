@@ -2,6 +2,8 @@
 name = "pipeline"
 version = "0.1.0"
 description = "Ticket-driven agent pipeline dispatcher"
+license = "MIT"
+license-files = ["LICENSE", "NOTICE"]
 requires-python = ">=3.11"
 dependencies = [
     "pyyaml>=6",

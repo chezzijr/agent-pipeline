@@ -409,6 +409,6 @@ second agent onto the same stage in the same worktree.
 
 ## Licence
 
-The code is unlicensed so far -- treat it as all rights reserved until a
-`LICENSE` lands. Three stage prompts embed text derived from the MIT-licensed
-`superpowers` skills; `NOTICE` carries that attribution.
+MIT -- see `LICENSE`. Three stage prompts embed text derived from the
+MIT-licensed `superpowers` skills; `NOTICE` carries that attribution and has to
+travel with the code.
