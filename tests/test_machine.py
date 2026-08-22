@@ -53,9 +53,10 @@ def test_bounds_escalate_on_the_second_failure():
 
 
 def test_a_fenced_file_is_gated_before_merge():
-    """CLAUDE.md fences four things off from unattended merge:
-    `pipeline/hooks/dangerous-commands.py`, `transition()`, `validate_meta()`
-    and `CONTROL_FIELDS`. The dispatcher holds no such list, and no human gate
+    """CLAUDE.md fences five things off from unattended merge:
+    `pipeline/hooks/dangerous-commands.py`, `transition()`, `validate_meta()`,
+    `CONTROL_FIELDS` and `strip_settings_sources()`. The dispatcher holds no
+    such list, and no human gate
     stands between `implementing` and `done` -- a diff touching a fenced file
     lands with the plan gate as its only human."""
     assert getattr(M, "FENCED", None), "no fenced-file list in the dispatcher"

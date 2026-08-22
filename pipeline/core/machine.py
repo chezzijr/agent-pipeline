@@ -19,6 +19,7 @@ FENCED = {
     "pipeline/hooks/dangerous-commands.py": None,
     "pipeline/core/machine.py": ("transition", "CONTROL_FIELDS"),
     "pipeline/core/ticket.py": ("validate_meta",),
+    "pipeline/core/worktree.py": ("strip_settings_sources",),
 }
 KNOWN_STAGES = TERMINAL | HUMAN_GATES | {
     "new", "triage", "planning", "plan-validation", "revalidating",
