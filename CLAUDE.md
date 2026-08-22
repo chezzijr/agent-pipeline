@@ -171,13 +171,17 @@ claiming the guard works.
   bind before (they survive `bypassPermissions`). The full list of what the
   flag costs is in `claude-code.toml`; every line of it was A/B'd against a
   live spawn, because a first draft asserted the opposite and was wrong.
-- **A `write: true` stage can still disable its own guard.** Writing
-  `<worktree>/.claude/settings.json` = `{"disableAllHooks": true}` drops the
-  `--settings` PreToolUse hook with it, so every later spawn in that worktree
-  runs unguarded. Measured identical with and without `--setting-sources
-  project`: the project source was always loaded, so this predates that flag
-  and is not caused by it. Open hole in invariant 4 — fixing it is a `FENCED`
-  change and needs human review.
+- **A worktree-supplied settings file used to be able to disable its own
+  guard.** Writing `<worktree>/.claude/settings.json` =
+  `{"disableAllHooks": true}` drops the `--settings` PreToolUse hook with it,
+  so every later spawn in that worktree would run unguarded.
+  `strip_settings_sources()` in `pipeline/core/worktree.py` removes that file
+  and `.claude/settings.local.json` before every spawn and before `start()`'s
+  read-only baseline. A file written *mid-run* does not affect the run
+  already going — settings are resolved at session start, verified against
+  `claude` 2.1.238 on 2026-08-22 — so stripping at spawn is a complete
+  defence. A tracked settings file is hidden with `--skip-worktree` so its
+  deletion never enters the ticket's own diff.
 
 ## Conventions
 

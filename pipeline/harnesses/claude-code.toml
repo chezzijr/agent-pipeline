@@ -128,8 +128,10 @@ no_skills_flag = "--disable-slash-commands"
 #     `bypassPermissions` (`Bash(git worktree remove:*)` in a user/local source
 #     came back "Permission to use Bash ... has been denied" without the flag,
 #     and ran with it), so this is a real net removed -- for anyone whose
-#     `~/.claude/settings.json` carries one. A deny rule in the PROJECT source
-#     still applies, and is the place to put one that must bind stages.
+#     `~/.claude/settings.json` carries one. A deny rule in the worktree's own
+#     project source no longer binds either: `strip_settings_sources()` removes
+#     `<worktree>/.claude/settings.json` before every spawn, so the pipeline's
+#     own `--settings` file is the only place left that a rule binds.
 #   * `apiKeyHelper`, `env` and `awsAuthRefresh` live in user settings too. Auth
 #     by OAuth or `ANTHROPIC_API_KEY` is unaffected (every spawn in the session
 #     that added this authenticated fine), but a machine that puts auth or a
@@ -146,12 +148,14 @@ no_skills_flag = "--disable-slash-commands"
 # dispatcher's to manage." That verification is the condition of using it
 # (invariant 4); redo it if either flag changes.
 #
-# Unrelated to this flag but found while verifying it, and NOT fixed here: a
-# `write: true` stage can disable its own guard by writing
-# `<worktree>/.claude/settings.json` = `{"disableAllHooks": true}`, which drops
-# the `--settings` PreToolUse hook with it. Measured identical with and without
-# `--setting-sources project` -- the project source was already loaded, so this
-# flag neither creates nor widens it. Pre-existing hole in invariant 4.
+# Unrelated to this flag but found while verifying it: a `write: true` stage
+# could disable its own guard by writing `<worktree>/.claude/settings.json` =
+# `{"disableAllHooks": true}`, which drops the `--settings` PreToolUse hook
+# with it. Measured identical with and without `--setting-sources project` --
+# the project source was already loaded, so this predated the flag. Fixed by
+# `strip_settings_sources()` in `pipeline/core/worktree.py`, which the
+# dispatcher runs before every spawn and before a read-only stage's baseline
+# snapshot.
 cmd = """claude -p --model {model} {effort_flag} {session_flag} {settings_flag} \
 --output-format stream-json --verbose \
 --setting-sources project \
