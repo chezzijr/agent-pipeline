@@ -60,8 +60,12 @@ skill_tool = "Skill"
 # 98 commands and 22,574 tokens of opening context become 0 and 19,946 on
 # `claude-haiku-4-5-20251001`. That is 2,628 tokens per TURN, and a stage
 # re-reads its opening context on every one -- a 40-turn stage pays it 40
-# times. `render()` only emits this where `skills:` is absent, so the four
-# read-only stages get it and `triage`/`planning`/`implementing` do not.
+# times. `render()` only emits this where `skills:` is absent, which since
+# 2026-08-22 is every stage: `triage`/`planning`/`implementing` inlined the
+# three superpowers skills they used to invoke, because the logs showed them
+# invoking one on 70/100 runs -- the body was being paid anyway, and the tool
+# plus the 46-skill listing rode on top of it. The key stays: a future stage
+# that declares a real `skills:` gets the tool back with no code change.
 #
 # NOT `--bare`, which also skips hooks. Note what does and does not catch that:
 # `spawn()` refuses on `supports_hooks = false` (`daemon/supervisor.py:301`) --
@@ -96,8 +100,61 @@ no_skills_flag = "--disable-slash-commands"
 # "Write"]` and `"mcp":[]`. `--bare` is not the alternative -- it skips hooks,
 # and `spawn()` already refuses a stage that cannot register
 # `dangerous-commands.py`.
+#
+# `--setting-sources project` is the same argument one level up: without it a
+# stage inherits the whole of the operator's `~/.claude`. On this machine that
+# was 6 plugins, 46 skills, and -- the part that is not about tokens -- two
+# plugin `SessionStart` hooks firing inside every headless spawn:
+#
+#   PONYTAIL MODE ACTIVE -- "You are a lazy senior developer... shortest diff wins"
+#   CAVEMAN MODE ACTIVE  -- "Respond terse like smart caveman. Drop articles..."
+#
+# Nobody wrote those for a stage, and `implementing` was writing merged code
+# under them. Measured `claude-haiku-4-5-20251001`, 2026-08-22, same cwd and
+# toolset: 22,478 tokens of opening context -> 17,086 with this and
+# `--disable-slash-commands`.
+#
+# What it costs, all three verified 2026-08-22 by A/B against a live spawn --
+# same cwd, the flag as the only variable. Do not restate any of this from
+# memory; an earlier draft of this comment claimed the opposite of the first
+# one and a review caught it:
+#
+#   * The operator's `~/.claude/CLAUDE.md` STOPS reaching stages. The project
+#     `CLAUDE.md` still loads; the user-level one does not. Anything a stage
+#     genuinely needs belongs in the project file or the stage prompt, which
+#     is where it should have been -- the global file told every stage to use
+#     skills and an `AskUserQuestion` tool that a headless stage has never had.
+#   * Operator `permissions.deny` rules stop applying. They DO survive
+#     `bypassPermissions` (`Bash(git worktree remove:*)` in a user/local source
+#     came back "Permission to use Bash ... has been denied" without the flag,
+#     and ran with it), so this is a real net removed -- for anyone whose
+#     `~/.claude/settings.json` carries one. A deny rule in the PROJECT source
+#     still applies, and is the place to put one that must bind stages.
+#   * `apiKeyHelper`, `env` and `awsAuthRefresh` live in user settings too. Auth
+#     by OAuth or `ANTHROPIC_API_KEY` is unaffected (every spawn in the session
+#     that added this authenticated fine), but a machine that puts auth or a
+#     proxy endpoint in user settings will spawn stages that cannot reach the
+#     API, write no `.result`, and burn `no_result` to escalation. This flag is
+#     hard-coded here with no per-project override; that is the first thing to
+#     revisit if stages start failing on a new machine.
+#
+# What it does NOT cost is the guard. Same axis as `--bare` and it lands on the
+# right side of it: `--settings` is an explicit flag, unaffected by
+# `--setting-sources`, so the guard still registers. Verified 2026-08-22 under
+# BOTH this and `--disable-slash-commands` -- `git worktree remove foo` came
+# back "Blocked by the pipeline guard (this stage): worktrees are the
+# dispatcher's to manage." That verification is the condition of using it
+# (invariant 4); redo it if either flag changes.
+#
+# Unrelated to this flag but found while verifying it, and NOT fixed here: a
+# `write: true` stage can disable its own guard by writing
+# `<worktree>/.claude/settings.json` = `{"disableAllHooks": true}`, which drops
+# the `--settings` PreToolUse hook with it. Measured identical with and without
+# `--setting-sources project` -- the project source was already loaded, so this
+# flag neither creates nor widens it. Pre-existing hole in invariant 4.
 cmd = """claude -p --model {model} {effort_flag} {session_flag} {settings_flag} \
 --output-format stream-json --verbose \
+--setting-sources project \
 --append-system-prompt "$(cat {stage_prompt})" \
 --tools "{tools}" --strict-mcp-config {skills_flag} \
 --permission-mode {permission_mode} \
@@ -114,6 +171,7 @@ cmd = """claude -p --model {model} {effort_flag} {session_flag} {settings_flag} 
 # and `--tools` stay: they work outside print mode and they are the money guard.
 # A harness without this key falls back to `cmd` under the PTY.
 interactive_cmd = """claude --model {model} {effort_flag} {session_flag} {settings_flag} \
+--setting-sources project \
 --append-system-prompt "$(cat {stage_prompt})" \
 --tools "{tools}" --strict-mcp-config {skills_flag} \
 --permission-mode {permission_mode} \

@@ -3,6 +3,8 @@ by asserting the rendered command string, same as fake.toml is exercised by
 running it. This is also what proves the seam: a harness the data model
 cannot express (no system-prompt flag, no hooks file) forces exactly the two
 changes documented in codex.toml's header comment."""
+import re
+import tempfile
 from pathlib import Path
 
 from pipeline.core import PipelineError, config
@@ -144,22 +146,30 @@ def test_headless_stages_get_the_harness_permission_mode_not_a_prompt():
         "a harness that declares nothing must keep the pre-fix value"
 
 
+# Both skill tests below take their stage as a cfg DICT, not a stage name.
+# They used to read `implementing` off disk, which was honest only while some
+# stage declared `skills:`. Since 2026-08-22 none does -- the three that did
+# inlined their skill -- and a fixture read off disk would have made both tests
+# assert the same branch twice and pass forever. The machinery is still live
+# for a stage that declares a real skill later, so it is still tested; the
+# input just no longer depends on what the shipped stages happen to want.
+SKILLED = {"skills": ["demo:some-skill"], "write": True}
+UNSKILLED = {"write": True}
+
+
 def test_the_skill_tool_is_granted_only_where_skills_are_declared():
     """A stage's `skills:` used to reach the prompt while `Skill` never
     reached `--tools`, so triage/planning/implementing each opened with
     "No such tool available: Skill". Grant it exactly where it is declared."""
     hcfg = config.harness("claude-code")
     assert hcfg["skill_tool"] == "Skill"
-    assert config.stage_config("implementing").get("skills"), \
-        "fixture assumption broken: `implementing` no longer declares skills"
-    assert not config.stage_config("review").get("skills")
 
-    tools = config._tools(hcfg, config.stage_config("implementing"))
+    tools = config._tools(hcfg, SKILLED)
     assert tools.split(",")[-1] == "Skill"
-    assert "Skill" not in config._tools(hcfg, config.stage_config("review")).split(","), \
+    assert "Skill" not in config._tools(hcfg, UNSKILLED).split(","), \
         "a stage that declares no skills must not get the tool"
     quiet = dict(hcfg); quiet.pop("skill_tool")
-    assert "Skill" not in config._tools(quiet, config.stage_config("implementing")).split(","), \
+    assert "Skill" not in config._tools(quiet, SKILLED).split(","), \
         "a harness that cannot supply the tool must not have it invented for it"
 
 
@@ -172,14 +182,13 @@ def test_a_stage_with_no_skills_is_spawned_without_the_skill_machinery():
     hooks, and a stage that cannot register the guard is refused outright."""
     hcfg = config.harness("claude-code")
     assert hcfg["no_skills_flag"] == "--disable-slash-commands"
-    assert config.stage_config("implementing").get("skills"), \
-        "fixture assumption broken: `implementing` no longer declares skills"
-    assert not config.stage_config("review").get("skills")
 
-    def cmd(stage, harness=hcfg):
-        prompt = config.compose_prompt(stage)
+    def cmd(cfg, harness=hcfg):
+        f = tempfile.NamedTemporaryFile("w", suffix=".md", delete=False)
+        f.write("stage body"); f.close()      # close: mkstemp's fd would leak
+        prompt = Path(f.name)
         try:
-            return config.render(harness, config.stage_config(stage),
+            return config.render(harness, cfg,
                                  tid="TICKET-001", project=Path("/proj"),
                                  ticket=Path("/proj/t.md"),
                                  result_file=Path("/proj/t.result"),
@@ -187,13 +196,47 @@ def test_a_stage_with_no_skills_is_spawned_without_the_skill_machinery():
         finally:
             prompt.unlink()
 
-    assert "--disable-slash-commands" in cmd("review"), \
-        "a read-only stage declaring no skills should shed them"
-    assert "--disable-slash-commands" not in cmd("implementing"), \
+    assert "--disable-slash-commands" in cmd(UNSKILLED), \
+        "a stage declaring no skills should shed them"
+    assert "--disable-slash-commands" not in cmd(SKILLED), \
         "a stage that USES a skill must keep the tool that invokes it"
     # a harness that declares no such flag must not have one invented for it
     quiet = dict(hcfg); quiet.pop("no_skills_flag")
-    assert "--disable-slash-commands" not in cmd("review", quiet)
+    assert "--disable-slash-commands" not in cmd(UNSKILLED, quiet)
+
+    # ...and every stage the repo actually ships is now on the shedding side.
+    for stage in config.agent_stages():
+        assert not config.stage_config(stage).get("skills"), \
+            f"{stage} declares skills again -- intended, but see NOTICE first"
+
+
+def test_a_stage_does_not_inherit_the_operators_plugins():
+    """`--setting-sources project` in BOTH templates. Without it a spawn loads
+    the operator's whole `~/.claude`: on the machine this was found on, 6
+    plugins and two `SessionStart` hooks that put every stage into a persona
+    ("You are a lazy senior developer... shortest working diff wins"), which
+    `implementing` was then writing merged code under.
+
+    `interactive_cmd` is listed separately because `planning` is the stage that
+    uses it, and it is the expensive one to get wrong."""
+    hcfg = config.harness("claude-code")
+    for key in ("cmd", "interactive_cmd"):
+        f = tempfile.NamedTemporaryFile("w", suffix=".md", delete=False)
+        f.write("stage body"); f.close()      # close: mkstemp's fd would leak
+        prompt = Path(f.name)
+        try:
+            rendered = config.render(hcfg, UNSKILLED, tid="TICKET-001",
+                                     project=Path("/proj"),
+                                     ticket=Path("/proj/t.md"),
+                                     result_file=Path("/proj/t.result"),
+                                     session="s1", prompt=prompt, key=key)
+        finally:
+            prompt.unlink()
+        # the VALUE, not just the prefix: `--setting-sources project,user`
+        # contains the substring and reinstates everything the flag exists to
+        # drop, so a widening would otherwise pass this test unchanged.
+        assert re.search(r"--setting-sources\s+project(\s|$)", rendered), \
+            f"{key} inherits the operator's plugins, hooks and skills"
 
 
 def test_an_interactive_stage_keeps_the_mode_that_can_ask():

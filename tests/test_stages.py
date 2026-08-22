@@ -83,16 +83,31 @@ def test_every_stage_that_can_run_bash_has_the_guard():
 def test_declared_skills_reach_the_prompt_only_when_the_harness_grants_the_tool():
     """Both directions, because the block is only honest in one of them: the
     2026-08-21 run appended it for every harness, and the agent's first turn
-    was always `Skill(...)` -> "No such tool available: Skill"."""
-    granted = C.compose_prompt("implementing", {"skill_tool": "Skill"})
-    text = granted.read_text(); granted.unlink()
-    assert "/superpowers:test-driven-development" in text
+    was always `Skill(...)` -> "No such tool available: Skill".
 
-    for hcfg in ({}, None, C.harness("codex")):
-        f = C.compose_prompt("implementing", hcfg)
-        text = f.read_text(); f.unlink()
-        assert "superpowers:test-driven-development" not in text, \
-            f"{hcfg}: told the agent to invoke a tool the harness cannot give it"
+    `compose_prompt()` takes a stage NAME and reads it off disk, so unlike the
+    two tests in test_harness.py this one cannot be handed a cfg dict. Since
+    2026-08-22 no shipped stage declares `skills:` -- the three that did inlined
+    their skill -- so it writes its own stage instead. The leading underscore is
+    what keeps it out of `agent_stages()`, which globs `*.md` and skips `_`
+    (the same convention that hides `_common.md`); without it, every test that
+    enumerates the stages would pick this file up mid-run."""
+    fixture = C.STAGES_DIR / "_skillfixture.md"
+    fixture.write_text("---\nskills: [demo:some-skill]\n---\n\nfixture body\n")
+    try:
+        granted = C.compose_prompt("_skillfixture", {"skill_tool": "Skill"})
+        text = granted.read_text(); granted.unlink()
+        assert "/demo:some-skill" in text
+
+        for hcfg in ({}, None, C.harness("codex")):
+            f = C.compose_prompt("_skillfixture", hcfg)
+            text = f.read_text(); f.unlink()
+            assert "demo:some-skill" not in text, \
+                f"{hcfg}: told the agent to invoke a tool the harness cannot give it"
+        assert "_skillfixture" not in C.agent_stages(), \
+            "the fixture leaked into the stage list"
+    finally:
+        fixture.unlink()
 
 
 def test_data_files_live_inside_the_package_so_they_survive_install():

@@ -7,7 +7,21 @@ mode: interactive
 write: true
 max_usd: 5
 hooks: [dangerous-commands]
-skills: [superpowers:writing-plans]
+# `## Writing the plan` below is derived from the superpowers skill
+# `writing-plans` (MIT, (c) 2025 Jesse Vincent) -- see NOTICE. It was a
+# `skills:` entry until 2026-08-22; the logs showed it invoked on 31 of 35 runs,
+# so the body was paid on almost every run anyway.
+#
+# Filtered harder than the other two, and not for size: the skill prescribes a
+# plan DOCUMENT -- `# [Feature Name] Implementation Plan`, a Global Constraints
+# block, `### Task N` sections. That is a different artifact from the `## Plan`
+# numbered-step list Tier A parses above, and inlining it verbatim would have
+# told this stage to write something the gate rejects. Only the parts that
+# survive contact with the gate are here. `## Self-Review` is dropped because
+# `plan-validation` is that step and scores it on eight checks; `## Execution
+# Handoff` because it hands off to a skill that no longer exists here.
+# Frontmatter is stripped before the prompt is composed (`split_frontmatter`),
+# so this note costs the agent nothing.
 ---
 
 ## Your stage: planning
@@ -98,6 +112,46 @@ Write the questions for a human who has not read the code today:
 4. Say what changes downstream for each option, in one line.
 5. Keep the whole block under 20 lines. Put the research in `## Digest`; a
    human answering a question must not have to read a plan first.
+
+## Writing the plan
+
+**Check the scope first.** If this ticket covers several independent
+subsystems, say so in `## Thread` and plan the one that stands on its own. A
+plan should produce working, testable software by itself.
+
+**Map the files before you write steps.** Which files get created, which get
+modified, what each is responsible for. This is where the decomposition is
+actually decided; the step list only records it. Give each file one clear
+responsibility, keep things that change together together, and split by
+responsibility rather than by layer. In this codebase, follow the patterns
+already here -- do not restructure on your own initiative.
+
+**Right-size the steps.** A step is one action, and the smallest unit that
+carries its own test cycle. Fold setup, configuration and documentation into
+the step whose deliverable needs them. Split only where a reviewer could
+reasonably reject one step while approving the next. The natural rhythm is:
+
+```
+write the failing test -> run it, watch it fail -> minimal code to pass ->
+run the tests -> commit
+```
+
+**No placeholders.** Every step carries the actual content the implementer
+needs. These are plan failures, not shortcuts:
+
+- "TBD", "TODO", "implement later", "fill in details"
+- "add appropriate error handling", "add validation", "handle edge cases"
+- "write tests for the above", with no test named
+- "similar to step N" -- repeat it; steps get read out of order
+- a step that says what to do without saying how
+- a reference to a function, type or file no step defines
+
+"Investigate X" is the same failure: do the investigation now, and put what you
+found in `## Digest`.
+
+**Be exact.** Full file paths, every time. Real commands with the output you
+expect. If a step changes code, the step says what the code becomes. DRY,
+YAGNI, test-first, frequent commits.
 
 `result`: `ok` (plan written) | `needs-input` (questions appended) |
 `fail` (cannot plan; say what is missing)

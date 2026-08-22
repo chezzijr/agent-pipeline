@@ -74,6 +74,17 @@ Stage prompts stay **harness-neutral** — plain instructions and shell/git
 commands, no Claude Code skills, subagents, or slash commands. Anything
 Claude-specific belongs in `pipeline/harnesses/claude-code.toml`.
 
+As of 2026-08-22 **no stage declares `skills:`**. `triage`, `planning` and
+`implementing` each invoked one superpowers skill, on 70 of 100 runs between
+them — so the skill body was being paid on most runs anyway, and the `Skill`
+tool plus a 46-skill listing rode on top of it. The three are inlined and
+trimmed into the stage prompts (see `NOTICE`; they are MIT), which is both
+cheaper and what the paragraph above asks for. The frontmatter key and every
+branch behind it still work: declare `skills:` on a stage and it gets the tool,
+the prompt block and its slash commands back, with no code change. What the
+stages must **not** do is depend on a plugin being installed on the operator's
+machine — `--setting-sources project` means one is not.
+
 ## Commands
 
 ```sh
@@ -144,6 +155,29 @@ claiming the guard works.
   runs the merged code. Nothing restarts them: after that message, run
   `pipeline start` (or `pipeline run`) again. Never `importlib.reload()`; live
   child records, an open SQLite handle and signal handlers outlive the modules.
+- **A stage inherits the operator's `~/.claude` unless told not to.** Without
+  `--setting-sources project` a spawn loads every installed plugin, its skills,
+  and its `SessionStart` hooks. On the machine this was found on that meant
+  every stage — `implementing` included — opened in two personas nobody wrote
+  for it: *"You are a lazy senior developer… shortest working diff wins"* and
+  *"Respond terse like smart caveman."* It cost 5,392 tokens of opening context
+  per turn, which was the smaller half of the problem. It keeps the guard —
+  `--settings` is explicit and unaffected — verified 2026-08-22 under
+  `--setting-sources project` *and* `--disable-slash-commands` together:
+  `git worktree remove foo` came back "Blocked by the pipeline guard". Re-run
+  that check if either flag changes; it is the invariant-4 condition. It does
+  **not** keep the operator's `~/.claude/CLAUDE.md` or their
+  `permissions.deny` rules — both stop reaching stages, and the deny rules did
+  bind before (they survive `bypassPermissions`). The full list of what the
+  flag costs is in `claude-code.toml`; every line of it was A/B'd against a
+  live spawn, because a first draft asserted the opposite and was wrong.
+- **A `write: true` stage can still disable its own guard.** Writing
+  `<worktree>/.claude/settings.json` = `{"disableAllHooks": true}` drops the
+  `--settings` PreToolUse hook with it, so every later spawn in that worktree
+  runs unguarded. Measured identical with and without `--setting-sources
+  project`: the project source was always loaded, so this predates that flag
+  and is not caused by it. Open hole in invariant 4 — fixing it is a `FENCED`
+  change and needs human review.
 
 ## Conventions
 

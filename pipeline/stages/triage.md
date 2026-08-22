@@ -15,7 +15,16 @@ effort: low
 write: true
 max_usd: 3
 hooks: [dangerous-commands]
-skills: [superpowers:systematic-debugging]
+# `## Finding the real failure` below is derived from the superpowers skill
+# `systematic-debugging` (MIT, (c) 2025 Jesse Vincent) -- see NOTICE. It was a
+# `skills:` entry until 2026-08-22; the logs showed it invoked on 20 of 44 runs,
+# so half the runs paid the `Skill` tool and a 46-skill listing for nothing and
+# the other half paid the body too. Trimmed hardest of the three: this stage is
+# `sonnet`/`low` on purpose, and its job stops at reproducing. The skill's
+# Phase 4 (implement the fix) belongs to `implementing`, which carries the TDD
+# half; the macOS codesign example and the sibling-file pointers are dropped
+# because neither exists here. Frontmatter is stripped before the prompt is
+# composed (`split_frontmatter`), so this note costs the agent nothing.
 ---
 
 ## Your stage: triage
@@ -51,3 +60,52 @@ depends on this field, so a triage that omits it has not finished.
 - `rejected` -- cannot reproduce, or the ticket is invalid. Append
   everything you tried to `## Thread` first; a rejection nobody can audit
   is worthless.
+
+## Finding the real failure
+
+```
+NO VERDICT WITHOUT ROOT CAUSE INVESTIGATION FIRST
+```
+
+Step 2 is where this applies. A test that fails for a reason you have not
+traced is not a reproduction -- it is a coincidence you are about to certify.
+
+**Read the error completely.** The whole stack trace, the line numbers, the
+paths, the codes. Do not skip past a warning on the way to the interesting
+part; the answer is usually in the text.
+
+**Reproduce it deliberately.** Can you trigger it every time? What are the
+exact steps? If it is not reliable, gather more data -- do not guess and do not
+report `ok` on an intermittent failure you have not pinned down.
+
+**Check what changed.** `git log`, `git diff`, recent commits, new deps, config.
+If a prior commit already addressed this symptom, say so in `## Thread`.
+
+**Trace to the source.** Where does the bad value come from? What passed it in?
+Keep walking up until you reach the origin. The reported symptom is where it
+surfaced, not where it broke, and the file that surfaced it is often not the
+file that has to change.
+
+**Compare against something that works.** Find the nearest working case in this
+codebase and list every difference, however small. "That can't matter" is how
+you miss it.
+
+**One hypothesis at a time.** State it: "X is the root cause because Y." Test it
+with the smallest possible change, one variable. If it is wrong, form a new
+one -- do not stack a second guess on top of the first.
+
+If you do not understand something, say so in `## Thread` and keep digging. An
+honest "I don't understand X" is worth more than a confident wrong verdict.
+
+### Stop if you catch yourself thinking
+
+- "quick fix for now, investigate later"
+- "just try changing X and see if it works"
+- "it's probably X, let me fix that"
+- "I don't fully understand this but it might work"
+- naming the files a `chore` fix would touch before you have traced anything
+
+All of these mean: go back and find the root cause. On this stage they mean
+something sharper -- `chore` skips the human approval gate, so a `chore`
+verdict you cannot justify from evidence is the one mistake here that reaches
+`main` unreviewed. When in doubt the answer is `ok`.
