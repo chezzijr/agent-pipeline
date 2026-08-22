@@ -1,6 +1,6 @@
 ---
 id: TICKET-021
-stage: escalated
+stage: done
 class: feature
 branch: ticket/021
 test_file: tests/test_tui.py::test_raw_mode_routes_every_keystroke_to_the_pty_until_esc_esc
@@ -17,28 +17,59 @@ lease:
   holder: null
   expires: null
 last_session:
-  stage: planning
-  id: cecf2d3b-4963-4c25-8ab4-aebb16a45b87
-  log: .project/logs/TICKET-021-planning-cecf2d3b.log
+  stage: holistic-review
+  id: 3215fdac-4806-4ef7-8395-ec5df82b6f54
+  log: .project/logs/TICKET-021-holistic-review-3215fdac.log
 approved_by: chezzijr
-approved_at: '2026-08-21T05:56:07.038391+00:00'
+approved_at: '2026-08-21T07:11:00.145761+00:00'
 ---
 
 ## Summary
 
-**Replanned 2026-08-21 (third planning pass), against the reset branch.** No
-human `rejection` in the thread -- the ticket came back through a resume after
-the aborted revalidate rebase and a triage re-run. The design, the key table and
-every step's code are unchanged from the plan the gate and plan-validation both
-passed; what changed is that all of it was re-measured on `364ac41`, the tree
-this branch actually is.
+**Reviewed and holistic-reviewed 2026-08-21: no blocking findings, the branch
+is coherent.** Implemented as `91fea66` on top of the repro `9f8bc7a`, plan
+executed as written, 2 files, +131/-11, working tree clean.
 
-**One correction to the re-triage note, and it matters because it is an
-acceptance criterion.** That note says "criterion 6's post-fix expectation is
-`15 passed`". It is **16**. 15 is the count *before* the change (`1 failed,
-14 passed`, measured); step 13 adds one test, so a correct implementation
-reports 16. Prototyped end to end on this tree and measured `16 passed in
-4.08s`, plus `176 passed` for the whole suite.
+**Holistic pass:** every plan step 4-11 and 13 appears once in the diff and
+nothing else does -- no stray refactor, no config key, no dependency, no
+protocol field. One implementation commit, so nothing could partially undo
+anything, and the two places a partial undo would hide are intact: DEC-019's
+`self.pty_writer, self.resize_id = False, None` in `_detach` still sits above
+the new `self.raw, self.esc = False, 0`, and `_resize`'s writer gate is
+untouched. Mode-clearing is consistent: `_status` has one def and four callers
+(`_paint`, `_detach`, the `Esc Esc` exit, `action_raw`), both exits clear and
+repaint. `action_send` is gone with no orphaned import or helper (`_ask`,
+`SuspendNotSupported` keep their four other users). Re-measured again:
+`tests/test_tui.py` -> `16 passed`, whole suite -> `177 passed`.
+
+**Re-measured in the review stage, not taken on trust.** `tests/test_tui.py`
+-> `16 passed`; the whole suite from the worktree root -> `177 passed`;
+`git diff --name-only main...` -> exactly `pipeline/tui/app.py` and
+`tests/test_tui.py`. Criteria 1-7 and 9 hold; criterion 8's `176` is one low
+and `177` is right (175 under `tests/` + the 2 `test_*` functions pytest
+collects out of `pipeline/hooks/test_dangerous_commands.py`), the same
+pre-fix off-by-one criterion 6 already carries. Not a regression: zero
+failures anywhere.
+
+**The seam was checked against installed Textual 8.2.8, not against the plan's
+description of it.** `App.on_event` (`textual/app.py:4121-4138`) runs priority
+bindings and forwards to the focused widget only *after* the override would
+have returned, so raw mode does get `down`/`tab`/`ctrl+c` ahead of the `Tree`
+and ahead of the system `ctrl+c` binding (`app.py:463`). The guard is
+`isinstance(event, events.Key)`, so DEC-019's `Resize` still reaches
+`PtyPane`; its three resize tests are among the 16. `_paint` sets `self.rows`
+before calling the now-parameterless `_status()`, all three `_detach` call
+sites are under a mounted UI, and nothing references the deleted
+`action_send`. Both new tests fail if the logic they cover breaks.
+
+**Five non-blocking findings are in `## Thread`'s review entry**, the two worth
+carrying forward being: (1) `README.md:153`/`:157` still describe `i` as "types
+a line into it" and never mention that `Esc Esc` is the only way out --
+deliberately not fixed here because criterion 9 pins the diff to two files, so
+it wants a follow-up ticket; (2) `_attached`'s failure path (`app.py:400`)
+clears `attached` without going through `_detach`, so a failed attach leaves
+`self.raw` on -- bounded, since the status line still shows `RAW` and `Esc Esc`
+still exits.
 
 **Bug:** `i` in `pipeline tui` suspends the whole app and blocks on `input()`
 (`action_send` -> `_ask`, `pipeline/tui/app.py:459`), so answering one prompt on
@@ -1072,3 +1103,525 @@ this pass adds is that all of it was re-measured on `364ac41` rather than on the
 ### 2026-08-21 06:06:02Z · planning · transition · to=escalated · result=fail
 
 **planning -> escalated** (result: `fail`)
+
+### 2026-08-21 07:04:55Z · human · note
+
+**resumed** by human -> `plan-validation`, reset ['no_result', 'blocked_count', 'lease_expiries']
+
+### 2026-08-21 07:05:22Z · plan-validation · gate · verdict=PASS
+
+**Tier A gate: PASS**
+
+- ok: `tests/test_tui.py::test_raw_mode_routes_every_keystroke_to_the_pty_until_esc_esc` fails as required
+```
+ _ _ 
+
+    async def go():
+        app = PipelineApp(client=FakeClient([]))
+        async with app.run_test() as pilot:
+            app.stream = FakeStream()
+            app.attached = ("/tmp/alpha", "TICKET-001")
+            app.pty_screen = Screen(4, 24)
+    
+            await pilot.press("i")
+            await pilot.pause()
+            await pilot.press("down", "tab")
+            await pilot.pause()
+            sent = b"".join(base64.b64decode(kw["data"])
+                            for op, kw in app.stream.sent if op == "input")
+>           assert sent == b"\x1b[B\t", f"raw mode never reached the pty: {sent!r}"
+E           AssertionError: raw mode never reached the pty: b'\r'
+E           assert b'\r' == b'\x1b[B\t'
+E             
+E             At index 0 diff: b'\r' != b'\x1b'
+E             Use -v to get more diff
+
+tests/test_tui.py:482: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_tui.py::test_raw_mode_routes_every_keystroke_to_the_pty_until_esc_esc
+!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!!
+============================== 1 failed in 0.58s ===============================
+
+```
+- ok: `tests/test_tui.py::test_raw_mode_routes_every_keystroke_to_the_pty_until_esc_esc` fails on base `main` too -- the bug is not already fixed upstream
+```
+        assert sent == b"\x1b[B\t", f"raw mode never reached the pty: {sent!r}"
+E           AssertionError: raw mode never reached the pty: b'\r'
+E           assert b'\r' == b'\x1b[B\t'
+E             
+E             At index 0 diff: b'\r' != b'\x1b'
+E             Use -v to get more diff
+
+tests/test_tui.py:482: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_tui.py::test_raw_mode_routes_every_keystroke_to_the_pty_until_esc_esc
+!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!!
+============================== 1 failed in 0.92s ===============================
+Using CPython 3.13.11
+Creating virtual environment at: .venv
+   Building pipeline @ file:///tmp/pipeline-base-g2umyf7g/base
+      Built pipeline @ file:///tmp/pipeline-base-g2umyf7g/base
+warning: Failed to hardlink files; falling back to full copy. This may lead to degraded performance.
+         If the cache and target directories are on different filesystems, hardlinking may not be supported.
+         If this is intentional, set `export UV_LINK_MODE=copy` or use `--link-mode=copy` to suppress this warning.
+Installed 18 packages in 10ms
+
+```
+
+### 2026-08-21 · plan-validation · result=ok
+
+Scored item by item against the worktree at `364ac41` (`git status --porcelain`
+empty, `pipeline/tui/app.py` byte-identical to `main`, `tests/test_tui.py`
+differing from `main` only by the appended repro at lines 464-491).
+
+- **Root cause.** In my own words: `i` is bound to `action_send`, which reads a
+  whole *line* through `_ask` -> `App.suspend()` + `input()`
+  (`pipeline/tui/app.py:459-466`, `:513-521`). Line-oriented and blocking, so
+  arrows/Tab/ctrl-C never become bytes at all and the UI leaves the screen while
+  you answer. Second half of the cause, and the reason a smaller fix would not
+  work: even a non-blocking `on_key` handler could not see `down`/`up`/`enter`,
+  because Textual forwards a key to the focused widget (the `Tree`, which binds
+  them) before the app's own bindings run. Verified in the installed Textual
+  8.2.8, `textual/app.py:4136-4138`: `_check_bindings(..., priority=True)` then
+  `(self.focused or self.screen)._forward_event(event)`. The plan intercepts
+  upstream of both in `App.on_event`, maps a key *name* to terminal bytes and
+  feeds the existing `_send_keys`. That is the cause, not the symptom: the test
+  would still pass if it only routed `down`/`tab`, but the plan routes every key
+  and gives the keyboard back on `Esc Esc` and on `_detach`.
+- **Decision conflict.** Read `.project/decisions/` directly (five records, all
+  active). DEC-019 is the only one that constrains new code, and the plan quotes
+  it accurately: *"`events.Resize` does not bubble"* is why `PtyPane`
+  (`pipeline/tui/app.py:99-105`) exists, and an `on_event` override that
+  returned early on more than `events.Key` would starve `PtyPane.on_resize`. The
+  plan's guard is exactly `isinstance(event, events.Key)` and names the three
+  TICKET-019 resize tests as the tripwire (criterion 7). DEC-019's writer gate
+  is scoped to `resize` in its own text ("do not send `resize` before the attach
+  reply has said who the writer is"), and `_resize`'s gate at `:396` is
+  untouched; not gating `action_raw` on `pty_writer` matches the `action_send`
+  it replaces, which is ungated at `:463-466` -- verified, so this is compliance
+  with an argument, not an unflagged supersede. DEC-011: no new op, field or
+  event kind; `input` already carries base64, and criterion 9 pins the diff to
+  two files. DEC-016/DEC-017/DEC-020 checked and correctly ruled irrelevant
+  (DEC-017 is what step 3 exists to honour).
+- **Scope discipline.** Fifteen steps, all traceable: 2 fixes the fake's missing
+  ack (without it criterion 1 cannot pass even with raw mode correct), 4-8 and
+  11 serve criteria 1/2/4/5, 9-10 serve criterion 3 (the indicator has to be
+  produced *inside* `_status` or the 5s `_paint` erases it -- confirmed,
+  `:206-216` calls `_status` on every repaint), 13 adds the criterion 3/4/5
+  test, and 1/3/12/14 are verification. No step outside a criterion.
+- **Falsifiable criteria.** 1 and 2 are red today with a measured message
+  (`b'\r'`, `tests/test_tui.py:482`). 3/4/5 assert `app.raw` and the `#status`
+  text and would fail if `action_raw` skipped its `attached` guard, if the
+  indicator were set outside `_status`, or if `_detach` did not clear the mode.
+  7 names three existing tests that break if the `on_event` guard widens. 9 is a
+  file-list check. None vacuous.
+- **Criterion 6's number is right and the ticket's own contradiction is
+  resolved.** `grep -c '^def test_' tests/test_tui.py` -> 15 on this tree, one
+  of which is red, so post-change is **16**. The `## Reproduction` note's "the
+  post-fix count is 15" is stale triage text; `## Summary` already corrects it
+  and step 14 restates the arithmetic. Not treated as a defect.
+- **No research left.** All nine anchors re-grepped on this tree and exact:
+  `from textual import work` 28, `def marker` 53, `("i", "send", "type")` 125,
+  `self.keys_flight = None  # ...` 144, `self._status(rows)` 216, `def _status`
+  230, `def _detach` 357, `self.keys_out, self.keys_flight` 366,
+  `def action_send` 459. Step 8's replacement range 459-466 is exactly
+  `action_send`. `Message.is_forwarded` (`textual/message.py:94`) and
+  `Key.is_printable` (`textual/events.py:305`) both exist in the installed
+  version, so step 8's code is written against a real API. Step 2's ack routes
+  correctly: `on_frame` (`:257`) falls through `pty`/`pty_id`/`resize_id` to the
+  `keys_flight` branch at `:276`, and `FakeStream._id` is the id of the `input`
+  op just sent. Step 10's orphan claim re-verified: `grep -rn "action_send\|
+  _status(" pipeline/ tests/` returns exactly the three source hits it predicts,
+  and `_ask` keeps its callers at `:503` and `:508`.
+- **Riskiest step and its fallback.** Step 8. It sits upstream of Textual's
+  entire dispatch, so a bug there either swallows events no widget then sees or
+  locks the user out of their own dashboard. The plan states the fallback in
+  `## Rollback` -- delete the `("i", "raw", "type")` binding and nothing can set
+  `self.raw` -- plus, in `## Decisions`, the symptom and fix if a future Textual
+  reorders dispatch. Adequate.
+- **Regression surface.** (a) Keys stolen from the tree while raw: covered by
+  criterion 2's second half and by step 13's detach assertions. (b) `Resize`
+  swallowed: `test_attaching_sends_the_pane_size`,
+  `test_resizing_the_terminal_resizes_the_child`,
+  `test_a_read_only_viewer_never_sends_a_resize`. (c) The `_status` signature
+  change missing a call site -- a `TypeError` on the next 5s refresh, not
+  necessarily a red test: step 10's grep plus step 14's named failure
+  (`test_tui_renders_tree_from_ls`) is the right guard. (d) Everything outside
+  the TUI: criterion 8's whole-suite run.
+- **Blast radius.** `class: feature`, two files, one of them the test. Matches.
+
+No blocking finding. Not re-run here: the whole-suite `176 passed` of criterion
+8 (the gate owns that run) -- the per-file counts I did verify by grep.
+
+Noted, not fixed (outside this stage): `.project/decisions/` holds five records
+but only `DEC-011.md` is committed, so a worktree-only reader sees one. The plan
+worked around it by reading the main checkout; the repo-hygiene fix belongs to
+its own ticket.
+
+### 2026-08-21 07:08:51Z · plan-validation · session · session=b79fe19b-4748-4f5e-b918-706b76adf4f5
+
+`plan-validation` ran as session `b79fe19b-4748-4f5e-b918-706b76adf4f5`
+- replay: `claude --resume b79fe19b-4748-4f5e-b918-706b76adf4f5`
+- log: `.project/logs/TICKET-021-plan-validation-b79fe19b.log`
+
+### 2026-08-21 07:08:51Z · plan-validation · transition · to=awaiting-approval · result=ok
+
+**plan-validation -> awaiting-approval** (result: `ok`)
+
+plan validated on 364ac41 - root cause is action_send's blocking line read plus Tree eating keys before app bindings; DEC-019/011 compliance checked against the records, all nine anchors and the Textual 8.2.8 dispatch order re-verified; criterion 6 is 16 passed
+
+### 2026-08-21 07:11:00Z · human · approval · by=chezzijr
+
+**approved by chezzijr**
+
+### 2026-08-21 07:11:24Z · plan-validation · gate · verdict=PASS
+
+**Tier A gate: PASS**
+
+- ok: `tests/test_tui.py::test_raw_mode_routes_every_keystroke_to_the_pty_until_esc_esc` fails as required
+```
+ _ _ 
+
+    async def go():
+        app = PipelineApp(client=FakeClient([]))
+        async with app.run_test() as pilot:
+            app.stream = FakeStream()
+            app.attached = ("/tmp/alpha", "TICKET-001")
+            app.pty_screen = Screen(4, 24)
+    
+            await pilot.press("i")
+            await pilot.pause()
+            await pilot.press("down", "tab")
+            await pilot.pause()
+            sent = b"".join(base64.b64decode(kw["data"])
+                            for op, kw in app.stream.sent if op == "input")
+>           assert sent == b"\x1b[B\t", f"raw mode never reached the pty: {sent!r}"
+E           AssertionError: raw mode never reached the pty: b'\r'
+E           assert b'\r' == b'\x1b[B\t'
+E             
+E             At index 0 diff: b'\r' != b'\x1b'
+E             Use -v to get more diff
+
+tests/test_tui.py:482: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_tui.py::test_raw_mode_routes_every_keystroke_to_the_pty_until_esc_esc
+!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!!
+============================== 1 failed in 0.57s ===============================
+
+```
+- ok: `tests/test_tui.py::test_raw_mode_routes_every_keystroke_to_the_pty_until_esc_esc` fails on base `main` too -- the bug is not already fixed upstream
+```
+        assert sent == b"\x1b[B\t", f"raw mode never reached the pty: {sent!r}"
+E           AssertionError: raw mode never reached the pty: b'\r'
+E           assert b'\r' == b'\x1b[B\t'
+E             
+E             At index 0 diff: b'\r' != b'\x1b'
+E             Use -v to get more diff
+
+tests/test_tui.py:482: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_tui.py::test_raw_mode_routes_every_keystroke_to_the_pty_until_esc_esc
+!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!!
+============================== 1 failed in 0.91s ===============================
+Using CPython 3.13.11
+Creating virtual environment at: .venv
+   Building pipeline @ file:///tmp/pipeline-base-q9edd6g_/base
+      Built pipeline @ file:///tmp/pipeline-base-q9edd6g_/base
+warning: Failed to hardlink files; falling back to full copy. This may lead to degraded performance.
+         If the cache and target directories are on different filesystems, hardlinking may not be supported.
+         If this is intentional, set `export UV_LINK_MODE=copy` or use `--link-mode=copy` to suppress this warning.
+Installed 18 packages in 12ms
+
+```
+
+### 2026-08-21 07:11:24Z · revalidating · transition · to=implementing · result=ok
+
+**revalidating -> implementing** (result: `ok`)
+
+re-gated after rebasing onto base:
+- clean
+
+### 2026-08-21 · implementing · result=ok
+
+Todo (one per plan step), all done:
+
+- [x] 1. Confirm tree: `1 failed, 14 passed` -- matched.
+- [x] 2. Patch `FakeStream`-ack loop into the repro test.
+- [x] 3. Confirm still RED, same `b'\r'` symptom -- matched.
+- [x] 4. `from textual import events, work`.
+- [x] 5. `RAW_KEYS` + `key_bytes` above `def marker`.
+- [x] 6. `BINDINGS` row -> `("i", "raw", "type")`.
+- [x] 7. `self.raw`/`self.esc` in `__init__`.
+- [x] 8. Replace `action_send` with `on_event`/`_raw_key`/`action_raw`.
+- [x] 9. `_status()` drops its `rows` param, reads `self.rows`, shows `RAW`.
+- [x] 10. Fix the `_paint` call site; confirmed exactly two `_status(` def+call
+      hits before adding the two new callers in raw-mode code (`action_raw`,
+      `_detach`).
+- [x] 11. `_detach` clears `self.raw`/`self.esc` and repaints status.
+- [x] 12. Repro test GREEN (`1 passed`).
+- [x] 13. Append `status()` helper + the visibility/detach test.
+- [x] 14. `tests/test_tui.py` -> `16 passed` (matches criterion 6).
+- [x] 15. Commit both files (`91fea66`).
+
+Plan executed exactly as written; no step needed adjustment.
+
+**One number in the plan needed a sanity check, not a change.** Criterion 8
+says the whole suite is `176 passed`; measured, it is **`177 passed`**. Not a
+regression: temporarily stashed both files and re-ran the untouched suite,
+which is `1 failed, 175 passed` (176 total, the one failure being the
+committed repro) -- so 176 is the *pre-fix* total, same off-by-one the
+`## Reproduction`/`## Summary` notes already flagged and corrected for
+criterion 6's 16. Post-fix arithmetic: 175 already-passing + the repro now
+passing + step 13's new test = 177. Restored the stash (`git stash apply` by
+sha, then dropped it -- verified `git stash list` was empty both before and
+after so no other session's entry was touched) and re-ran: `177 passed`,
+matching. All nine criteria's actual checks (byte equality, `RAW` in status,
+`app.raw` booleans, the 16-count, the three DEC-019 resize tests, the
+two-file diff) pass; only the number in criterion 8's text is stale, one more
+than the last plan-validation measured, for the same reason 176 replaced 15
+in criterion 6 -- a total taken before the fix, not after.
+
+Verified: `uv run --group dev pytest -q tests/test_tui.py` -> `16 passed`;
+`uv run --group dev pytest -q` -> `177 passed`; `git diff --name-only main...`
+-> exactly `pipeline/tui/app.py` and `tests/test_tui.py`.
+
+### 2026-08-21 07:16:14Z · implementing · session · session=129840a4-4d84-4979-a042-95e427eef8f1
+
+`implementing` ran as session `129840a4-4d84-4979-a042-95e427eef8f1`
+- replay: `claude --resume 129840a4-4d84-4979-a042-95e427eef8f1`
+- log: `.project/logs/TICKET-021-implementing-129840a4.log`
+
+### 2026-08-21 07:16:14Z · implementing · transition · to=review · result=ok
+
+**implementing -> review** (result: `ok`)
+
+raw mode implemented per plan, tests/test_tui.py 16 passed, whole suite 177 passed, committed 91fea66
+
+### 2026-08-21 · review · result=ok
+
+First review pass; no earlier review entry, so the delta is `git diff main...HEAD`
+(`9f8bc7a` the repro + `91fea66` the fix, 2 files, +131/-11). Working tree clean
+before and after this stage.
+
+**Re-measured, not quoted.** `uv run --group dev pytest -q tests/test_tui.py` ->
+`16 passed in 3.95s`. `uv run --group dev pytest -q` from the worktree root ->
+`177 passed in 8.49s`; pointed at `tests/` alone it is `175 passed`, so the two
+extra are the `test_*` functions pytest collects out of
+`pipeline/hooks/test_dangerous_commands.py`. `git diff --name-only main...` is
+exactly `pipeline/tui/app.py` and `tests/test_tui.py`. Criteria 1-7 and 9 hold
+as written; criterion 8's `176` is the only number that does not, and the
+implementing entry's arithmetic for it is right (see finding 6).
+
+**Checked against the sources, not against the plan's description of them.**
+`textual/app.py:4121-4138` (8.2.8, installed) confirms the seam: `App.on_event`
+handles `events.Key` by running `_check_bindings(priority=True)` and only then
+forwarding to `self.focused or self.screen`, so an override that returns before
+`super()` does get the key ahead of both the `Tree` and the system
+`Binding("ctrl+c", "help_quit", ..., system=True)` at `app.py:463`. The guard is
+`isinstance(event, events.Key)` as DEC-019 requires, and the three resize tests
+are among the 16. `_paint` sets `self.rows` (`app.py:235`) before calling
+`_status()` (`:241`), so the parameter drop is sound; all three `_detach` call
+sites (`:327`, `:351`, `:372`) run under a mounted UI, so the added `_status()`
+cannot raise `NoMatches`. `grep` for `action_send` finds no live reference, and
+`_ask`/`SuspendNotSupported` keep their remaining users (`:560`, `:565`, `:577`,
+`:584`). Both new tests are non-vacuous: break the `Esc Esc` exit and the second
+half's `down` reaches `_send_keys` with nothing in flight, so `after != sent`;
+drop the `mode` prefix from `_status` and the visibility test fails on `"RAW" in
+status(app)`.
+
+Findings, none blocking:
+
+1. **minor - `README.md:153` and `:157` still describe the old `i`.** "`i` types
+   a line into it -- chunked at 4096 bytes an op" is now wrong: `i` takes the
+   whole keyboard and `Esc Esc` is the only way out, which is exactly the kind
+   of thing a user needs told. Deliberately NOT fixed here: acceptance criterion
+   9 pins the diff to two files, so touching the README in this ticket would
+   fail the ticket's own check. Worth a follow-up ticket.
+2. **minor - a failed attach leaves raw mode on.** `_attached` clears
+   `self.attached = self.pty_id = None` on `not msg.get("ok")` (`app.py:400`)
+   without going through `_detach`, so it does not clear `self.raw`. Reachable
+   because `_pty` sets `self.attached` optimistically (`:379`) before the reply
+   lands, so `i` pressed inside that round trip arms raw mode against an
+   attachment that then fails. Bounded, not blocking: the status line still says
+   `RAW`, `Esc Esc` still exits, and keystrokes go to `keys_out` on a stream
+   with nothing attached rather than to the wrong child.
+3. **nit - two bits of Textual bookkeeping are skipped while raw is on.**
+   Returning before `super().on_event` skips `self.app_focus = True`
+   (`textual/app.py:4067`) and the `_clear_tooltip()` at `:4133` for keys, so an
+   `AppBlur` during raw mode is not undone by typing -- only by leaving the
+   mode. Cosmetic.
+4. **nit - the status count changed source.** `_status` counted `len(rows)` (the
+   list `_paint` was handed) and now counts `len(self.rows)`, a dict keyed by
+   `(project, id)`. Identical unless `ls` ever returns two rows with one key.
+5. **nit - a held Esc followed by an unmapped key sends the lone Esc anyway.**
+   `esc` then `f5` gives `key_bytes` -> `b""` and `data` -> `b"\x1b"`, the eager
+   Esc `## Decisions` set out to avoid. Harmless (the user did press Esc) and
+   the alternative is dropping a keystroke, which is worse.
+6. **info, no action - criterion 8's `176` is one low; `177` is correct.**
+   Independently confirmed rather than taken from the implementing entry: 175
+   under `tests/` + 2 in the hooks file. Pre-fix that same set is 176 with the
+   repro red, so the fix turns one red green and step 13 adds one -- 177. The
+   criterion's number was measured on the prototype before step 13 existed, the
+   same off-by-one criterion 6 already carries.
+
+Not in scope, noted from `## Decisions checked`: only `DEC-011.md` is committed
+under `.project/decisions/`, so a worktree `ls` shows one record where five
+exist. Repo hygiene, untouched here.
+
+### 2026-08-21 07:20:40Z · review · session · session=72d3352d-dee8-444d-8cc1-afe2afa0b96a
+
+`review` ran as session `72d3352d-dee8-444d-8cc1-afe2afa0b96a`
+- replay: `claude --resume 72d3352d-dee8-444d-8cc1-afe2afa0b96a`
+- log: `.project/logs/TICKET-021-review-72d3352d.log`
+
+### 2026-08-21 07:20:40Z · review · transition · to=holistic-review · result=ok
+
+**review -> holistic-review** (result: `ok`)
+
+reviewed the branch delta - 16 tui tests and 177 suite re-measured green, criteria 1-7 and 9 hold, criterion 8's 176 is an off-by-one; 5 non-blocking findings appended
+
+### 2026-08-21 · holistic-review · result=ok
+
+Whole-branch coherence pass over `git diff main...HEAD` (`9f8bc7a` repro +
+`91fea66` fix, 2 files, +131/-11) against `## Plan`. Working tree clean
+(`git status --porcelain` empty) before and after; nothing modified but this
+ticket.
+
+**The sum of the changes is the plan.** Steps 4-11 and 13 each appear once in
+the diff and nothing else does: `events` import, `RAW_KEYS`/`key_bytes`,
+`("i", "raw", "type")`, `self.raw`/`self.esc`, the
+`on_event`/`_raw_key`/`action_raw` block replacing `action_send`, `_status`
+losing its `rows` parameter and gaining the `RAW` prefix, the one `_paint` call
+site, `_detach` clearing the mode, and step 13's `status()` helper + second
+test. No step landed twice, none landed half, and nothing landed that no
+acceptance criterion asked for -- there is no stray refactor, no new config
+key, no dependency, no protocol field.
+
+**One implementation commit, so no later fix could undo an earlier one, and I
+checked the two places where a partial undo would hide anyway.** DEC-019's
+`self.pty_writer, self.resize_id = False, None` in `_detach` is intact with the
+new `self.raw, self.esc = False, 0` *after* it, not over it (`app.py:392-394`),
+and `_resize`'s writer gate is untouched (`:425`). The `on_event` guard is still
+the narrow `isinstance(event, events.Key)` the plan and `## Decisions` both
+require, so `Resize` still reaches `PtyPane`.
+
+**Mode-clearing is consistent across every path that ends an attachment.**
+`_status` now has one def and four callers (`app.py:241` `_paint`, `:395`
+`_detach`, `:507` the `Esc Esc` exit, `:523` `action_raw`) -- the two exits from
+raw mode both clear *and* repaint, and both entrances gate the same way. The one
+asymmetry is `_attached`'s failure branch (`:400`), which clears `attached`
+without going through `_detach` and so leaves `self.raw` on; the review already
+logged it as finding 2 with the same reading (bounded -- `RAW` still shows,
+`Esc Esc` still exits), and it is pre-existing structure, not drift introduced
+by this branch.
+
+**No orphans.** `grep -rn "action_send"` across `pipeline/` and `tests/` returns
+nothing outside the stale `__pycache__`; `_ask` and `SuspendNotSupported` keep
+their remaining users (`:560`, `:565`, `:570`, `:577`, `:584`), so deleting
+`action_send` left no dead import and no dead helper.
+
+**Re-measured independently, not carried over:** `uv run --group dev pytest -q
+tests/test_tui.py` -> `16 passed in 4.08s`; `uv run --group dev pytest -q` ->
+`177 passed in 8.23s`. Criterion 8's `176` is stale in the same direction the
+implementing and review entries both worked out; the count is not a regression.
+
+**Carried forward, unchanged from the review, nothing new to add:**
+`README.md:153`/`:157` still say `i` "types a line into it -- chunked at 4096
+bytes an op" and never mention `Esc Esc`. That is a real doc/behaviour
+divergence the branch creates, and it is the one thing about this change that is
+incoherent *outside* the two files -- but criterion 9 pins the diff to those two
+files, so fixing it here would fail the ticket's own check. It wants a follow-up
+ticket, and that is the reason this pass is `ok` rather than `fail`.
+
+### 2026-08-21 07:22:58Z · holistic-review · session · session=3215fdac-4806-4ef7-8395-ec5df82b6f54
+
+`holistic-review` ran as session `3215fdac-4806-4ef7-8395-ec5df82b6f54`
+- replay: `claude --resume 3215fdac-4806-4ef7-8395-ec5df82b6f54`
+- log: `.project/logs/TICKET-021-holistic-review-3215fdac.log`
+
+### 2026-08-21 07:22:58Z · holistic-review · transition · to=verifying · result=ok
+
+**holistic-review -> verifying** (result: `ok`)
+
+branch is coherent - every plan step lands once, nothing extra, DEC-019's writer gate and Resize guard intact, no orphaned action_send; 16 tui / 177 suite re-measured green
+
+### 2026-08-21 07:23:07Z · verifying · transition · to=merging · result=ok
+
+**verifying -> merging** (result: `ok`)
+
+regression suite exit 0
+```
+...HEAD
+ok  allow [always] cargo build --release
+ok  BLOCK [readonly] sed -i s/a/b/ x.py
+ok  BLOCK [readonly] echo hi > file.txt
+ok  BLOCK [readonly] git commit -am wip
+ok  BLOCK [readonly] cp a b
+ok  BLOCK [readonly] pip install requests
+ok  BLOCK [readonly] mv a b
+ok  BLOCK [readonly] python3 -c "open('/tmp/x','a').write(1)"
+ok  BLOCK [readonly] git -C . commit -am wip
+ok  BLOCK [readonly] pytest 2>out
+ok  BLOCK [readonly] pytest >> log.txt
+ok  BLOCK [readonly] git worktree add /tmp/x main
+ok  BLOCK [readonly] python3 setup.py install
+ok  BLOCK [readonly] tee /tmp/x
+ok  BLOCK [readonly] curl https://example.com -o /tmp/x
+ok  BLOCK [readonly] make install
+ok  BLOCK [readonly] cargo run
+ok  BLOCK [readonly] npm install
+ok  BLOCK [readonly] echo $(whoami)
+ok  allow [readonly] pytest -x
+ok  allow [readonly] git diff main...HEAD
+ok  allow [readonly] grep -rn foo .
+ok  allow [readonly] git log --oneline
+ok  allow [readonly] cat thing.py
+ok  allow [readonly] python3 -m pytest --deselect x
+ok  allow [readonly] ls -la
+ok  allow [readonly] git show HEAD
+ok  allow [readonly] git blame thing.py
+ok  allow [readonly] rg evict src/
+ok  allow [readonly] pytest -x 2>&1
+ok  allow [readonly] find . -name '*.py'
+ok  allow [readonly] cargo test
+ok  allow [readonly] go test ./...
+ok  allow [readonly] git status --porcelain
+ok  allow [readonly] wc -l thing.py
+ok  allow [readonly] python3 -m unittest
+ok  allow [readonly] git diff main...HEAD | head -50
+ok  end-to-end exit codes
+
+guard: all passed
+
+```
+
+### 2026-08-21 07:23:08Z · merging · transition · to=done · result=ok
+
+**merging -> done** (result: `ok`)
+
+merge exit 0
+```
+$ git merge --no-edit main || exit 1
+head=$(git -C /home/chezzijr/proj/claude-setup rev-parse --abbrev-ref HEAD) || exit 1
+[ "$head" = main ] || { echo "main checkout is parked on $head, not the base branch -- refusing to land"; exit 1; }
+git -C /home/chezzijr/proj/claude-setup merge --ff-only ticket/021
+
+
+Merge made by the 'ort' strategy.
+ pipeline/core/gate.py       | 42 +++++++++++++++++++++++++++++++++--
+ pipeline/stages/planning.md |  6 +++++
+ tests/helpers.py            |  4 +++-
+ tests/test_gate.py          | 54 ++++++++++++++++++++++++++++++++++++++++++++-
+ tests/test_ticket.py        |  2 +-
+ 5 files changed, 103 insertions(+), 5 deletions(-)
+Updating 06089bf..4de7931
+Fast-forward
+ pipeline/tui/app.py | 79 +++++++++++++++++++++++++++++++++++++++++++++--------
+ tests/test_tui.py   | 63 ++++++++++++++++++++++++++++++++++++++++++
+ 2 files changed, 131 insertions(+), 11 deletions(-)
+
+```
+
+### 2026-08-21 07:23:08Z · merging · decision
+
+decision recorded as `DEC-021`
