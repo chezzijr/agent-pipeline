@@ -87,6 +87,11 @@ local queue, and the dispatcher says so when it skips recording one:
 
     TICKET-001: not recording -- `.project` is git-ignored here
 
+`init` is idempotent, so this also retrofits a project that already has a
+`.project/`: `pipeline init . --private` scaffolds nothing new and just adds the
+exclude. It does not un-commit anything already in history -- for that,
+`git rm -r --cached .project` once, then commit.
+
 A team that *all* runs the pipeline and still wants tickets out of history
 wants the tracked file instead -- one line in `.gitignore`. That is a shared
 decision, so it is deliberately not automated by a flag.
