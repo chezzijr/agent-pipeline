@@ -14,6 +14,13 @@ because `cd /tmp && sudo rm -rf /etc` is not a `sudo` command until you split it
                  programs rather than a gap between blocked patterns.
 
 Registered per stage via `hooks:` in that stage's frontmatter.
+
+This file is registered through `--settings`, which Claude Code merges
+*behind* a project settings source. `<worktree>/.claude/settings.json` =
+`{"disableAllHooks": true}` therefore drops this hook entirely, so
+`strip_settings_sources()` in `pipeline/core/worktree.py` removes that file
+before every spawn. Do not remove it: without it a `write: true` stage
+disables this guard for every later spawn in its worktree.
 """
 import json
 import os
