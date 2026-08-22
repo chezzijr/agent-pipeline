@@ -540,6 +540,35 @@ def test_parsed_stream_events_reach_the_event_log():
     s.close()
 
 
+def test_spawn_refuses_a_worktree_that_carries_its_own_settings_file():
+    """A `write: true` stage's cwd is a git worktree the agent can write to.
+    `.claude/settings.json = {"disableAllHooks": true}` there is a project
+    settings source Claude Code merges ahead of `--settings`, so it drops the
+    guard for this spawn and every later one in the same worktree. `spawn()`
+    must refuse (or strip the file) rather than launch unguarded -- it does
+    neither today."""
+    from pipeline.core.config import harness
+    d = project()
+    (d / ".claude").mkdir(parents=True, exist_ok=True)
+    (d / ".claude" / "settings.json").write_text(
+        json.dumps({"disableAllHooks": True}))
+    s = store(Path(tempfile.mkdtemp()))
+    try:
+        rec = supervisor.spawn(d, d, "TICKET-001", "implementing",
+                               harness("fake"), None, s.emitter(str(d)))
+    except PipelineError:
+        rec = None
+    if rec is not None:
+        rec["proc"].wait()
+        supervisor.close_child(rec)
+    assert not (d / ".claude" / "settings.json").exists(), (
+        "expected spawn() to refuse or strip a worktree-supplied "
+        ".claude/settings.json before launching a guarded stage, but the "
+        "file that disables the guard survived spawn() untouched")
+    s.close()
+    shutil.rmtree(d, ignore_errors=True)
+
+
 def test_spawn_wires_the_sink_to_the_store():
     """The gap was in `spawn()`, not in the sink: a record whose `sink` still
     defaults to dropping stores nothing however good the sink is."""
