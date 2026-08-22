@@ -5,5 +5,4 @@ __pycache__/
 .project/tickets/*.result
 .superpowers/
 .venv/
-uv.lock
 .project/.lock
