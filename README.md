@@ -14,6 +14,33 @@ did. Tickets are the queue; agents are stateless workers pulled off it.
       |                          |
       +-- (chore) -> implementing -> quick-review --+
 
+## What you need
+
+- **Python 3.11+** and [uv](https://docs.astral.sh/uv/). Three runtime
+  dependencies and that is the budget: PyYAML, `pyte`, `textual`.
+- **An agent CLI.** [Claude Code](https://claude.com/claude-code) is the one
+  harness that is exercised against real runs. Stage prompts are
+  harness-neutral; everything CLI-specific lives in one TOML file, and
+  `pipeline/harnesses/codex.toml` exists to prove that seam holds.
+- **A git repo to point it at** -- the pipeline works on *your* project, not on
+  itself. Each ticket gets its own worktree.
+
+## Status
+
+Working, and used on itself. This repo runs its own pipeline: 32 tickets landed
+across 216 stage runs. The most recent is a fair example of the loop closing --
+an adversarial review of a hand-written change found a hole in the guard, that
+became `TICKET-034`, and the pipeline planned and implemented its own fix,
+stopping twice at a human gate on the way. `.project/` is the real record --
+tickets, decisions, threads and all -- so you can read what the agents actually
+did rather than take this page's word for it.
+
+Not a product. There is one registered project (this one), and two known gaps
+that only appear with a second: stage prompts and hooks live inside the package,
+so customising them is global rather than per-project (`TICKET-035`), and no
+stage can be given an MCP server because the guard's `matcher` is `Bash` and
+would not see one (`TICKET-036`).
+
 ## Why
 
 - **Less context per stage** -- less hallucination, and a stage that dies is
@@ -224,7 +251,7 @@ TICKET-001   review    bugfix  {'review_loops': 1, ...}
 Under the daemon the child's stdout comes back over a pipe, but it is *teed* to
 the same log file -- otherwise both of those stop working.
 
-## The three invariants
+## The invariants
 
 0. **No agent waits on another agent.** The dispatcher launches and returns;
    `reap()` collects finished processes on the next tick. A stage that hangs
@@ -349,7 +376,16 @@ second agent onto the same stage in the same worktree.
 
 ## Not built yet
 
-- **No real agent has run yet.** The stage prompts are the only unverified part;
-  everything around them is tested against a fake harness.
-- Per-class bounds, model tiering. Watch the escalation rate per stage -- the
-  frontmatter counters give it to you for free.
+- **Per-project stage overrides** (`TICKET-035`). `pipeline/stages/` is inside
+  the package, so every registered project reads the same stage files.
+- **MCP servers** (`TICKET-036`). Stages spawn with `--strict-mcp-config` and no
+  `--mcp-config`, so `mcp_servers: []`. Turning that on without widening the
+  guard would put tools where `matcher: "Bash"` cannot see them.
+- **A second harness that actually runs.** `codex.toml` is asserted, not
+  executed -- every stage declares `hooks:`, and it cannot register one.
+
+## Licence
+
+The code is unlicensed so far -- treat it as all rights reserved until a
+`LICENSE` lands. Three stage prompts embed text derived from the MIT-licensed
+`superpowers` skills; `NOTICE` carries that attribution.
