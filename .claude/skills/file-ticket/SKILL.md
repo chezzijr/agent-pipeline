@@ -27,7 +27,7 @@ inside a system built to stop agents guessing.
 The `pipeline` CLI must be on PATH (`~/.local/bin`). If it is not:
 
 ```sh
-uv tool install --editable /home/chezzijr/proj/claude-setup --force
+uv tool install --editable . --force     # from the repo root
 ```
 
 ## Steps
@@ -79,7 +79,7 @@ to say so now:
 ### 3. File it
 
 ```sh
-cd /home/chezzijr/proj/claude-setup
+cd <the repo root>
 pipeline new "cache leaks on evict" --class bugfix
 ```
 
@@ -131,7 +131,7 @@ pipeline projects                # is this repo registered
 `pipeline status` **exits 1 when no daemon is running** — that is its answer, not a
 failure. Read the line it prints, not the exit code.
 
-- Not registered → `pipeline register /home/chezzijr/proj/claude-setup`
+- Not registered → `pipeline register .` from the repo root
 - Daemon down → `pipeline run` (this project, in your terminal; `--once` drains the
   queue and exits) or `pipeline start` (detached, every registered project).
   **They differ where it matters:** `planning` is `mode: interactive`, so under the
