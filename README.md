@@ -56,6 +56,7 @@ would not see one (`TICKET-036`).
 uv tool install .                             # `pipeline` and `pipelined` on PATH
 
 pipeline init ~/code/myproject                # scaffold .project/
+pipeline init ~/code/myproject --private      # ...and hide it from git, this clone only
 $EDITOR ~/code/myproject/.project/pipeline.toml   # how to run this project's tests
 pipeline --project ~/code/myproject new "cache leaks on evict"
 pipeline --project ~/code/myproject run       # dispatcher loop, no daemon
@@ -71,6 +72,28 @@ Without installing it, `uv run python -m pipeline …` runs the same CLI.
 
 `run --once` drains the queue and exits -- what you want while you are still
 watching it. Plain `run` keeps polling.
+
+## Sharing a repo with people who do not use this
+
+`.project/` is committed by default: the tickets and especially
+`.project/decisions/` are a record, and `planning` greps the decisions so it
+does not re-litigate a choice somebody already made.
+
+That is wrong for a repo where you are the only one running the pipeline.
+`pipeline init --private` writes `.project/` into `.git/info/exclude`, which is
+**per-clone and never committed** -- no line about a tool your teammates do not
+use lands in their diffs. Everything still works; the tickets are simply a
+local queue, and the dispatcher says so when it skips recording one:
+
+    TICKET-001: not recording -- `.project` is git-ignored here
+
+A team that *all* runs the pipeline and still wants tickets out of history
+wants the tracked file instead -- one line in `.gitignore`. That is a shared
+decision, so it is deliberately not automated by a flag.
+
+The trade-off is the decisions, not the tickets: excluded, they are local to
+your machine, so two people running the pipeline on one repo would each build a
+private decision set and re-argue each other's conclusions.
 
 ## The daemon
 

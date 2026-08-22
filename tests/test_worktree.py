@@ -3,6 +3,8 @@ import json
 import os
 import shutil
 import subprocess
+import tempfile
+from pathlib import Path
 
 from helpers import git_project
 from pipeline.core import worktree as W
@@ -80,3 +82,25 @@ def test_a_tracked_settings_file_is_stripped_without_entering_the_diff():
     status = sh("git status --porcelain").stdout
     assert ".claude/settings.json" not in status, status
     shutil.rmtree(d, ignore_errors=True)
+
+
+def test_private_init_hides_the_project_dir_from_this_clone_only():
+    """A shared repo where only you run the pipeline. `.gitignore` is the wrong
+    file -- it is tracked, so it puts a line about a tool the rest of the team
+    does not use into their diffs. `.git/info/exclude` is per-clone and never
+    committed."""
+    d, sh = git_project()
+    wrote = W.exclude_project_dir(d)
+
+    assert wrote and wrote.endswith(".git/info/exclude")
+    assert not (d / ".gitignore").is_file(), "wrote a TRACKED ignore file"
+    assert sh("git check-ignore -q .project").returncode == 0, \
+        ".project is still visible to git"
+    assert W.exclude_project_dir(d) is None, "not idempotent -- init re-run would duplicate"
+
+
+def test_excluding_outside_a_git_repo_is_a_no_op_not_a_crash():
+    """`pipeline init` works on a directory that is not a repo yet; it must
+    still scaffold rather than blow up on the git call."""
+    d = Path(tempfile.mkdtemp())
+    assert W.exclude_project_dir(d) is None

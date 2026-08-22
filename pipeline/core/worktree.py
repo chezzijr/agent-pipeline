@@ -128,3 +128,41 @@ def tree_snapshot(project: Path) -> str:
     _, head = run_cmd("git rev-parse HEAD", project)
     _, dirty = run_cmd("git status --porcelain -- . ':(exclude).project'", project)
     return head + dirty
+
+
+EXCLUDE_LINE = ".project/"
+
+
+def exclude_project_dir(project: Path) -> str | None:
+    """Hide `.project/` from git for THIS clone only, via `.git/info/exclude`.
+
+    For a shared repo where not everyone runs the pipeline. `.gitignore` is the
+    wrong file for that: it is tracked, so it puts a line about a tool the rest
+    of the team does not use into their diffs. `.git/info/exclude` is per-clone
+    and never committed, which is exactly the shape of "I use this, they don't".
+
+    A team that all runs the pipeline and still wants tickets out of history
+    wants the tracked file instead -- one deliberate line in `.gitignore`,
+    reviewed like any other shared decision. That case is not automated here on
+    purpose.
+
+    Returns the path written, or None if this is not a git repo or the line was
+    already there. Idempotent: `init` is safe to re-run.
+    """
+    code, out = run_cmd("git rev-parse --git-dir", project)
+    if code:
+        return None                      # not a git repo; nothing to exclude
+    # `--git-dir` is relative to `project` for a normal checkout and absolute
+    # inside a worktree, and `info/` does not exist in a fresh clone.
+    git_dir = Path(out.strip())
+    if not git_dir.is_absolute():
+        git_dir = project / git_dir
+    info = git_dir / "info"
+    info.mkdir(parents=True, exist_ok=True)
+    f = info / "exclude"
+    body = f.read_text() if f.is_file() else ""
+    if EXCLUDE_LINE in body.split():
+        return None
+    f.write_text(body + ("" if body.endswith("\n") or not body else "\n")
+                 + f"{EXCLUDE_LINE}\n")
+    return str(f)

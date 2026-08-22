@@ -16,7 +16,7 @@ from pipeline.core.config import CONFIG_TEMPLATE, TICKET_TEMPLATE
 from pipeline.core.gate import gate
 from pipeline.core.machine import KNOWN_STAGES
 from pipeline.core.ticket import Ticket, now, tickets_dir
-from pipeline.core.worktree import worktree
+from pipeline.core.worktree import exclude_project_dir, worktree
 from pipeline.daemon import registry
 from pipeline.daemon.server import STALE_HOURS, socket_path, ticket_rows
 from pipeline.daemon.store import Store, state_dir
@@ -49,6 +49,16 @@ def cmd_init(args) -> None:
     if not cfg.exists():
         cfg.write_text(CONFIG_TEMPLATE.read_text())
     print(f"initialised {project / '.project'} -- edit {cfg} for this project's commands")
+    # `--private` is for a shared repo where you are the only one running the
+    # pipeline. It writes `.git/info/exclude`, which is per-clone and never
+    # committed, so nothing about this tool reaches a teammate's diff. A team
+    # that all runs it and still wants tickets out of history wants a tracked
+    # `.gitignore` line instead -- a shared decision, made deliberately, not a
+    # side effect of a CLI flag.
+    if getattr(args, "private", False):
+        wrote = exclude_project_dir(project)
+        print(f"  excluded `.project/` in {wrote} -- this clone only" if wrote
+              else "  `.project/` already excluded (or this is not a git repo)")
 
 
 def cmd_new(args) -> None:
@@ -448,7 +458,7 @@ def main() -> None:
                     "the target for everything else (default: cwd)")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
-    p = sub.add_parser("init"); p.add_argument("dir", nargs="?", default=None); p.set_defaults(fn=cmd_init)
+    p = sub.add_parser("init"); p.add_argument("dir", nargs="?", default=None); p.add_argument("--private", action="store_true", help="hide .project/ from git in this clone only (.git/info/exclude)"); p.set_defaults(fn=cmd_init)
     p = sub.add_parser("new"); p.add_argument("title"); p.add_argument("--class", dest="cls", default="bugfix"); p.set_defaults(fn=cmd_new)
     p = sub.add_parser("gate"); p.add_argument("id"); p.set_defaults(fn=cmd_gate)
     p = sub.add_parser("approve"); p.add_argument("id"); p.add_argument("--by"); p.set_defaults(fn=cmd_approve)
