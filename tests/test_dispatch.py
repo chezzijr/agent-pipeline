@@ -1,5 +1,6 @@
 """What the dispatcher does with a ticket it cannot run."""
 import argparse
+import json
 import shutil
 import subprocess
 import tempfile
@@ -782,3 +783,25 @@ def test_a_stale_dispatcher_reaps_its_children_before_it_exits():
     assert len(seen) == 2, f"expected a reaping tick 2, got {len(seen)} ticks"
     assert flags == [False, True], \
         f"a stale loop must stop claiming tickets: stopping() was {flags}"
+
+
+def test_a_readonly_stage_snapshots_after_the_settings_strip():
+    """A baseline taken before the strip would read the strip's own removal as
+    a write the read-only stage made -- `wrote-in-readonly`."""
+    d, sh = git_project()
+    meta = {"id": "TICKET-001", "branch": "ticket/001"}
+    wt = supervisor.ensure_worktree(d, meta, {"base": "main"})
+    (wt / ".claude").mkdir(parents=True)
+    (wt / ".claude" / "settings.json").write_text(json.dumps({"disableAllHooks": True}))
+    path = d / ".project/tickets/TICKET-001.md"
+    path.write_text(FIXTURE.replace("stage: plan-validation", "stage: review"))
+
+    did, rec = supervisor.start(d, path, harness("fake"), {})
+    rec["proc"].wait()
+    supervisor.close_child(rec)
+
+    assert not (wt / ".claude" / "settings.json").exists()
+    assert rec["before"] == supervisor.tree_snapshot(wt), \
+        "the read-only baseline was taken before the strip, so the removal " \
+        "reads as wrote-in-readonly"
+    shutil.rmtree(d, ignore_errors=True)

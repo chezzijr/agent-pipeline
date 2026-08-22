@@ -581,6 +581,9 @@ def start(project: Path, path: Path, hcfg: dict, inflight: dict,
     t.take_lease(f"{stage}-{os.getpid()}")
     t.save()
 
+    # Strip before the baseline: a snapshot taken while the file is still
+    # there would read its own removal as `wrote-in-readonly`.
+    strip_settings_sources(wt)
     before = tree_snapshot(wt) if is_readonly(stage) else None  # before Popen
     drop_result(project, tid)  # L3: never let a previous run's verdict be reused
     try:
