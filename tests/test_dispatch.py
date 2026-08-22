@@ -805,3 +805,46 @@ def test_a_readonly_stage_snapshots_after_the_settings_strip():
         "the read-only baseline was taken before the strip, so the removal " \
         "reads as wrote-in-readonly"
     shutil.rmtree(d, ignore_errors=True)
+
+
+def test_a_finished_ticket_and_its_decision_are_committed_to_the_base_branch():
+    """Nothing used to put a ticket into git. `.project/` is tracked, but no
+    code path and no stage prompt ran `git add` on it -- a stage cannot, since
+    its cwd is the worktree while the ticket lives in the main checkout. So the
+    record of what the pipeline did was whatever somebody remembered to commit
+    by hand.
+
+    The decision file is the half that matters: `planning` greps
+    `.project/decisions/` so it does not re-decide settled questions, and one
+    that never reaches a commit is invisible to every future clone.
+    """
+    d, sh = git_project()
+    path = d / ".project/tickets/TICKET-001.md"
+    path.write_text(FIXTURE.replace("stage: plan-validation", "stage: merging"))
+    t = T.Ticket.load(path)
+
+    supervisor.advance(d, t, "ok", "landed", agent=False)
+
+    assert T.Ticket.load(t.path).stage == "done", "fixture assumption broken"
+    tracked = sh("git ls-files .project/tickets/").stdout
+    assert ".project/tickets/TICKET-001.md" in tracked, \
+        "the finished ticket never reached a commit"
+    assert not sh("git status --porcelain .project/tickets/").stdout.strip(), \
+        "the ticket was committed but left dirty -- stage: done came after"
+
+
+def test_the_record_is_not_committed_onto_a_branch_that_is_not_the_base():
+    """The commit lands in the operator's main checkout, so it refuses for the
+    same reason `merge_cmd` refuses: a checkout parked elsewhere is somebody
+    working, and a ticket left untracked is where it already was."""
+    d, sh = git_project()
+    sh("git checkout -qb somewhere-else")
+    path = d / ".project/tickets/TICKET-001.md"
+    path.write_text(FIXTURE.replace("stage: plan-validation", "stage: merging"))
+    t = T.Ticket.load(path)
+
+    supervisor.advance(d, t, "ok", "landed", agent=False)
+
+    assert T.Ticket.load(t.path).stage == "done", "the ticket must still advance"
+    assert ".project" not in sh("git ls-files .project/").stdout, \
+        "committed onto a branch that is not the base"

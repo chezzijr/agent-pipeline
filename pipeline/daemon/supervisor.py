@@ -131,6 +131,18 @@ def advance(project: Path, t: Ticket, result: str, note: str, emit=noop,
     t.release_lease()
     t.save()
     print(f"  {t.path.stem}: -> {nxt} {counters}")
+    # ...and only now is the record final enough to commit. `escalated` is
+    # excluded with the same reasoning that keeps its worktree: its ticket is
+    # evidence a human is about to edit, and committing it would land a
+    # half-finished thread on the base branch.
+    if nxt in CLEANUP_STAGES:
+        code, head = run_cmd("git rev-parse --abbrev-ref HEAD", project)
+        base = str(project_config(project).get("base", "main"))
+        if code or head.strip() != base:
+            print(f"  {t.id}: not committing the record -- checkout is on "
+                  f"`{head.strip() or '?'}`, not `{base}`")
+        elif commit_record(project, t):
+            print(f"  {t.id}: recorded the finished ticket on `{base}`")
 
 
 PIPE_SZ = 1 << 20   # the usual /proc/sys/fs/pipe-max-size for an unprivileged user
@@ -420,6 +432,47 @@ def spawn_command(project: Path, wt: Path, tid: str, stage: str, cmd: str,
             "log": log, "stage": stage, "wt": wt,
             "poller": None, "pipe": None, "reader": None,
             "sink": lambda ev: None}
+
+
+def commit_record(project: Path, t: Ticket) -> str | None:
+    """Commit the finished ticket and its decision record onto the base branch.
+
+    Until 2026-08-22 nothing did this. `.project/` is tracked and not ignored,
+    but no code path and no stage prompt ever ran `git add` on it -- a stage
+    structurally cannot, since its cwd is the worktree and the ticket lives in
+    the main checkout. So 12 of 34 tickets and 13 decisions sat untracked, and
+    the 22 that were in history got there in hand-made batches ("chore: close
+    the 15 tickets implemented during the build"). That history recorded when
+    somebody tidied up, not when work finished.
+
+    The decisions are why this is a correctness fix and not tidiness:
+    `planning` greps `.project/decisions/` to avoid re-deciding what is already
+    settled, so a decision that never reaches a commit is invisible to every
+    future clone.
+
+    Called from `advance()` AFTER `t.save()`, which is the only point where all
+    three files are final: `record_decision()` writes the new record and may
+    append a `superseded-by:` footer to an older one, and `t.stage` is not
+    `done` until the save. `merge_cmd()` is the wrong place for the same
+    reason -- it runs while the ticket still says `stage: merging`.
+
+    Refuses rather than guesses, like everything else that touches the main
+    checkout: it stages exactly the paths it wrote (never `git add .`, which
+    would sweep up whatever the operator has in flight) and skips entirely if
+    the checkout is parked off the base branch. A skipped commit is a ticket
+    that stays untracked, which is where it was anyway -- never a failed one.
+    """
+    files = [str(t.path.relative_to(project))]
+    dec = project / ".project" / "decisions"
+    if dec.is_dir():
+        code, out = run_cmd("git status --porcelain -- .project/decisions", project)
+        if code == 0:
+            files += [ln[3:].strip().strip('"') for ln in out.splitlines() if ln[3:].strip()]
+    paths = " ".join(shlex.quote(f) for f in dict.fromkeys(files))
+    code, out = run_cmd(f"git add -- {paths} && git commit -q -m "
+                        f"{shlex.quote(f'chore({t.id}): record the finished ticket')} "
+                        f"-- {paths}", project)
+    return None if code else paths
 
 
 def merge_cmd(project: Path, t: Ticket, cfg: dict) -> str:
