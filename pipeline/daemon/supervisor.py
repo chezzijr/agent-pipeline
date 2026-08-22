@@ -27,8 +27,8 @@ from pipeline.core.ticket import (Ticket, all_tickets, drop_result,
                                   stage_view, ticket_path, tickets_dir,
                                   validate_meta)
 from pipeline.core.worktree import (base_ref, drop_worktree, ensure_worktree,
-                                    project_env, run_cmd, tree_snapshot,
-                                    worktree)
+                                    project_env, run_cmd, strip_settings_sources,
+                                    tree_snapshot, worktree)
 from pipeline.daemon import registry
 from pipeline.daemon.server import Poller
 from pipeline.daemon.store import noop
@@ -298,6 +298,14 @@ def spawn(project: Path, wt: Path, tid: str, stage: str, hcfg: dict,
     """Start an agent and return immediately. The dispatcher never blocks on an
     agent, which is what makes this a pipeline rather than a call tree."""
     cfg = stage_config(stage)
+    # Above the `supports_hooks` refusal: a harness that cannot register the
+    # guard hook must still not launch on top of a settings source that would
+    # have disabled it, so the strip runs whether or not this spawn proceeds.
+    stripped = strip_settings_sources(wt)
+    if stripped:
+        print(f"  {tid}: removed {', '.join(stripped)} from the worktree -- "
+              f"a settings source there disables the guard for every spawn in it")
+        emit("guard_strip", ticket=tid, stage=stage, files=stripped)
     if cfg.get("hooks") and not hcfg.get("supports_hooks", True):
         # invariant 4: a hook is the only layer that decides with code. A
         # harness that cannot register one would run this stage with only the
