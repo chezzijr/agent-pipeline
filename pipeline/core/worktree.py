@@ -96,6 +96,31 @@ def base_checkout(project: Path, cfg: dict):
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+SETTINGS_SOURCES = (".claude/settings.json", ".claude/settings.local.json")
+
+
+def strip_settings_sources(wt: Path) -> list[str]:
+    """Remove the worktree's own settings sources before a spawn.
+
+    `--settings` registers the guard hook, but Claude Code merges the
+    worktree's project settings source ahead of it -- no flag ordering can
+    win, so the file has to be gone before launch. A tracked file is marked
+    `--skip-worktree` after the delete, so the removal never shows up in
+    `git status` and never enters the ticket's own diff.
+    """
+    removed = []
+    for rel in SETTINGS_SOURCES:
+        path = wt / rel
+        if not (path.is_file() or path.is_symlink()):
+            continue
+        tracked = run_cmd(f"git ls-files --error-unmatch -- {shlex.quote(rel)}", wt)[0] == 0
+        path.unlink()
+        if tracked:
+            run_cmd(f"git update-index --skip-worktree -- {shlex.quote(rel)}", wt)
+        removed.append(rel)
+    return removed
+
+
 def tree_snapshot(project: Path) -> str:
     """What a read-only stage must not change. `.project/` is excluded: writing
     to the ticket and the .result sidecar is every stage's job, including the

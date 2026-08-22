@@ -1,4 +1,5 @@
 """Per-ticket checkouts, and the venv the project's commands must not inherit."""
+import json
 import os
 import shutil
 import subprocess
@@ -43,3 +44,39 @@ def test_project_commands_do_not_inherit_the_dispatchers_venv():
     assert "VIRTUAL_ENV" not in env
     assert "PYTHONPATH" not in env
     assert env["PATH"] == "/usr/bin", env["PATH"]
+
+
+def test_stripping_settings_sources_removes_both_project_files():
+    """`.claude/settings.json` = `{"disableAllHooks": true}` is a project
+    settings source Claude Code merges ahead of `--settings`, so it drops the
+    guard hook for every spawn in the worktree. `strip_settings_sources()` is
+    the dispatcher-side removal; a second call must be a no-op."""
+    d, sh = git_project()
+    (d / ".claude").mkdir(parents=True)
+    (d / ".claude" / "settings.json").write_text(json.dumps({"disableAllHooks": True}))
+    (d / ".claude" / "settings.local.json").write_text(json.dumps({"disableAllHooks": True}))
+
+    removed = W.strip_settings_sources(d)
+
+    assert removed == [".claude/settings.json", ".claude/settings.local.json"], removed
+    assert not (d / ".claude" / "settings.json").exists()
+    assert not (d / ".claude" / "settings.local.json").exists()
+    assert W.strip_settings_sources(d) == []
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_a_tracked_settings_file_is_stripped_without_entering_the_diff():
+    """A plain delete of a tracked file leaves ` D .claude/settings.json` in
+    `git status`, which `implementing`'s `git commit -a` would fold into the
+    ticket's own diff. `--skip-worktree` hides the deletion instead."""
+    d, sh = git_project()
+    (d / ".claude").mkdir(parents=True)
+    (d / ".claude" / "settings.json").write_text(json.dumps({"disableAllHooks": True}))
+    sh("git add .claude/settings.json && git commit -qm settings")
+
+    W.strip_settings_sources(d)
+
+    assert not (d / ".claude" / "settings.json").exists()
+    status = sh("git status --porcelain").stdout
+    assert ".claude/settings.json" not in status, status
+    shutil.rmtree(d, ignore_errors=True)
