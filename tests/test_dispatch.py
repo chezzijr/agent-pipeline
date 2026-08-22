@@ -848,3 +848,22 @@ def test_the_record_is_not_committed_onto_a_branch_that_is_not_the_base():
     assert T.Ticket.load(t.path).stage == "done", "the ticket must still advance"
     assert ".project" not in sh("git ls-files .project/").stdout, \
         "committed onto a branch that is not the base"
+
+
+def test_a_git_ignored_project_dir_is_left_alone_and_says_so(capsys):
+    """A shared repo where not everyone runs the pipeline: `.project/` is
+    excluded and the tickets are a local queue. `git add` refuses an ignored
+    path, so the record was already skipped -- silently, which reads exactly
+    like a commit that failed. The ticket must still finish."""
+    d, sh = git_project()
+    (d / ".gitignore").write_text(".project/\n")
+    sh("git add .gitignore && git commit -qm ignore")
+    path = d / ".project/tickets/TICKET-001.md"
+    path.write_text(FIXTURE.replace("stage: plan-validation", "stage: merging"))
+
+    supervisor.advance(d, T.Ticket.load(path), "ok", "landed", agent=False)
+
+    assert T.Ticket.load(path).stage == "done", "an ignored .project must not block the ticket"
+    assert not sh("git ls-files .project/").stdout.strip(), "committed an ignored path"
+    assert "git-ignored" in capsys.readouterr().out, \
+        "skipped the record without saying why"

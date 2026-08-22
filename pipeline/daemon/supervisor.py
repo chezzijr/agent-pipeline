@@ -138,7 +138,15 @@ def advance(project: Path, t: Ticket, result: str, note: str, emit=noop,
     if nxt in CLEANUP_STAGES:
         code, head = run_cmd("git rev-parse --abbrev-ref HEAD", project)
         base = str(project_config(project).get("base", "main"))
-        if code or head.strip() != base:
+        ignored = run_cmd("git check-ignore -q .project", project)[0] == 0
+        if ignored:
+            # A shared repo where not everyone runs the pipeline: `.project/`
+            # is excluded (`.gitignore`, or `.git/info/exclude` for one clone
+            # only) and the tickets stay a local queue. `git add` refuses an
+            # ignored path, so this was already a no-op -- it just said
+            # nothing, which reads the same as a commit that failed.
+            print(f"  {t.id}: not recording -- `.project` is git-ignored here")
+        elif code or head.strip() != base:
             print(f"  {t.id}: not committing the record -- checkout is on "
                   f"`{head.strip() or '?'}`, not `{base}`")
         elif commit_record(project, t):
