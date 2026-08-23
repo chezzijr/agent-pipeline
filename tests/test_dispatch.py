@@ -867,3 +867,38 @@ def test_a_git_ignored_project_dir_is_left_alone_and_says_so(capsys):
     assert not sh("git ls-files .project/").stdout.strip(), "committed an ignored path"
     assert "git-ignored" in capsys.readouterr().out, \
         "skipped the record without saying why"
+
+
+def test_a_project_override_reaches_the_spawned_command_and_prompt():
+    """TICKET-038: a project's `[stages.<name>]` table and its
+    `.project/stages/<name>.extra.md` both reach a real spawn, not just the
+    functions in isolation."""
+    d = project()
+    with (d / ".project" / "pipeline.toml").open("a") as f:
+        f.write('\n[stages.review]\nmodel = "haiku"\n')
+    (d / ".project" / "stages").mkdir(parents=True)
+    (d / ".project" / "stages" / "review.extra.md").write_text(
+        "## Project rule\n\n- EXTRA-MARKER-4471\n")
+
+    recorded = {}
+    real_compose_prompt = supervisor.compose_prompt
+
+    def recorder(*args, **kwargs):
+        path = real_compose_prompt(*args, **kwargs)
+        recorded["text"] = path.read_text()
+        return path
+
+    supervisor.compose_prompt = recorder
+    try:
+        rec = supervisor.spawn(d, d, "TICKET-001", "review", harness("fake"))
+        rec["proc"].wait()
+        supervisor.close_child(rec)
+    finally:
+        supervisor.compose_prompt = real_compose_prompt
+
+    logs = list((d / ".project" / "logs").glob("TICKET-001-review-*.log"))
+    assert logs, "no spawn log written"
+    first_line = logs[0].read_text().splitlines()[0]
+    assert "haiku" in first_line, first_line
+    assert "EXTRA-MARKER-4471" in recorded["text"]
+    shutil.rmtree(d, ignore_errors=True)
