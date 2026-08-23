@@ -8,3 +8,14 @@ test_suite              = "pytest"
 test_suite_without_new  = "pytest --deselect {test}"
 # The branch tickets are cut from, and the one Tier A re-runs {test} against.
 base                    = "main"
+
+# Per-project stage overrides. A [stages.<name>] table is merged shallow onto
+# that stage's packaged frontmatter -- a key here replaces the packaged one,
+# it does not extend it (a `skills` list included).
+# [stages.review]
+# model  = "haiku"
+# skills = []
+#
+# Prose that adds to a stage's instructions, rather than its settings, goes
+# in .project/stages/<name>.extra.md instead -- appended after the packaged
+# prompt and before the ticket view.
