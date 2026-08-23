@@ -48,6 +48,27 @@ def test_project_commands_do_not_inherit_the_dispatchers_venv():
     assert env["PATH"] == "/usr/bin", env["PATH"]
 
 
+def test_the_main_checkout_baseline_ignores_a_merge_moving_head():
+    """`dirty_snapshot()` is the main-checkout baseline: it must not move when
+    `merging` fast-forwards the base branch there, only when a file changes.
+    `tree_snapshot()` is the worktree baseline and tracks both."""
+    d, sh = git_project()
+    base = W.dirty_snapshot(d)
+    tbase = W.tree_snapshot(d)
+
+    sh("git commit -q --allow-empty -m moved")
+
+    assert W.dirty_snapshot(d) == base
+    assert W.tree_snapshot(d) != tbase
+    tmid = W.tree_snapshot(d)
+
+    (d / "stray.py").write_text("x\n")
+
+    assert W.dirty_snapshot(d) != base
+    assert W.tree_snapshot(d) != tmid
+    shutil.rmtree(d, ignore_errors=True)
+
+
 def test_stripping_settings_sources_removes_both_project_files():
     """`.claude/settings.json` = `{"disableAllHooks": true}` is a project
     settings source Claude Code merges ahead of `--settings`, so it drops the

@@ -126,8 +126,16 @@ def tree_snapshot(project: Path) -> str:
     to the ticket and the .result sidecar is every stage's job, including the
     read-only ones."""
     _, head = run_cmd("git rev-parse HEAD", project)
+    return head + dirty_snapshot(project)
+
+
+def dirty_snapshot(project: Path) -> str:
+    """The main-checkout baseline for a read-only stage. Omits HEAD: `merging`
+    fast-forwards the base branch in the main checkout while other tickets'
+    stages run, and a baseline carrying HEAD would escalate every read-only
+    stage whose run overlapped that."""
     _, dirty = run_cmd("git status --porcelain -- . ':(exclude).project'", project)
-    return head + dirty
+    return dirty
 
 
 EXCLUDE_LINE = ".project/"
