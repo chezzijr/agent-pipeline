@@ -21,6 +21,16 @@ def test_a_neighbouring_function_does_not_trip_the_fence():
     assert fenced_touches(d, "main", FENCED) == ["module.py:func_a (gone)"]
 
 
+def test_a_directory_entry_trips_on_any_file_under_it():
+    d, sh = git_project()
+    (d / ".project" / "stages").mkdir(parents=True)
+    (d / ".project" / "stages" / "review.extra.md").write_text("extra\n")
+    sh("git add -A")
+    assert fenced_touches(d, "main", {".project/stages/": None}) == \
+        [".project/stages/review.extra.md"]
+    assert fenced_touches(d, "main", {"other/": None}) == []
+
+
 def test_a_change_to_the_committed_config_trips_the_fence():
     """`.project/pipeline.toml` names the commands Tier A and `verifying`
     trust, so a ticket that edits it stops for a human. This one calls
