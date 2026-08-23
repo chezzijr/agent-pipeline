@@ -12,6 +12,7 @@ from pathlib import Path
 
 from pipeline.core import PipelineError
 from pipeline.core.ticket import split_frontmatter
+from pipeline.core.worktree import head_file
 
 PKG = Path(__file__).resolve().parent.parent
 STAGES_DIR = PKG / "stages"
@@ -37,10 +38,28 @@ def is_readonly(stage: str) -> bool:
 
 
 def project_config(project: Path) -> dict:
-    cfg = project / ".project" / "pipeline.toml"
-    if not cfg.is_file():
-        raise PipelineError(f"no {cfg} -- run `pipeline init {project}` first")
-    return tomllib.loads(cfg.read_text())
+    """The project's config as HEAD has it, not as the working tree has it.
+
+    Every stage can write the main checkout's `.project/` -- it is where the
+    ticket file lives, and `tree_snapshot()` excludes it -- and the guard's
+    `matcher` is `Bash`, so it never sees an `Edit`. Reading off disk let any
+    stage rewrite `test_one`, `test_suite` and `base`, the commands Tier A,
+    `verifying` and `merging` trust. Read from HEAD, an uncommitted edit is
+    inert, and a committed one is in the ticket's diff, where `review` sees
+    it and `machine.FENCED` parks it at `awaiting-merge`.
+
+    The disk fallback covers a project whose config git does not have:
+    freshly `pipeline init`-ed and not yet committed, or `.project/` excluded
+    from git (`pipeline init --private`). A ticket branch cannot reach it --
+    only a commit on the main checkout can take the file out of HEAD.
+    """
+    text = head_file(project, ".project/pipeline.toml")
+    if text is None:
+        cfg = project / ".project" / "pipeline.toml"
+        if not cfg.is_file():
+            raise PipelineError(f"no {cfg} -- run `pipeline init {project}` first")
+        text = cfg.read_text()
+    return tomllib.loads(text)
 
 
 def harness(name: str = "claude-code") -> dict:
