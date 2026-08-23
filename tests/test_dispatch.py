@@ -807,6 +807,24 @@ def test_a_readonly_stage_snapshots_after_the_settings_strip():
     shutil.rmtree(d, ignore_errors=True)
 
 
+def test_a_readonly_stage_that_writes_the_main_checkout_escalates():
+    """A read-only stage's `--add-dir` reaches `<project>/.project`, but Bash
+    or a human can still dirty the main checkout outside it. That must
+    escalate exactly like a write inside the worktree does."""
+    d, _ = git_project()
+    path = d / ".project/tickets/TICKET-001.md"
+    path.write_text(FIXTURE.replace("stage: plan-validation", "stage: review"))
+
+    did, rec = supervisor.start(d, path, harness("fake"), {})
+    (d / "f.py").write_text("an edit the stage made in the wrong tree\n")
+    rec["proc"].wait()
+    supervisor.finish(d, rec)
+
+    assert Ticket.load(path).stage == "escalated"
+    assert "main checkout" in path.read_text()
+    shutil.rmtree(d, ignore_errors=True)
+
+
 def test_a_finished_ticket_and_its_decision_are_committed_to_the_base_branch():
     """Nothing used to put a ticket into git. `.project/` is tracked, but no
     code path and no stage prompt ran `git add` on it -- a stage cannot, since

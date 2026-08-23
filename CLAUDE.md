@@ -109,6 +109,10 @@ claiming the guard works.
 - **`.project/` is excluded from the read-only tree snapshot**, because writing
   to the ticket is every stage's job. That means `.project/pipeline.toml` is
   reachable by a read-only stage — the guard's allowlist is what stops it.
+- **`--add-dir` grants `<project>/.project`, not the project root, and a
+  read-only stage's baseline is two snapshots**: `tree_snapshot(wt)` plus
+  `dirty_snapshot(project)` — the second without HEAD, because `merging`
+  moves the main checkout's HEAD mid-run.
 - **`pty.fork`, never `openpty` + `Popen`.** Only fork gives the child a
   *controlling* terminal, and a TUI without one draws nothing. The winsize is
   set in the child before `exec` for the same reason: a child that reads 0x0

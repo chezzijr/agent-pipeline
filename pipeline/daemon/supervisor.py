@@ -26,9 +26,10 @@ from pipeline.core.ticket import (Ticket, all_tickets, drop_result,
                                   read_result, record_decision, result_file,
                                   stage_view, ticket_path, tickets_dir,
                                   validate_meta)
-from pipeline.core.worktree import (base_ref, drop_worktree, ensure_worktree,
-                                    project_env, run_cmd, strip_settings_sources,
-                                    tree_snapshot, worktree)
+from pipeline.core.worktree import (base_ref, dirty_snapshot, drop_worktree,
+                                    ensure_worktree, project_env, run_cmd,
+                                    strip_settings_sources, tree_snapshot,
+                                    worktree)
 from pipeline.daemon import registry
 from pipeline.daemon.server import Poller
 from pipeline.daemon.store import noop
@@ -590,6 +591,7 @@ def start(project: Path, path: Path, hcfg: dict, inflight: dict,
         # `meta` is not optional: start()'s own overlap check reads it off every
         # in-flight record
         rec["path"], rec["tid"], rec["meta"], rec["before"] = path, tid, t, None
+        rec["before_main"] = None
         return True, rec
 
     if stage == "verifying":
@@ -646,6 +648,7 @@ def start(project: Path, path: Path, hcfg: dict, inflight: dict,
     # there would read its own removal as `wrote-in-readonly`.
     strip_settings_sources(wt)
     before = tree_snapshot(wt) if is_readonly(stage) else None  # before Popen
+    before_main = dirty_snapshot(project) if is_readonly(stage) else None
     drop_result(project, tid)  # L3: never let a previous run's verdict be reused
     try:
         rec = spawn(project, wt, tid, stage, hcfg, poller, emit)
@@ -661,6 +664,7 @@ def start(project: Path, path: Path, hcfg: dict, inflight: dict,
     rec["tid"] = tid
     rec["meta"] = t   # the pre-spawn snapshot: control fields come back from here
     rec["before"] = before
+    rec["before_main"] = before_main
     return True, rec
 
 
@@ -844,6 +848,10 @@ def _finish(project: Path, rec: dict, emit=noop) -> str:
 
     if rec["before"] is not None and tree_snapshot(wt) != rec["before"]:
         escalate(t, f"read-only stage `{stage}` modified the working tree", emit)
+        return "wrote-in-readonly"
+
+    if rec.get("before_main") is not None and dirty_snapshot(project) != rec["before_main"]:
+        escalate(t, f"read-only stage `{stage}` modified the main checkout outside `.project/`", emit)
         return "wrote-in-readonly"
 
     if res is None:
