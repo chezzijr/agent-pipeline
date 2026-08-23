@@ -100,11 +100,28 @@ def event_line(ev: dict) -> str:
     return f"[{kind}] " + " ".join(f"{k}={v}" for k, v in data.items())
 
 
+def render_pty(data: bytes) -> list[str]:
+    """A raw PTY dump -> the final screen, as plain text lines.
+
+    An interactive stage that ran attached leaves terminal bytes, not
+    stream-json. Replay them through the same pyte `Screen` the live
+    pane uses: 40 lines of what the stage last showed, instead of
+    2852 spinner frames with their cursor codes intact.
+    """
+    screen = Screen()
+    screen.feed(data)
+    lines = [ln.rstrip() for ln in screen.display]
+    while lines and not lines[-1]:
+        lines.pop()
+    return lines or ["(blank screen)"]
+
+
 def tail_log(project: str, tid: str) -> list[str]:
     """The tail of the ticket's most recent stage log, rendered.
 
     A subscription only carries what happens after you subscribe; this is what
     happened before. Same `StreamReader` and same `render` as `pipeline logs`.
+    A log carrying a raw ESC is a PTY dump instead, and goes through render_pty().
     """
     try:
         logs = sorted((Path(project) / ".project" / "logs").glob(f"{tid}-*.log"),
@@ -114,6 +131,12 @@ def tail_log(project: str, tid: str) -> list[str]:
         raw = logs[-1].read_bytes()
         # drop the first line when we cut into the middle of one
         data = raw[-MAX_TAIL:].split(b"\n", 1)[-1] if len(raw) > MAX_TAIL else raw
+        # A stage that ran attached leaves a PTY dump, and valid stream-json
+        # never carries a raw ESC (JSON escapes it), so the byte is the test.
+        # The stage's name is not: `planning` runs headless whenever nothing
+        # can attach to it, and then its log IS stream-json.
+        if b"\x1b" in data:
+            return render_pty(data)
         return [ln for ev in StreamReader().feed(data) if (ln := render(ev))]
     except OSError as e:
         return [f"(log unreadable: {e})"]
