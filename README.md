@@ -71,6 +71,11 @@ pipeline --project ~/code/myproject resume  TICKET-001 \
     --stage planning --reset plan_validation_attempts
 ```
 
+Once `.project/` is committed, `pipeline.toml` is read from git `HEAD`, so an
+edit takes effect at the next commit -- a ticket working on a branch must not
+be able to change the commands that judge it. Until it is committed (and under
+`--private`, which never commits it) the file on disk is read as-is.
+
 Without installing it, `uv run python -m pipeline …` runs the same CLI.
 
 `run --once` drains the queue and exits -- what you want while you are still
