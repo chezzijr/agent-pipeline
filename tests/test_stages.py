@@ -200,3 +200,20 @@ def test_stage_config_can_take_a_per_project_override(tmp_path):
         '[stages.review]\nmodel = "haiku"\n')
     cfg = C.stage_config("review", project=project)
     assert cfg["model"] == "haiku"
+
+
+def test_a_project_override_merges_onto_the_packaged_frontmatter(tmp_path):
+    """The merge is shallow and additive per key: a project that sets `model`
+    and `write` does not lose the packaged `effort` or `hooks`, and a project
+    with no config file at all yields the packaged stage untouched."""
+    project = tmp_path / "proj"
+    (project / ".project").mkdir(parents=True)
+    (project / ".project" / "pipeline.toml").write_text(
+        '[stages.review]\nmodel = "haiku"\nwrite = true\n')
+    packaged = C.stage_config("review")
+    cfg = C.stage_config("review", project=project)
+    assert cfg["effort"] == packaged["effort"]
+    assert cfg["hooks"] == packaged["hooks"]
+    assert C.is_readonly("review") is True
+    assert C.is_readonly("review", project) is False
+    assert C.stage_config("review", project=tmp_path / "nothing")["model"] == packaged["model"]

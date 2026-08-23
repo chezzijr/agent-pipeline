@@ -132,6 +132,8 @@ def head_file(project: Path, rel: str) -> str | None:
     Not `run_cmd()`: that returns `(stdout + stderr)[-4000:]`, which would
     merge git's stderr into the file and truncate a long one.
     """
+    if not project.is_dir():
+        return None
     p = subprocess.run(f"git show {shlex.quote('HEAD:./' + rel)}", shell=True,
                        cwd=project, capture_output=True, text=True,
                        errors="replace", env=project_env())
