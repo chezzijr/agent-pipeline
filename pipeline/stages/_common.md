@@ -21,7 +21,15 @@ it is lost.
    section by grepping the file for `^## `, then read only that range
    before you edit it. Never read the whole ticket file in order to make
    an edit -- that is the cost the view exists to remove.
-5. Finish by writing the result file **at the exact absolute path given in
+5. Every file you edit goes in your working directory, with exactly two
+   exceptions: the ticket file and the result file. Both are named by
+   absolute path in your instructions. Your working directory is a git
+   worktree for this ticket alone. An edit anywhere else is lost work -- it
+   lands outside the ticket's branch, no review sees it, and it corrupts the
+   checkout the dispatcher runs from. If a path you are about to edit is not
+   under your working directory and is not one of those two files, stop: you
+   are in the wrong tree.
+6. Finish by writing the result file **at the exact absolute path given in
    your instructions** (your working directory is a git worktree, not the
    project root, so a relative path lands in the wrong tree):
 

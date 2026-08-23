@@ -28,6 +28,14 @@ def test_composed_prompt_has_common_rules_and_no_frontmatter():
     assert "model:" not in text.split("## Your stage")[0].split("```")[0]
 
 
+def test_common_rules_say_where_a_code_edit_goes():
+    f = C.compose_prompt("review")
+    text = f.read_text()
+    f.unlink()
+    assert "Every file you edit goes in your working directory" in text
+    assert "the ticket file and the result file" in text
+
+
 def test_the_composed_prompt_carries_the_stage_view():
     """The view reaches the agent through the system prompt, not a file
     it has to open. A prompt built without one is the pre-TICKET-023
