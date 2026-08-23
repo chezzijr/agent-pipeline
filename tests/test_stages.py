@@ -187,3 +187,16 @@ def test_the_fenced_list_matches_the_rule_file():
     code = {p for p, s in M.FENCED.items() if s is None} | {
         s for syms in M.FENCED.values() if syms for s in syms}
     assert prose == code, f"CLAUDE.md says {prose}, machine.FENCED says {code}"
+
+
+def test_stage_config_can_take_a_per_project_override(tmp_path):
+    """TICKET-038: `stage_config()` resolves against the packaged stage only,
+    with no way for a project to add a model, tool or skill of its own. A
+    project that wants `review` to run on a different model has nowhere to
+    say so."""
+    project = tmp_path / "proj"
+    (project / ".project").mkdir(parents=True)
+    (project / ".project" / "pipeline.toml").write_text(
+        '[stages.review]\nmodel = "haiku"\n')
+    cfg = C.stage_config("review", project=project)
+    assert cfg["model"] == "haiku"
