@@ -17,6 +17,11 @@ HUMAN_GATES = {"awaiting-approval", "needs-input", "awaiting-merge"}
 # the two in both directions so they cannot drift.
 FENCED = {
     "pipeline/hooks/dangerous-commands.py": None,
+    # The harness template carries `--settings` (which registers the guard),
+    # `--permission-mode`, `--setting-sources` and `--add-dir` -- what every
+    # stage can reach and what decides with code. `CLAUDE.md` already said to
+    # treat an edit here as a guard edit; without an entry it merged unattended.
+    "pipeline/harnesses/claude-code.toml": None,
     "pipeline/core/machine.py": ("transition", "CONTROL_FIELDS"),
     "pipeline/core/ticket.py": ("validate_meta",),
     "pipeline/core/worktree.py": ("strip_settings_sources",),

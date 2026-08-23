@@ -202,7 +202,8 @@ claiming the guard works.
 The agent edits its worktree copy while the dispatcher runs from the main
 checkout, so there is no mid-run self-modification hazard.
 
-But a change to `pipeline/hooks/dangerous-commands.py`, `transition()`, `validate_meta()`,
+But a change to `pipeline/hooks/dangerous-commands.py`, `pipeline/harnesses/claude-code.toml`,
+`transition()`, `validate_meta()`,
 `CONTROL_FIELDS` or `strip_settings_sources()` **requires human review before merge**, whatever the
 pipeline says. A pipeline that can weaken its own guard unattended is the one
 failure mode worth refusing to automate.
