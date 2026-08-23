@@ -217,3 +217,23 @@ def test_a_project_override_merges_onto_the_packaged_frontmatter(tmp_path):
     assert C.is_readonly("review") is True
     assert C.is_readonly("review", project) is False
     assert C.stage_config("review", project=tmp_path / "nothing")["model"] == packaged["model"]
+
+
+def test_a_project_appends_prose_to_a_stage_prompt(tmp_path):
+    """A project's `.project/stages/<stage>.extra.md` lands after the packaged
+    prompt and before the ticket view -- an addition, never a replacement."""
+    project = tmp_path / "proj"
+    stages_dir = project / ".project" / "stages"
+    stages_dir.mkdir(parents=True)
+    extra = stages_dir / "review.extra.md"
+    extra.write_text("## This project's rule\n\n- EXTRA-MARKER-4471\n")
+    try:
+        path = C.compose_prompt("review", None, "VIEW-MARKER-9137", project)
+        text = path.read_text()
+        assert text.index("Your stage: review") < text.index("EXTRA-MARKER-4471") \
+            < text.index("VIEW-MARKER-9137")
+
+        path = C.compose_prompt("review", None, "VIEW-MARKER-9137")
+        assert "EXTRA-MARKER-4471" not in path.read_text()
+    finally:
+        extra.unlink()

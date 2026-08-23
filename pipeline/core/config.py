@@ -97,7 +97,21 @@ def harness(name: str = "claude-code") -> dict:
     return tomllib.loads(p.read_text())
 
 
-def compose_prompt(stage: str, hcfg: dict | None = None, view: str = "") -> Path:
+def stage_extra(project: Path | None, stage: str) -> str:
+    """A project's own prose for this stage, or `""` when it has none.
+
+    Read straight off disk, unlike `project_config()`: prose cannot grant a
+    stage any privilege it doesn't already have, so there is no unattended-
+    merge hole in reading it before it is committed.
+    """
+    if project is None:
+        return ""
+    f = project / ".project" / "stages" / f"{stage}.extra.md"
+    return f.read_text() if f.is_file() else ""
+
+
+def compose_prompt(stage: str, hcfg: dict | None = None, view: str = "",
+                   project: Path | None = None) -> Path:
     """_common.md + this stage's body, frontmatter stripped, as one file.
 
     A stage's `skills:` only reaches the prompt when the harness declares the
@@ -113,6 +127,11 @@ def compose_prompt(stage: str, hcfg: dict | None = None, view: str = "") -> Path
                  "Invoke these before you start; they are here because this "
                  "stage's job depends on them.\n\n"
                  + "\n".join(f"- `/{sk}`" for sk in cfg["skills"]) + "\n")
+    extra = stage_extra(project, stage)
+    if extra:
+        text += ("\n\n---\n\n# This project's additions to this stage\n\n"
+                 f"From `.project/stages/{stage}.extra.md`. These instructions "
+                 "add to the rules above, and never relax them.\n\n" + extra)
     if view:
         text += ("\n\n---\n\n# The ticket\n\nThis is a bounded view of "
                  "the ticket named in your instructions -- the ticket's "
