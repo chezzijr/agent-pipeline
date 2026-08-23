@@ -18,6 +18,7 @@ import os
 import selectors
 import socket
 import stat
+import sys
 from collections import deque
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -48,6 +49,9 @@ PTY_INPUT = 4096  # one write into a pty's input buffer. Larger short-writes,
 MAX_LINE = 1 << 20
 STALE_HOURS = 4  # overlap ordering is silent; surface anything sitting still
 SENT = object()   # "this op already queued its own frames" -- see _op_subscribe
+
+# sizeof(sockaddr_un.sun_path): 108 on Linux, 104 on macOS and the BSDs.
+SUN_PATH_MAX = 104 if sys.platform != "linux" else 108
 
 
 def runtime_dir() -> Path:
@@ -247,14 +251,17 @@ class Server(Poller):
         a daemon that is already gone -- so it is safe to unlink. The connect
         probe stays as a belt-and-braces check for a daemon predating the lock
         file."""
-        # AF_UNIX caps the path at ~108 bytes, and the failure is an opaque
-        # OSError from bind() rather than anything naming the cause. Check it
-        # up front: a long $XDG_RUNTIME_DIR is a plausible thing to have, and
-        # `--socket` is the way out.
-        if len(str(self.path).encode()) >= 108:
+        # AF_UNIX caps the path at `sizeof(sun_path)`, and the failure is an
+        # opaque OSError from bind() rather than anything naming the cause.
+        # Check it up front: a long $XDG_RUNTIME_DIR is a plausible thing to
+        # have, and `--socket` is the way out. The cap is not the same
+        # everywhere -- 108 on Linux, 104 on the BSDs and macOS -- so take the
+        # smaller one rather than let a 105-byte path bind on one box and
+        # raise a bare OSError on the next.
+        if len(str(self.path).encode()) >= SUN_PATH_MAX:
             raise PipelineError(
                 f"socket path is too long for AF_UNIX ({len(str(self.path).encode())} "
-                f"bytes, limit 107): {self.path}\n"
+                f"bytes, limit {SUN_PATH_MAX - 1}): {self.path}\n"
                 f"pass a shorter --socket, or set $XDG_RUNTIME_DIR")
         if self.path.exists():
             probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)

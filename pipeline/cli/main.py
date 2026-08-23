@@ -481,7 +481,9 @@ def main() -> None:
     # already parsed off the top-level `ap` with this subparser's own None
     # default -- argparse writes both into the same namespace.
     p.add_argument("--project", default=argparse.SUPPRESS, help="PATH|name (default: every project)")
-    p.add_argument("--db", help="override ~/.local/state/pipeline/events.db")
+    p.add_argument("--db", help="override the event db (default: "
+                        "$XDG_STATE_HOME/pipeline/events.db, or "
+                        "~/.local/state/pipeline/events.db)")
     p.add_argument("--json", action="store_true")
     p.set_defaults(fn=cmd_metrics)
 

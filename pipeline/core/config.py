@@ -5,6 +5,7 @@ located from the repo root they are simply gone after `uv tool install .`.
 """
 import json
 import shlex
+import sys
 import tempfile
 import tomllib
 from pathlib import Path
@@ -153,7 +154,14 @@ def stage_settings(stage: str, cfg: dict) -> Path | None:
     names = cfg.get("hooks") or []
     if not names:
         return None
-    entries = [{"type": "command", "command": str(HOOKS_DIR / f"{n}.py")}
+    # The interpreter is named, not left to the shebang: `#!/usr/bin/env
+    # python3` resolves to whatever `python3` the operator has first on PATH,
+    # which on macOS is the 3.9 the system ships and cannot parse the guard's
+    # `str | None` annotations. A guard that fails to import is a guard that
+    # does not run, so it runs under the same interpreter as the dispatcher.
+    entries = [{"type": "command",
+                "command": f"{shlex.quote(sys.executable)} "
+                           f"{shlex.quote(str(HOOKS_DIR / f'{n}.py'))}"}
                for n in names]
     settings = {"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": entries}]}}
     f = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)

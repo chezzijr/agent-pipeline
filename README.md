@@ -22,6 +22,9 @@ did. Tickets are the queue; agents are stateless workers pulled off it.
   harness that is exercised against real runs. Stage prompts are
   harness-neutral; everything CLI-specific lives in one TOML file, and
   `pipeline/harnesses/codex.toml` exists to prove that seam holds.
+- **Linux or macOS.** POSIX only -- `fork`, a PTY, `flock`, a Unix socket and
+  `selectors` -- with no Linux-only syscall on any path, so both are supported.
+  Not Windows: WSL is the way there.
 - **A git repo to point it at** -- the pipeline works on *your* project, not on
   itself. Each ticket gets its own worktree.
 
@@ -103,11 +106,11 @@ private decision set and re-argue each other's conclusions.
 ## The daemon
 
 `pipelined` is **one process for many projects**, not one per project. It keeps
-working after you close the terminal, and it records what happened to
-`~/.local/state/pipeline/events.db`.
+working after you close the terminal, and it records what happened to an event
+database under your state directory (see *Where it keeps things*).
 
 ```sh
-pipeline register ~/code/myproject   # -> ~/.config/pipeline/projects, one path per line
+pipeline register ~/code/myproject   # one path per line in the registry file
 pipeline start                       # spawns pipelined, detached
 pipeline status                      # is it running, and how many projects
 pipeline ls                          # every registered project's tickets
@@ -116,10 +119,28 @@ pipeline stop
 pipeline unregister ~/code/myproject
 ```
 
-`pipelined` itself stays a raw foreground process, so `systemd --user` or tmux
-can supervise it; `pipeline start` is just a convenience wrapper. There is no
-pidfile: the socket at `$XDG_RUNTIME_DIR/pipeline/daemon.sock` is the liveness
-check and `ping` returns the pid.
+`pipelined` itself stays a raw foreground process, so `systemd --user`, `launchd`
+or tmux can supervise it; `pipeline start` is just a convenience wrapper. There is
+no pidfile: the daemon socket is the liveness check and `ping` returns the pid.
+
+### Where it keeps things
+
+Nothing here is a hardcoded path. Each one reads the matching XDG variable if
+your session sets it and falls back to a plain `$HOME` path if it does not, so
+this works the same on a systemd desktop, a bare login shell and macOS.
+
+| What | Set by | Unset (the fallback) |
+|---|---|---|
+| registry | `$XDG_CONFIG_HOME/pipeline/projects` | `~/.config/pipeline/projects` |
+| event log | `$XDG_STATE_HOME/pipeline/events.db` | `~/.local/state/pipeline/events.db` |
+| daemon socket | `$XDG_RUNTIME_DIR/pipeline/daemon.sock` | `/tmp/pipeline-$UID/daemon.sock`, created `0700` and checked to be yours |
+
+`$XDG_RUNTIME_DIR` is the one that is usually **absent** outside systemd -- macOS
+never sets it -- which is why the socket has a real fallback rather than an error.
+`--socket` and `--db` override the last two; the registry follows
+`$XDG_CONFIG_HOME`. AF_UNIX caps a socket path at 104 bytes on macOS and the BSDs
+and 108 on Linux, so `pipeline` checks the shorter limit and says so instead of
+letting `bind()` fail with an unexplained `OSError`.
 
 **The daemon is an accelerator, never a dependency.** `pipeline run --project X`
 is the same supervisor minus the socket, and every client command falls back to

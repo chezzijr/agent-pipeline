@@ -1,5 +1,7 @@
 """A stage is one self-contained file -- and it has to survive being installed."""
 import json
+import shlex
+import sys
 from pathlib import Path
 
 from pipeline.core import config as C
@@ -70,8 +72,12 @@ def test_stage_settings_register_the_guard_as_a_pretooluse_hook():
     data = json.loads(f.read_text()); f.unlink()
     entry = data["hooks"]["PreToolUse"][0]
     assert entry["matcher"] == "Bash"
-    assert entry["hooks"][0]["command"].endswith("dangerous-commands.py")
-    assert Path(entry["hooks"][0]["command"]).is_file(), "hook path does not exist"
+    # An interpreter + a script, not a bare path: a shebang would pick up the
+    # operator's `python3`, and macOS ships a 3.9 that cannot import the guard.
+    argv = shlex.split(entry["hooks"][0]["command"])
+    assert argv[0] == sys.executable, argv
+    assert argv[1].endswith("dangerous-commands.py")
+    assert Path(argv[1]).is_file(), "hook path does not exist"
 
 
 def test_every_stage_that_can_run_bash_has_the_guard():
