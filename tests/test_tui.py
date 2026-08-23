@@ -541,3 +541,30 @@ def test_tail_log_never_returns_a_raw_escape_byte_for_a_pty_dump():
 
     for line in lines:
         assert "\x1b" not in line, f"raw escape byte reached the log line: {line!r}"
+
+
+def test_tail_log_renders_a_pty_dump_as_the_final_screen():
+    """Escape-free is not enough: the pyte screen is the point. A dump
+    whose second frame clears and overwrites the first must come back
+    as the last screen, once."""
+    d = make_project()
+    logs = d / ".project" / "logs"
+    logs.mkdir(parents=True)
+    (logs / "TICKET-001-planning.log").write_bytes(
+        b"\x1b[H\x1b[2Jfirst frame\x1b[H\x1b[2Jsecond frame\x1b[K\n")
+
+    assert tail_log(str(d), "TICKET-001") == ["second frame"]
+
+
+def test_tail_log_still_renders_a_stream_json_log():
+    """The sniff must not divert a headless stage's log into pyte: 35
+    of the 43 `planning` logs in this repo are stream-json, from runs
+    where nothing could attach."""
+    d = make_project()
+    logs = d / ".project" / "logs"
+    logs.mkdir(parents=True)
+    (logs / "TICKET-001-planning.log").write_bytes(
+        b'{"type":"assistant","message":{"content":'
+        b'[{"type":"text","text":"planning done"}]}}\n')
+
+    assert tail_log(str(d), "TICKET-001") == ["planning done"]
