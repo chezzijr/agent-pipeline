@@ -22,19 +22,47 @@ TICKET_TEMPLATE = PKG / "templates" / "ticket.md"
 CONFIG_TEMPLATE = PKG / "templates" / "pipeline.toml"
 
 
-def stage_config(stage: str) -> dict:
+def project_stage_config(project: Path | None, stage: str) -> dict:
+    """A project's `[stages.<stage>]` table, or `{}` when it has none.
+
+    `project` of `None`, or a project with no `.project/pipeline.toml` at
+    all, both yield `{}` -- the packaged stage is untouched. A `stages` or
+    `[stages.<stage>]` value that is present but not a table is a config
+    error, not a silent no-op, so it raises.
+    """
+    if project is None:
+        return {}
+    try:
+        cfg = project_config(project)
+    except PipelineError:
+        return {}
+    stages = cfg.get("stages", {})
+    if not isinstance(stages, dict):
+        raise PipelineError(f"{project}: [stages] must be a table")
+    table = stages.get(stage, {})
+    if not isinstance(table, dict):
+        raise PipelineError(f"{project}: [stages.{stage}] must be a table")
+    return table
+
+
+def stage_config(stage: str, project: Path | None = None) -> dict:
     """Model, effort and write access come from the stage prompt's own
-    frontmatter, so a stage is one self-contained file."""
+    frontmatter, so a stage is one self-contained file -- overlaid, when a
+    project is given, with that project's `[stages.<stage>]` table.
+
+    The merge is shallow: a project's `skills` list REPLACES the packaged
+    list, it does not extend it.
+    """
     meta, _ = split_frontmatter(STAGES_DIR / f"{stage}.md")
-    return meta
+    return {**meta, **project_stage_config(project, stage)}
 
 
 def agent_stages() -> list[str]:
     return sorted(p.stem for p in STAGES_DIR.glob("*.md") if not p.stem.startswith("_"))
 
 
-def is_readonly(stage: str) -> bool:
-    return not stage_config(stage).get("write", False)
+def is_readonly(stage: str, project: Path | None = None) -> bool:
+    return not stage_config(stage, project).get("write", False)
 
 
 def project_config(project: Path) -> dict:
