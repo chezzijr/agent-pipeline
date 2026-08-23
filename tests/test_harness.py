@@ -72,6 +72,26 @@ def test_claude_code_render_is_unchanged_by_the_extraction():
     assert "claude -p" in cmd
 
 
+def test_add_dir_grants_only_the_project_dir_not_the_whole_main_checkout():
+    """A stage needs to write exactly two things outside its worktree: the
+    ticket file and the `.result` sidecar, both under `<project>/.project/`.
+    `--add-dir {project}` instead grants the whole main checkout -- every
+    other ticket's file, every other ticket's worktree (worktrees live at
+    `<project>/.worktrees/<id>`), and the dispatcher's own source tree."""
+    hcfg = config.harness("claude-code")
+    stage_cfg = config.stage_config("review")
+    prompt = config.compose_prompt("review")
+    cmd = config.render(hcfg, stage_cfg, tid="TICKET-001",
+                        project=Path("/proj"), ticket=Path("/proj/.project/t.md"),
+                        result_file=Path("/proj/.project/t.result"), session="s1",
+                        prompt=prompt, settings=Path("/proj/settings.json"))
+    prompt.unlink()
+
+    assert "--add-dir /proj/.project " in cmd or "--add-dir /proj/.project --" in cmd, (
+        f"--add-dir must grant only the project's .project/ directory, not "
+        f"the whole main checkout:\n{cmd}")
+
+
 def test_the_prompt_survives_a_variadic_flag():
     """`--add-dir` is variadic: `--add-dir /p "prompt"` eats the prompt as a
     second directory and claude exits with "Input must be provided either
