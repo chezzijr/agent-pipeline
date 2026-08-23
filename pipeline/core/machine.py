@@ -26,6 +26,10 @@ FENCED = {
     "pipeline/core/machine.py": ("transition", "CONTROL_FIELDS"),
     "pipeline/core/ticket.py": ("validate_meta",),
     "pipeline/core/worktree.py": ("strip_settings_sources",),
+    # A project's stage prose (TICKET-038) is append-only and grants no
+    # privilege, but `tree_snapshot()` excludes `.project/` -- nothing else
+    # notices a read-only stage writing one into its own worktree.
+    ".project/stages/": None,
 }
 KNOWN_STAGES = TERMINAL | HUMAN_GATES | {
     "new", "triage", "planning", "plan-validation", "revalidating",

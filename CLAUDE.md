@@ -209,8 +209,8 @@ The agent edits its worktree copy while the dispatcher runs from the main
 checkout, so there is no mid-run self-modification hazard.
 
 But a change to `pipeline/hooks/dangerous-commands.py`, `pipeline/harnesses/claude-code.toml`,
-`transition()`, `validate_meta()`, `CONTROL_FIELDS`, `strip_settings_sources()` or
-`.project/pipeline.toml` **requires human review before merge**, whatever the pipeline says.
+`transition()`, `validate_meta()`, `CONTROL_FIELDS`, `strip_settings_sources()`,
+`.project/pipeline.toml` or `.project/stages/` **requires human review before merge**, whatever the pipeline says.
 A pipeline that can weaken its own guard unattended is the one failure mode worth
 refusing to automate.
 
