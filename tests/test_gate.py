@@ -360,3 +360,25 @@ def test_a_prose_finding_states_the_rule_that_would_fix_it():
     assert prose, failures
     assert any("indent" in f.lower() for f in prose), prose
     shutil.rmtree(d)
+
+
+def test_a_whole_suite_criterion_naming_pytest_is_accepted():
+    """`pytest` has no word boundary before `test`, so the criteria regex --
+    `\\btest[_a-zA-Z0-9]*\\b|::|...` -- matched nothing in "run `pytest -q`".
+    That is the whole-suite criterion `CLAUDE.md`'s own Commands section
+    writes, and it cost TICKET-041 a plan-validation attempt on 2026-08-23
+    against a plan the gate had no other finding on.
+
+    Fails without the `\\bpytest\\b` alternative: the criterion is reported as
+    naming no test. The second criterion is the guard against over-fixing --
+    dropping the `\\b` instead would make `latest` a test name."""
+    d = project(FIXTURE.replace(
+        "## Acceptance criteria\n- `test_broken` passes\n",
+        "## Acceptance criteria\n- `test_broken` passes\n"
+        "- `uv run --group dev pytest -q` reports no failures\n"
+        "- the latest build is the greatest\n"))
+    ok, failures = gate(d, "TICKET-001")
+    named = [f for f in failures if "names no test" in f]
+    assert not any("pytest" in f for f in named), named
+    assert any("latest build" in f for f in named), named
+    shutil.rmtree(d)

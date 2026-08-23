@@ -271,8 +271,15 @@ def gate(project: Path, tid: str, workdir: Path | None = None) -> tuple[bool, li
 
     crit = secs.get("Acceptance criteria", "")
     for line in [l for l in crit.splitlines() if l.strip().startswith(("-", "*"))]:
-        # a backticked token is not enough -- "`10ms`" is a metric, not a test
-        if not re.search(r"\btest[_a-zA-Z0-9]*\b|::|\b\w+_test\b|\btests?/", line, re.I):
+        # a backticked token is not enough -- "`10ms`" is a metric, not a test.
+        # `pytest` is named explicitly: `\btest` needs a word boundary before
+        # `test`, and `py` is a word character, so "run `pytest -q`" -- the
+        # whole-suite criterion `CLAUDE.md` itself writes -- matched nothing.
+        # It cost TICKET-041 a plan-validation attempt on a plan the gate had
+        # no other complaint about. Not `\btest` without the boundary: that
+        # matches `latest`, `greatest`, `contest`.
+        if not re.search(r"\bpytest\b|\btest[_a-zA-Z0-9]*\b|::|\b\w+_test\b|\btests?/",
+                         line, re.I):
             findings.append(f"acceptance criterion names no test: {line.strip()}")
 
     failed = [f for f in findings if not f.startswith("ok:")]
