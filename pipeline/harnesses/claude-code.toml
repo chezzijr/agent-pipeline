@@ -3,8 +3,13 @@
 # settings_flag, permission_mode, stage_prompt, tools, cap, project, ticket,
 # result_file, id.
 #
-# The agent's cwd is the ticket's git worktree; the ticket itself lives in the
-# main checkout, which is why {project} is passed as an extra allowed dir.
+# The agent's cwd is the ticket's git worktree; the ticket file and the
+# `.result` sidecar live under `<project>/.project/` in the main checkout, so
+# that one directory is the extra allowed dir, not the whole checkout.
+# `--add-dir {project}` used to grant that -- every other ticket's file,
+# every other ticket's worktree (`<project>/.worktrees/<id>`) and the
+# dispatcher's own source tree. TICKET-039 and TICKET-040 each wrote their
+# work into the main checkout on 2026-08-23 (TICKET-041).
 #
 # The `--` before the prompt is load-bearing: `--add-dir` is VARIADIC, so
 # `--add-dir /p "prompt"` consumes the prompt as a second directory and claude
@@ -163,7 +168,7 @@ cmd = """claude -p --model {model} {effort_flag} {session_flag} {settings_flag} 
 --tools "{tools}" --strict-mcp-config {skills_flag} \
 --permission-mode {permission_mode} \
 --max-budget-usd {cap} \
---add-dir {project} -- \
+--add-dir {project}/.project -- \
 "Work ticket {id}. Your prompt carries a bounded view of {ticket}; open that file only for what the view says it omitted, and read only the lines you need. When finished write {result_file}" """
 
 # The same stage, hosted on a PTY the daemon owns (`mode: interactive` in the
@@ -180,5 +185,5 @@ interactive_cmd = """claude --model {model} {effort_flag} {session_flag} {settin
 --tools "{tools}" --strict-mcp-config {skills_flag} \
 --permission-mode {permission_mode} \
 --max-budget-usd {cap} \
---add-dir {project} -- \
+--add-dir {project}/.project -- \
 "Work ticket {id}. Your prompt carries a bounded view of {ticket}; open that file only for what the view says it omitted, and read only the lines you need. When finished write {result_file}" """

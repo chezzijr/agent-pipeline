@@ -92,6 +92,26 @@ def test_add_dir_grants_only_the_project_dir_not_the_whole_main_checkout():
         f"the whole main checkout:\n{cmd}")
 
 
+def test_add_dir_narrows_the_interactive_template_too():
+    """The `cmd` template and the `interactive_cmd` template each carry their
+    own `--add-dir {project}`. Narrowing one leaves the other granting the
+    whole main checkout to an interactive stage."""
+    hcfg = config.harness("claude-code")
+    stage_cfg = config.stage_config("review")
+    prompt = config.compose_prompt("review")
+    cmd = config.render(hcfg, stage_cfg, tid="TICKET-001",
+                        project=Path("/proj"), ticket=Path("/proj/.project/t.md"),
+                        result_file=Path("/proj/.project/t.result"), session="s1",
+                        prompt=prompt, settings=Path("/proj/settings.json"),
+                        key="interactive_cmd")
+    prompt.unlink()
+
+    assert "--add-dir /proj/.project " in cmd, (
+        f"interactive_cmd must grant the project's .project/ directory:\n{cmd}")
+    assert "--add-dir /proj " not in cmd, (
+        f"interactive_cmd still grants the whole main checkout:\n{cmd}")
+
+
 def test_the_prompt_survives_a_variadic_flag():
     """`--add-dir` is variadic: `--add-dir /p "prompt"` eats the prompt as a
     second directory and claude exits with "Input must be provided either
