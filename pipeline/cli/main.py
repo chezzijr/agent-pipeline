@@ -409,7 +409,7 @@ def cmd_logs(args) -> None:
 
 def _metrics_project(args) -> str | None:
     """`--project` here is `PATH|name`: a bare name matches a registered
-    project's directory basename, so `--project claude-setup` works from
+    project's directory basename, so `--project agent-pipeline` works from
     anywhere without typing the absolute path events are stored under.
     `--project` is a filter everywhere in this CLI, never a target -- omit
     it and every project's events count."""

@@ -1,4 +1,4 @@
-# claude-setup dogfooding its own pipeline.
+# agent-pipeline dogfooding its own pipeline.
 # pytest collects the assert-based suite fine -- verified, node ids work.
 test_one               = "uv run --group dev pytest -x {test}"
 test_suite             = "uv run --group dev pytest && ./pipeline/hooks/test_dangerous_commands.py"

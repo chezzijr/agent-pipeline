@@ -1,4 +1,4 @@
-# claude-setup
+# agent-pipeline
 
 A ticket-driven agent pipeline. Agents never talk to each other; they talk
 through a ticket file. A dumb dispatcher owns the state machine and spawns a
