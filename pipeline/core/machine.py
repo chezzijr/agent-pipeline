@@ -11,7 +11,7 @@ BOUNDS = {
 }
 TERMINAL = {"done", "rejected", "escalated"}
 HUMAN_GATES = {"awaiting-approval", "needs-input", "awaiting-merge"}
-# The six things `CLAUDE.md` fences off from unattended merge, path to symbol
+# The eight things `CLAUDE.md` fences off from unattended merge, path to symbol
 # tuple or None for whole-file. `CLAUDE.md` keeps the prose copy;
 # tests/test_stages.py::test_the_fenced_list_matches_the_rule_file compares
 # the two in both directions so they cannot drift.
