@@ -288,6 +288,18 @@ def test_plan_prints_only_the_plan_and_acceptance_criteria():
     assert r.returncode == 0, r.stderr
     assert "move the widget." in r.stdout
     assert "widget moved." in r.stdout
+    assert "## Plan" in r.stdout
+    assert "## Acceptance criteria" in r.stdout
     assert "## Summary" not in r.stdout
     assert "## Reproduction" not in r.stdout
+    shutil.rmtree(d)
+
+
+def test_plan_errors_on_an_unknown_ticket():
+    d = Path(tempfile.mkdtemp())
+    cli(d, "new", "t")
+    r = cli(d, "plan", "TICKET-999")
+    assert r.returncode == 1, r.stderr
+    assert "TICKET-999.md" in r.stderr
+    assert "Traceback" not in r.stderr
     shutil.rmtree(d)
