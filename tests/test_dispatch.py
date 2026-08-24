@@ -919,4 +919,46 @@ def test_a_project_override_reaches_the_spawned_command_and_prompt():
     first_line = logs[0].read_text().splitlines()[0]
     assert "haiku" in first_line, first_line
     assert "EXTRA-MARKER-4471" in recorded["text"]
+
+
+def test_a_ticket_held_at_merging_is_rebased_before_the_merge_is_attempted():
+    """TICKET-045: `revalidating` rebases a ticket onto base once, right after
+    approval. Nothing rebases it again. `files_conflict` and `start()`'s merge
+    serialisation can then hold an approved, verified ticket at `merging` for
+    an arbitrarily long time while base moves underneath it, so the eventual
+    `git merge --no-edit <base>` in `merge_cmd()` can fail on a conflict that
+    a rebase closer to the merge would have caught, or avoided, sooner.
+
+    This reproduces the wait: the ticket's branch is left exactly where the
+    approval-time rebase put it, base then moves twice (two other tickets'
+    changes land), and `start()` runs the ticket's `merging` stage. The
+    dispatcher should rebase the branch onto the now-current base before
+    attempting the merge -- it does not."""
+    d, sh = git_project()
+    path = d / ".project/tickets/TICKET-001.md"
+    path.write_text(FIXTURE.replace("stage: plan-validation", "stage: merging"))
+    wt = supervisor.ensure_worktree(
+        d, {"id": "TICKET-001", "branch": "ticket/001"}, {"base": "main"})
+    (wt / "ticket.py").write_text("the ticket's own change\n")
+    _commit(wt, "'ticket commit'")
+
+    (d / "other1.py").write_text("first unrelated ticket lands\n")
+    sh("git add -A && git commit -qm 'other ticket 1'")
+    (d / "other2.py").write_text("second unrelated ticket lands\n")
+    sh("git add -A && git commit -qm 'other ticket 2'")
+
+    did, rec = supervisor.start(d, path, harness("fake"), {})
+    assert did and rec and rec["kind"] == "merge"
+    rec["proc"].wait()
+
+    log_text = rec["log"].read_text()
+    cmd_line = log_text.splitlines()[0]
+    assert "rebase" in cmd_line, (
+        "merging attempted no rebase before merge_cmd()'s first step -- "
+        f"the command run was: {cmd_line!r}. A ticket held at `merging` "
+        "while base moves underneath it gets no chance to catch up before "
+        "the merge is attempted.")
+
+    supervisor.finish(d, rec)
+    shutil.rmtree(d, ignore_errors=True)
     shutil.rmtree(d, ignore_errors=True)
