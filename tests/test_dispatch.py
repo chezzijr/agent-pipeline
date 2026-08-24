@@ -1141,3 +1141,56 @@ def test_the_cheap_routes_branch_tip_is_recorded_before_the_fix_is_written():
     assert "cheap_route_head" not in Ticket.load(path2).extra, \
         "a non-cheap-route implementing spawn recorded a tip anyway"
     shutil.rmtree(d, ignore_errors=True)
+
+
+def test_a_promoted_cheap_route_ticket_reaches_planning_with_its_fix_unwound():
+    """A ticket promoted out of `quick-review` still carries the cheap route's
+    commit. `unwinding` discards it before `planning` sees the branch, and
+    triage's own test commit survives."""
+    d, sh = git_project()
+    wt = supervisor.ensure_worktree(
+        d, {"id": "TICKET-001", "branch": "ticket/001"}, {"base": "main"})
+    (wt / "test_thing.py").write_text("")
+    _commit(wt, "'triage: the failing test'")
+    triage_sha = subprocess.run("git rev-parse HEAD", shell=True, cwd=wt,
+                                capture_output=True, text=True).stdout.strip()
+    (wt / "f.py").write_text("fixed\n")
+    _commit(wt, "'implementing: the fix'")
+
+    path = d / ".project/tickets/TICKET-001.md"
+    path.write_text(FIXTURE.replace("stage: plan-validation", "stage: quick-review"))
+    t = Ticket.load(path)
+    t.extra["cheap_route_head"] = triage_sha
+    t.save()
+    supervisor.advance(d, Ticket.load(path), "fail", "quick-review failed", agent=False)
+    assert Ticket.load(path).stage == "unwinding"
+
+    did, rec = supervisor.start(d, path, harness("fake"), {})
+    assert did and rec and rec["kind"] == "unwind"
+    rec["proc"].wait()
+    supervisor.finish(d, rec)
+
+    t = Ticket.load(path)
+    assert t.stage == "planning"
+    log = sh(f"git -C {wt} log --oneline").stdout
+    assert "triage: the failing test" in log
+    assert "implementing: the fix" not in log
+    assert (wt / "test_thing.py").is_file()
+    assert (wt / "f.py").read_text() == "base\n"
+    assert not t.lease_active()
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_an_unwind_with_no_recorded_head_escalates_instead_of_guessing():
+    """A malformed or missing `cheap_route_head` must never be guessed at --
+    escalate before any child exists."""
+    d, sh = git_project()
+    path = d / ".project/tickets/TICKET-001.md"
+    path.write_text(FIXTURE.replace("stage: plan-validation", "stage: unwinding"))
+    supervisor.ensure_worktree(
+        d, {"id": "TICKET-001", "branch": "ticket/001"}, {"base": "main"})
+
+    did, rec = supervisor.start(d, path, harness("fake"), {})
+    assert did is True and rec is None
+    assert Ticket.load(path).stage == "escalated"
+    shutil.rmtree(d, ignore_errors=True)

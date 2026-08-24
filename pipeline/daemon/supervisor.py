@@ -690,6 +690,13 @@ def start(project: Path, path: Path, hcfg: dict, inflight: dict,
             rec["base"] = base
         return ok, rec
 
+    if stage == "unwinding":
+        head = str(t.extra.get("cheap_route_head") or "")
+        if not SAFE_SHA.match(head):
+            return bail(f"cannot unwind the cheap route: cheap_route_head is "
+                        f"{head!r}, not a commit sha")
+        return child(unwind_cmd(head), "unwind")
+
     if stage == "plan-validation":
         # ponytail: `gate()` runs the project's `test_one` synchronously, and
         # for its duration no pipe is drained -- a very chatty agent can still
@@ -894,6 +901,9 @@ def _finish(project: Path, rec: dict, emit=noop) -> str:
     # rebase only has to succeed for the gate to have a tree worth judging
     if rec.get("kind") == "regate":
         return finish_regate(project, rec, emit)
+    # the reset's exit code is the whole verdict, like the merge
+    if rec.get("kind") == "unwind":
+        return finish_child(project, rec, "unwind", emit)
 
     close_child(rec)
     if rec.get("prompt"):
