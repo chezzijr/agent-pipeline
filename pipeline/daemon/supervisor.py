@@ -15,8 +15,8 @@ from pathlib import Path
 from pipeline import __version__
 from pipeline.core import PipelineError
 from pipeline.core.config import (compose_prompt, harness, is_readonly,
-                                  project_config, render, stage_config,
-                                  stage_settings)
+                                  mcp_config, mcp_servers, project_config,
+                                  render, stage_config, stage_settings)
 from pipeline.core.fence import fenced_touches
 from pipeline.core.gate import gate, plan_steps
 from pipeline.core.machine import (CLEANUP_STAGES, CONTROL_FIELDS,
@@ -372,10 +372,12 @@ def spawn(project: Path, wt: Path, tid: str, stage: str, hcfg: dict,
         view = ""
     prompt = compose_prompt(stage, hcfg, view, project)
     settings = stage_settings(stage, cfg)
+    servers = mcp_servers(project, cfg)
+    mcp = mcp_config(servers)
     cmd = render(hcfg, cfg, tid=tid, project=project,
                 ticket=ticket_path(project, tid),
                 result_file=tickets_dir(project) / f"{tid}.result",
-                session=session, prompt=prompt, settings=settings,
+                session=session, prompt=prompt, settings=settings, mcp=mcp,
                 key="interactive_cmd" if interactive else "cmd")
     fh = log.open("wb")
     fh.write(f"$ {cmd}\n\n".encode())
@@ -389,6 +391,9 @@ def spawn(project: Path, wt: Path, tid: str, stage: str, hcfg: dict,
     env["PIPELINE_WORKTREE"] = str(wt)
     env["PIPELINE_TICKET"] = str(ticket_path(project, tid))
     env["PIPELINE_RESULT"] = str(tickets_dir(project) / f"{tid}.result")
+    env["PIPELINE_MCP_ALLOW"] = ",".join(servers)
+    env["PIPELINE_MCP_READONLY"] = ",".join(n for n, s in servers.items()
+                                            if s.get("readonly"))
     if interactive:
         # ponytail: the master fd dies with the daemon, so the child gets
         # SIGHUP and an interactive stage does NOT survive a daemon restart --
@@ -407,6 +412,7 @@ def spawn(project: Path, wt: Path, tid: str, stage: str, hcfg: dict,
         pipe = proc.stdout
     mode = "interactive" if interactive else "batch"
     rec = {"proc": proc, "fh": fh, "prompt": prompt, "settings": settings,
+           "mcp": mcp,
            "session": session, "mode": mode,
            "log": log, "stage": stage, "wt": wt,
            "poller": poller, "pipe": None, "reader": None,
@@ -859,6 +865,8 @@ def _finish(project: Path, rec: dict, emit=noop) -> str:
         rec["prompt"].unlink(missing_ok=True)
     if rec.get("settings"):
         rec["settings"].unlink(missing_ok=True)
+    if rec.get("mcp"):
+        rec["mcp"].unlink(missing_ok=True)
     path, tid, stage = rec["path"], rec["tid"], rec["stage"]
     session, log, wt = rec["session"], rec["log"], rec["wt"]
 
@@ -981,6 +989,8 @@ def shut_down(project: Path, inflight: dict) -> None:
             rec["prompt"].unlink(missing_ok=True)
         if rec.get("settings"):
             rec["settings"].unlink(missing_ok=True)
+        if rec.get("mcp"):
+            rec["mcp"].unlink(missing_ok=True)
         try:
             t = Ticket.load(rec["path"])
             t.release_lease()

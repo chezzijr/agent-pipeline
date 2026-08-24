@@ -354,6 +354,41 @@ def test_a_stage_does_not_inherit_the_developers_mcp_servers():
             f"claude-code {key} lets ~/.claude MCP servers into the session"
 
 
+def test_a_spawned_stage_carries_its_mcp_allowlist_in_the_environment():
+    import json
+    import shutil
+
+    from helpers import project
+    d = project()
+    stage_file = config.STAGES_DIR / "_mcpprobe.md"
+    stage_file.write_text(
+        "---\nmodel: sonnet\nwrite: false\nhooks: [dangerous-commands]\n"
+        "mcp: [docs]\n---\n\n## Your stage: _mcpprobe\n")
+    (d / ".project" / "pipeline.toml").write_text(
+        (d / ".project" / "pipeline.toml").read_text() +
+        '\n[mcp.docs]\ncommand = "docs-mcp"\nreadonly = true\n')
+    rec = None
+    try:
+        rec = supervisor.spawn(d, d, "TICKET-001", "_mcpprobe", {
+            "cmd": "env > env.txt", "supports_hooks": True,
+            "readonly_tools": "", "write_tools": "", "settings_flag": "",
+            "mcp_flag": "--mcp-config {mcp}"})
+        rec["proc"].wait()
+        env_text = (d / "env.txt").read_text()
+        assert "PIPELINE_MCP_ALLOW=docs" in env_text
+        assert "PIPELINE_MCP_READONLY=docs" in env_text
+        assert json.loads(rec["mcp"].read_text())["mcpServers"]["docs"]["command"] == "docs-mcp"
+    finally:
+        stage_file.unlink(missing_ok=True)
+        if rec:
+            rec["prompt"].unlink(missing_ok=True)
+            if rec.get("settings"):
+                rec["settings"].unlink(missing_ok=True)
+            if rec.get("mcp"):
+                rec["mcp"].unlink(missing_ok=True)
+        shutil.rmtree(d, ignore_errors=True)
+
+
 def test_a_harness_edit_mid_run_reaches_the_next_spawn():
     """TICKET-028: `run()` reads the harness once, before its loop, so every
     spawn for the life of the process reuses that dict. A stage prompt is
