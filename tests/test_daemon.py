@@ -27,7 +27,7 @@ from pipeline.core.config import harness
 from pipeline.core.ticket import Ticket
 from pipeline.daemon import registry
 from pipeline.daemon.server import (OUTBOX, Conn, Poller, Server,
-                                    ticket_rows)
+                                    ticket_rows, waiting_text)
 from pipeline.daemon.store import Store
 from pipeline.daemon import supervisor
 from pipeline.daemon.supervisor import holder_alive
@@ -447,6 +447,30 @@ def test_an_expired_lease_reads_as_stale_not_as_leased():
     row = ticket_rows(d)[0]
     assert row["lease"]["expires"], "the fixture must still carry a dead lease"
     assert row["leased"] is False and row["stale"] is True, row
+
+
+def test_a_recorded_wait_reason_reaches_the_ls_row():
+    d = project()
+    t = Ticket.find(d, "TICKET-001")
+    t.extra["waiting"] = {"on": "TICKET-002", "file": "thing.py",
+                          "since": "2026-08-24T08:00:00+00:00"}
+    t.save()
+
+    row = ticket_rows(d)[0]
+    assert row["waiting"] == t.extra["waiting"]
+    assert waiting_text(row["waiting"]).startswith("waiting on TICKET-002 (thing.py)")
+
+
+def test_an_unreadable_wait_reason_does_not_break_ls():
+    d = project()
+    t = Ticket.find(d, "TICKET-001")
+    t.extra["waiting"] = "nonsense"
+    t.save()
+
+    assert ticket_rows(d)[0]["waiting"] is None
+    assert waiting_text(None) == ""
+    assert waiting_text({"on": "TICKET-002", "file": "thing.py"}) == \
+        "waiting on TICKET-002 (thing.py)", "a missing `since` renders no age"
 
 
 def test_a_ticket_held_by_files_conflict_reads_the_same_as_an_idle_one():
