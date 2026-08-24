@@ -61,6 +61,34 @@ GUARDED = {
 PY_MODULES_OK = {"pytest", "unittest", "tox", "nox"}
 
 
+def strip_continuations(command: str) -> str:
+    """Remove an unquoted `\\` + newline: a shell joins the two lines with no
+    separator there, so `rm -rf \\<newline>/` is one word, `/`, not two.
+    Left alone, shlex keeps the newline in the token (`'\\n/'`, which
+    `HOME_ISH` does not match) or, when whitespace follows, emits a bare
+    `'\\n'` token that `segments()` reads as a real separator -- either way
+    the command that follows escapes `always_rules()`. Inside a single-quoted
+    string a backslash is literal, so it is left alone there; POSIX strips the
+    same continuation inside double quotes too, but nothing in this guard's
+    tables needs that case.
+    """
+    out = []
+    in_single = False
+    i, n = 0, len(command)
+    while i < n:
+        c = command[i]
+        if c == "'":
+            in_single = not in_single
+            out.append(c)
+            i += 1
+        elif not in_single and c == "\\" and i + 1 < n and command[i + 1] == "\n":
+            i += 2
+        else:
+            out.append(c)
+            i += 1
+    return "".join(out)
+
+
 def segments(command: str) -> list[list[str]] | None:
     """Split a shell command into argv lists, one per segment. None if the
     string will not lex -- which is itself a reason to refuse.
@@ -76,7 +104,7 @@ def segments(command: str) -> list[list[str]] | None:
     comment, so with comments on, `echo hi # note<newline>sudo rm -rf
     /etc` lexes as one argv and the `sudo` rule never sees it.
     """
-    lex = shlex.shlex(command, posix=True, punctuation_chars=PUNCTUATION)
+    lex = shlex.shlex(strip_continuations(command), posix=True, punctuation_chars=PUNCTUATION)
     lex.whitespace = " \t\r"
     lex.commenters = ""
     lex.whitespace_split = True
