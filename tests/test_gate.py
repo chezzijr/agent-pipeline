@@ -143,6 +143,25 @@ def test_a_numbered_acceptance_criterion_naming_no_test_is_caught():
     shutil.rmtree(d)
 
 
+def test_numbered_criteria_are_checked_in_both_marker_forms():
+    """Fails today: a `1)` criterion naming no test produces no finding.
+
+    The second half guards against over-fixing: numbered criteria that do
+    name a test must still pass.
+    """
+    d = project(FIXTURE.replace("- `test_broken` passes", "1) code should be clean"))
+    ok, failures = gate(d, "TICKET-001")
+    assert not ok and any("names no test" in f for f in failures), failures
+    shutil.rmtree(d)
+
+    d = project(FIXTURE.replace(
+        "- `test_broken` passes",
+        "1. `tests/test_cache.py::test_evicts` passes\n2) `test_broken` passes"))
+    ok, failures = gate(d, "TICKET-001")
+    assert ok, failures
+    shutil.rmtree(d)
+
+
 def test_an_acceptance_criterion_must_name_something_test_shaped():
     d = project(FIXTURE.replace("- `test_broken` passes", "- latency drops below `10ms`"))
     ok, failures = gate(d, "TICKET-001")

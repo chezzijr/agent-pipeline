@@ -35,6 +35,13 @@ PLAN_FILE_RULE = (
     "spell the path out in the step (e.g. `pipeline/core/machine.py`) and "
     "declare that same path in `files_declared`")
 
+# A criterion is a criterion in any list form -- `-`, `*`, `1.` or `1)`. The
+# numbered markers are the same `\d+[.)]` the `## Plan` scan below accepts.
+# The bullet arm stays a prefix match, not a marker plus whitespace: requiring
+# `\s` after `-`/`*` would stop checking `**bold prose**` and `--- ` lines the
+# gate checks today.
+CRIT_ITEM_RE = re.compile(r"^\s*(?:[-*]|\d+[.)])")
+
 
 def _cites(text: str, path: str) -> bool:
     """Does `text` name `path`? Substring match, but anchored at a
@@ -270,7 +277,7 @@ def gate(project: Path, tid: str, workdir: Path | None = None) -> tuple[bool, li
                     f"plan step names no declared file: {s!r} -- {PLAN_FILE_RULE}")
 
     crit = secs.get("Acceptance criteria", "")
-    for line in [l for l in crit.splitlines() if l.strip().startswith(("-", "*"))]:
+    for line in [l for l in crit.splitlines() if CRIT_ITEM_RE.match(l)]:
         # a backticked token is not enough -- "`10ms`" is a metric, not a test.
         # `pytest` is named explicitly: `\btest` needs a word boundary before
         # `test`, and `py` is a word character, so "run `pytest -q`" -- the
