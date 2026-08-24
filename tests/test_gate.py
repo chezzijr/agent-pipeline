@@ -135,6 +135,14 @@ def test_gate_blocks_a_vacuous_acceptance_criterion():
     shutil.rmtree(d)
 
 
+def test_a_numbered_acceptance_criterion_naming_no_test_is_caught():
+    """Numbered criteria must be checked exactly like bulleted ones."""
+    d = project(FIXTURE.replace("- `test_broken` passes", "1. code should be clean"))
+    ok, failures = gate(d, "TICKET-001")
+    assert not ok and any("names no test" in f for f in failures), failures
+    shutil.rmtree(d)
+
+
 def test_an_acceptance_criterion_must_name_something_test_shaped():
     d = project(FIXTURE.replace("- `test_broken` passes", "- latency drops below `10ms`"))
     ok, failures = gate(d, "TICKET-001")
