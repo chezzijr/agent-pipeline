@@ -346,10 +346,20 @@ def gate(project: Path, tid: str, workdir: Path | None = None) -> tuple[bool, li
 
     crit = secs.get("Acceptance criteria", "")
     crit_lines = crit.splitlines()
+    crit_fenced = _fenced(crit_lines)
     crits: list[str] = []
     in_crit = False
-    for raw in crit_lines:
+    for i, raw in enumerate(crit_lines):
         if not raw.strip():
+            continue
+        # A fenced block indented under a criterion joins onto it, per
+        # DEC-016 (`_fenced()` is the one parse of fence state). A fence at
+        # column 0 is quoted output, not a criterion -- skip it with no
+        # finding, unlike the `## Plan` scan, because a hidden bullet here
+        # evades nothing the way a hidden numbered step would.
+        if crit_fenced[i]:
+            if in_crit and raw[:1].isspace():
+                crits[-1] += " " + raw.strip()
             continue
         # The continuation arm runs BEFORE the marker arm, the opposite order
         # to the `## Plan` scan above: `CRIT_ITEM_RE` matches a bare leading

@@ -227,6 +227,31 @@ def test_a_wrapped_criterion_naming_no_test_anywhere_still_fails():
     shutil.rmtree(d)
 
 
+def test_a_top_level_fence_in_acceptance_criteria_is_not_read_as_criteria():
+    """A fence at column 0 under `## Acceptance criteria` is quoted output,
+    not a list of criteria -- its lines are skipped with no finding."""
+    fence = "```"
+    d = project(FIXTURE.replace(
+        "- `test_broken` passes",
+        "- `test_broken` passes\n\n%s\n- code should be clean\n%s" % (fence, fence)))
+    ok, failures = gate(d, "TICKET-001")
+    assert ok, failures
+    shutil.rmtree(d)
+
+
+def test_a_fenced_block_indented_under_a_criterion_is_part_of_it():
+    """An indented fence joins onto the criterion above it, so a criterion
+    may quote the command that checks it."""
+    fence = "```"
+    d = project(FIXTURE.replace(
+        "- `test_broken` passes",
+        "- this prints nothing:\n\n  %s\n  pytest tests/test_thing.py\n  %s"
+        % (fence, fence)))
+    ok, failures = gate(d, "TICKET-001")
+    assert ok, failures
+    shutil.rmtree(d)
+
+
 def test_gate_blocks_a_failure_that_is_not_the_reported_one():
     """A red test proves nothing if it is red for the wrong reason."""
     d = project(FIXTURE.replace("expect: test_broken", "expect: KeyError: 'evict'"))
