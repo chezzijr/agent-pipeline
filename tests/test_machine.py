@@ -220,3 +220,21 @@ def test_a_small_fix_takes_the_cheap_route():
     assert t("quick-review", "fail", {"cheap_route": 1})[0] == "planning"
     assert "cheap_route" not in M.BOUNDS.get("bugfix", {}), \
         "a route flag is not a bounded loop counter"
+
+
+def test_plan_validation_budget_ignores_the_plans_size():
+    """TICKET-047: a `bugfix`'s plan-validation budget is fixed at 2 attempts
+    by `BOUNDS[class]` alone. `transition()` takes no plan-size argument, so a
+    one-step, one-file plan and a 24-step, 10-file plan (TICKET-041's actual
+    shape) escalate at the identical attempt count. A budget that should scale
+    with the size of the work does not take the size as input at all."""
+    tiny = {"plan_validation_attempts": 0}
+    huge = {"plan_validation_attempts": 0}
+    for _ in range(2):
+        tiny_next, tiny = M.transition("plan-validation", "fail", tiny, "bugfix")
+        huge_next, huge = M.transition("plan-validation", "fail", huge, "bugfix")
+    assert tiny_next == "escalated", "a 1-step/1-file plan exhausted its budget as expected"
+    assert huge_next != "escalated", \
+        "a 24-step/10-file plan (TICKET-041's shape) must get more attempts than a " \
+        "1-step/1-file plan, but it escalated at the same attempt count: " \
+        f"{huge['plan_validation_attempts']} == {tiny['plan_validation_attempts']}"
