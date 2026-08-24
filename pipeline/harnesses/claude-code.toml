@@ -11,6 +11,15 @@
 # dispatcher's own source tree. TICKET-039 and TICKET-040 each wrote their
 # work into the main checkout on 2026-08-23 (TICKET-041).
 #
+# `--add-dir` widens what the permission layer allows. Under `cmd`,
+# `--permission-mode bypassPermissions` on the same command line removes that
+# layer, so the directory list is inert there -- it enforces nothing (TICKET-052).
+# It binds under `interactive_cmd`, which runs `acceptEdits`, where the
+# permission layer exists. The actual enforcement is the `PreToolUse` path
+# rule in `pipeline/hooks/dangerous-commands.py`, reached via
+# `PIPELINE_WORKTREE`. The directory stays narrow anyway, so the flag is
+# right if the permission mode under `cmd` ever changes.
+#
 # The `--` before the prompt is load-bearing: `--add-dir` is VARIADIC, so
 # `--add-dir /p "prompt"` consumes the prompt as a second directory and claude
 # exits with "Input must be provided either through stdin or as a prompt
@@ -98,8 +107,8 @@ no_skills_flag = "--disable-slash-commands"
 # Both flags exist in `claude --help`; re-enabling either is a one-line edit.
 # `--tools` restricts the built-in tool set only, not MCP. TICKET-024's
 # `planning` asked for 7 tools and its `init` event granted 53 from 9
-# `~/.claude` MCP servers, Gmail among them -- the guard's `matcher: "Bash"`
-# covers none of those tool names. Measured on `claude-haiku-4-5-20251001`,
+# `~/.claude` MCP servers, Gmail among them -- the guard's matcher names
+# built-in tools only, so it covers none of those tool names. Measured on `claude-haiku-4-5-20251001`,
 # 2026-08-21: without `--strict-mcp-config`, `init` reports 68 tools and 9
 # servers; with it, exactly `["Bash","Edit","Glob","Grep","Read","Skill",
 # "Write"]` and `"mcp":[]`. `--bare` is not the alternative -- it skips hooks,

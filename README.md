@@ -41,8 +41,8 @@ did rather than take this page's word for it.
 Not a product. There is one registered project (this one), and two known gaps
 that only appear with a second: stage prompts and hooks live inside the package,
 so customising them is global rather than per-project (`TICKET-035`), and no
-stage can be given an MCP server because the guard's `matcher` is `Bash` and
-would not see one (`TICKET-036`).
+stage can be given an MCP server because the guard's matcher names built-in
+tools only and would not see one (`TICKET-036`).
 
 ## Why
 
@@ -461,7 +461,8 @@ second agent onto the same stage in the same worktree.
 
 - **MCP servers** (`TICKET-036`). Stages spawn with `--strict-mcp-config` and no
   `--mcp-config`, so `mcp_servers: []`. Turning that on without widening the
-  guard would put tools where `matcher: "Bash"` cannot see them.
+  guard would put tools where its matcher, which names built-in tools only,
+  cannot see them.
 - **A second harness that actually runs.** `codex.toml` is asserted, not
   executed -- every stage declares `hooks:`, and it cannot register one.
 

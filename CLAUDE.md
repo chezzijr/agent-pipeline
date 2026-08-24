@@ -110,16 +110,16 @@ claiming the guard works.
 - **`git worktree add -B` resets the branch.** Never use `-B`: recreating a
   worktree after a resume would silently discard the ticket's commits.
 - **`.project/` is excluded from the read-only tree snapshot**, because writing
-  to the ticket is every stage's job. That leaves `.project/pipeline.toml`
-  writable by every stage, `Write` and `Edit` included -- the guard's `matcher`
-  is `Bash` and never sees one. `project_config()` therefore reads it from the
-  main checkout's HEAD (`git show HEAD:./.project/pipeline.toml`), so an
+  to the ticket is every stage's job. The guard's path rule blocks a file tool
+  there, and Bash still reaches it, which is why `project_config()` reads HEAD
+  (`git show HEAD:./.project/pipeline.toml`), so an
   uncommitted edit is inert; it falls back to disk only when git has no copy at
   all. A committed edit lands in the ticket's diff, and
   `.project/pipeline.toml` is in `machine.FENCED`, so it parks at
   `awaiting-merge`.
-- **`--add-dir` grants `<project>/.project`, not the project root, and a
-  read-only stage's baseline is two snapshots**: `tree_snapshot(wt)` plus
+- **`--add-dir` is inert under `bypassPermissions`** (headless spawns run under
+  it) -- the guard's path rule is what confines a stage, not this flag. A
+  read-only stage's baseline is two snapshots: `tree_snapshot(wt)` plus
   `dirty_snapshot(project)` — the second without HEAD, because `merging`
   moves the main checkout's HEAD mid-run.
 - **`pty.fork`, never `openpty` + `Popen`.** Only fork gives the child a

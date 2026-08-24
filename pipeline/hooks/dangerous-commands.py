@@ -3,8 +3,9 @@
 pipeline that can make a promise, so it holds the rules that must not depend on
 a model's judgment.
 
-Two rule sets, both applied per shell segment rather than to the raw string,
-because `cd /tmp && sudo rm -rf /etc` is not a `sudo` command until you split it:
+Three rule sets. `always` and `read-only` are applied per shell segment rather
+than to the raw string, because `cd /tmp && sudo rm -rf /etc` is not a `sudo`
+command until you split it:
 
   * always    -- destructive or machine-wide, in any stage. A blocklist, which
                  is leaky by nature; it is a backstop, not the perimeter.
@@ -12,6 +13,10 @@ because `cd /tmp && sudo rm -rf /etc` is not a `sudo` command until you split it
                  to run tests, read git, and grep. Everything else is denied by
                  default, so a bypass needs a hole in a short list of permitted
                  programs rather than a gap between blocked patterns.
+  * paths     -- for a file tool, when PIPELINE_WORKTREE is set. A write
+                 outside the worktree is refused, except the ticket file and
+                 the `.result` sidecar. Bash is deliberately NOT covered:
+                 `echo x > /abs/path` still writes anywhere.
 
 Registered per stage via `hooks:` in that stage's frontmatter.
 
