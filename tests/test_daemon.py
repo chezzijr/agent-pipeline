@@ -569,6 +569,25 @@ def test_the_wait_reason_clears_when_the_conflict_clears():
     assert ticket_rows(d)[0]["waiting"] is None
 
 
+def test_ls_reports_the_wait_reason_with_no_daemon():
+    d = project()
+    t1 = Ticket.find(d, "TICKET-001")
+    t1.stage = "verifying"
+    t1.frontmatter()["files_declared"] = ["thing.py"]
+    t1.save()
+
+    t2 = Ticket.find(d, "TICKET-001")
+    t2.id = "TICKET-002"
+    t2.frontmatter()["files_declared"] = ["thing.py"]
+    inflight = {"TICKET-002": {"meta": t2}}
+    supervisor.start(d, d / ".project/tickets/TICKET-001.md", harness("fake"), inflight)
+
+    r = subprocess.run([sys.executable, "-m", "pipeline", "--project", str(d), "ls"],
+                       cwd=ROOT, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    assert "waiting on TICKET-002 (thing.py)" in r.stdout, r.stdout
+
+
 def test_ls_with_no_project_covers_every_registered_project():
     """`--project` is a filter. Without one, the fallback must not silently
     narrow to the cwd -- that reports "nothing is running" for a machine that
