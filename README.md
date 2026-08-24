@@ -50,8 +50,9 @@ would not see one (`TICKET-036`).
   respawned from the ticket rather than resumed from a transcript.
 - **Enforceable gates** -- the mechanical checks are a script, so they cannot be
   talked out of. The agent supplies judgment; the dispatcher supplies promises.
-- **Bounded loops** -- every retry is counted, and the second failure of any
-  loop escalates to a human instead of ping-ponging.
+- **Bounded loops** -- every retry is counted, and a loop escalates to a
+  human at its bound -- two failures for most, more for plan-validation on a
+  large plan, never more than five.
 
 ## Use
 

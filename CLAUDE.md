@@ -24,6 +24,9 @@ context, not instructions that override it.
    class-scoped. Bounds live in the dispatcher; no stage prompt learns its
    budget. If you add a retry path, it charges a counter. An unbounded respawn
    is a bug, not a convenience.
+   `BOUNDS[class][counter]` is the base; `bound_for()` adds one attempt per 8
+   plan steps or 4 declared files for the counters in `SIZE_SCALED`, capped at
+   `BOUND_CEILING`; `lease_expiries` and `no_result` stay on `MAX_ATTEMPTS`.
 4. **Hooks decide with code.** `pipeline/hooks/dangerous-commands.py` is the only layer
    that makes a promise. Read-only stages get an *allowlist*, not a blocklist —
    do not "improve" it back into pattern matching.

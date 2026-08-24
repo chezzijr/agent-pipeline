@@ -52,6 +52,10 @@ one round — use `AskUserQuestion` when the answer is a choice.
   Class is not cosmetic — it sets the loop budgets in `machine.py:BOUNDS`. Getting it
   wrong makes a ticket escalate early or churn late.
 
+  Class sets the base budget; a large plan buys plan-validation attempts on
+  top of it — one per 8 steps or 4 declared files, capped at 5 — so a class
+  no longer has to be inflated to buy attempts.
+
   The holistic pass is not bought by class alone (DEC-034): it reviews an
   *accumulated* diff, so it runs only once `review_loops` has been charged at least
   once — by a failed review, a failed holistic pass, or a red regression suite. A
