@@ -1109,3 +1109,35 @@ def test_the_unwind_refuses_a_sha_that_is_not_on_the_branch():
     assert (wt / "f.py").read_text() == "base\n", "the fix's edit to f.py survived"
     assert not (wt / "scratch.py").exists(), "an untracked leftover survived the unwind"
     shutil.rmtree(d, ignore_errors=True)
+
+
+def test_the_cheap_routes_branch_tip_is_recorded_before_the_fix_is_written():
+    """`cheap_route` is popped at `implementing` (DEC-026), so by the time
+    `quick-review` fails the flag is gone. The branch tip has to be recorded
+    here, the last moment the flag still says which commits are the route's
+    own."""
+    d, sh = git_project()
+    path = d / ".project/tickets/TICKET-001.md"
+    path.write_text(FIXTURE.replace("stage: plan-validation", "stage: implementing")
+                    .replace("counters: {}", "counters: {cheap_route: 1}"))
+    wt = supervisor.ensure_worktree(
+        d, {"id": "TICKET-001", "branch": "ticket/001"}, {"base": "main"})
+    expect_head = subprocess.run("git rev-parse HEAD", shell=True, cwd=wt,
+                                 capture_output=True, text=True).stdout.strip()
+
+    did, rec = supervisor.start(d, path, harness("fake"), {})
+    assert did and rec
+    rec["proc"].wait()
+
+    assert Ticket.load(path).extra["cheap_route_head"] == expect_head
+
+    path2 = d / ".project/tickets/TICKET-002.md"
+    path2.write_text(FIXTURE.replace("TICKET-001", "TICKET-002")
+                     .replace("ticket/001", "ticket/002")
+                     .replace("stage: plan-validation", "stage: implementing"))
+    did2, rec2 = supervisor.start(d, path2, harness("fake"), {})
+    assert did2 and rec2
+    rec2["proc"].wait()
+    assert "cheap_route_head" not in Ticket.load(path2).extra, \
+        "a non-cheap-route implementing spawn recorded a tip anyway"
+    shutil.rmtree(d, ignore_errors=True)

@@ -81,6 +81,11 @@ def escalate(t: Ticket, reason: str, emit=noop) -> None:
 # verdict: nothing below acts on its absence.
 MARKER = "✓"
 
+# A commit sha `t.extra["cheap_route_head"]` must match before it reaches a
+# shell, per invariant 5 -- it is hostile input, same as every other ticket
+# field.
+SAFE_SHA = re.compile(r"^[0-9a-f]{7,40}$")
+
 
 def has_marker(note: str) -> bool:
     """Did this summary still carry the shared prose rules' marker?
@@ -706,6 +711,17 @@ def start(project: Path, path: Path, hcfg: dict, inflight: dict,
             emit("stage_end", ticket=tid, stage=stage, result="fail",
                  next_stage=t.stage, exit_code=None)
             return True, None
+
+    if stage == "implementing" and t.counters.get("cheap_route") and not t.extra.get("cheap_route_head"):
+        # the last moment `counters["cheap_route"]` is still set -- it is
+        # popped at `("implementing", "ok")` -- so this is the last chance to
+        # record which commits are the cheap route's own. The `not
+        # t.extra.get(...)` guard keeps a lease-expiry respawn from
+        # re-recording a tip that already carries the route's own commits.
+        code, out = run_cmd("git rev-parse HEAD", wt)
+        head = out.strip()
+        if code == 0 and SAFE_SHA.match(head):
+            t.extra["cheap_route_head"] = head
 
     t.take_lease(f"{stage}-{os.getpid()}")
     t.save()
