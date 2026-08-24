@@ -228,8 +228,8 @@ def test_plan_validation_budget_ignores_the_plans_size():
     one-step, one-file plan and a 24-step, 10-file plan (TICKET-041's actual
     shape) escalate at the identical attempt count. A budget that should scale
     with the size of the work does not take the size as input at all."""
-    tiny = {"plan_validation_attempts": 0}
-    huge = {"plan_validation_attempts": 0}
+    tiny = {"plan_validation_attempts": 0, "plan_steps": 1, "plan_files": 1}
+    huge = {"plan_validation_attempts": 0, "plan_steps": 24, "plan_files": 10}
     for _ in range(2):
         tiny_next, tiny = M.transition("plan-validation", "fail", tiny, "bugfix")
         huge_next, huge = M.transition("plan-validation", "fail", huge, "bugfix")
@@ -238,3 +238,16 @@ def test_plan_validation_budget_ignores_the_plans_size():
         "a 24-step/10-file plan (TICKET-041's shape) must get more attempts than a " \
         "1-step/1-file plan, but it escalated at the same attempt count: " \
         f"{huge['plan_validation_attempts']} == {tiny['plan_validation_attempts']}"
+    for _ in range(3):
+        huge_next, huge = M.transition("plan-validation", "fail", huge, "bugfix")
+    assert huge_next == "escalated"
+    assert huge["plan_validation_attempts"] == 5
+
+
+def test_the_size_scaled_bound_has_a_ceiling_and_spares_the_dispatchers_counters():
+    assert M.bound_for("refactor", "plan_validation_attempts",
+                        {"plan_steps": 400, "plan_files": 900}) == M.BOUND_CEILING
+    assert M.bound_for("bugfix", "lease_expiries", {"plan_steps": 400}) == M.MAX_ATTEMPTS
+    assert M.bound_for("bugfix", "no_result", {"plan_steps": 400}) == M.MAX_ATTEMPTS
+    assert M.bound_for("bugfix", "review_loops", {"plan_steps": 400}) == 2
+    assert M.bound_for("bugfix", "plan_validation_attempts", {"plan_steps": "24"}) == 2

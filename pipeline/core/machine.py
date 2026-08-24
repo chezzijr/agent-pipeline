@@ -9,6 +9,20 @@ BOUNDS = {
     "feature":  {"review_loops": 2, "plan_validation_attempts": 2, "blocked_count": 2},
     "refactor": {"review_loops": 3, "plan_validation_attempts": 3, "blocked_count": 2},
 }
+# `plan_validation_attempts` is the only counter that scales with a plan's
+# size: a Tier A finding is raised per plan step, so a 24-step plan has
+# roughly 24 places to fail where a 1-step plan has one. `review_loops` is
+# charged per pass over the diff, not per finding, so it stays out until
+# evidence says otherwise. `lease_expiries` and `no_result` are the
+# dispatcher's own counters, charged directly against `MAX_ATTEMPTS`, and must
+# never scale: a crashed harness is not more trustworthy for a long plan.
+SIZE_SCALED = {"plan_validation_attempts"}
+STEPS_PER_ATTEMPT = 8
+FILES_PER_ATTEMPT = 4
+# A bound that grows without limit is not a bound. Calibrated on TICKET-041,
+# the largest plan this repo has produced (24 steps, 10 files), which
+# converged on its fifth planning run.
+BOUND_CEILING = 5
 TERMINAL = {"done", "rejected", "escalated"}
 HUMAN_GATES = {"awaiting-approval", "needs-input", "awaiting-merge"}
 # The nine things `CLAUDE.md` fences off from unattended merge, path to symbol
@@ -44,6 +58,25 @@ CLEANUP_STAGES = {"done", "rejected"}
 DISPATCHER_STAGES = {"verifying", "merging", "revalidating"}
 
 
+def _size(counters: dict, key: str) -> int:
+    """`counters[key]` read as a non-negative int, or 0. `counters` is hostile
+    input -- reached through a ticket file -- and `transition()` is total, so
+    a bad value must read as 0 rather than raise."""
+    v = counters.get(key, 0)
+    return v if isinstance(v, int) and not isinstance(v, bool) and v > 0 else 0
+
+
+def bound_for(klass: str, key: str, counters: dict) -> int:
+    """The attempt bound for `(klass, key)`, scaled by plan size for the
+    counters in `SIZE_SCALED`."""
+    base = BOUNDS.get(klass, {}).get(key, MAX_ATTEMPTS)
+    if key not in SIZE_SCALED:
+        return base
+    return min(base + max(_size(counters, "plan_steps") // STEPS_PER_ATTEMPT,
+                           _size(counters, "plan_files") // FILES_PER_ATTEMPT),
+               BOUND_CEILING)
+
+
 def transition(stage: str, result: str, counters: dict, klass: str = "bugfix"):
     """(next_stage, new_counters). Pure: never mutates `counters`.
 
@@ -54,7 +87,7 @@ def transition(stage: str, result: str, counters: dict, klass: str = "bugfix"):
 
     def charge(key: str, target: str) -> tuple[str, dict]:
         c[key] = c.get(key, 0) + 1
-        bound = BOUNDS.get(klass, {}).get(key, MAX_ATTEMPTS)
+        bound = bound_for(klass, key, c)
         return ("escalated" if c[key] >= bound else target), c
 
     match (stage, result):
