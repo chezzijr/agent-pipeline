@@ -107,8 +107,14 @@ claiming the guard works.
 - **`git worktree add -B` resets the branch.** Never use `-B`: recreating a
   worktree after a resume would silently discard the ticket's commits.
 - **`.project/` is excluded from the read-only tree snapshot**, because writing
-  to the ticket is every stage's job. That means `.project/pipeline.toml` is
-  reachable by a read-only stage — the guard's allowlist is what stops it.
+  to the ticket is every stage's job. That leaves `.project/pipeline.toml`
+  writable by every stage, `Write` and `Edit` included -- the guard's `matcher`
+  is `Bash` and never sees one. `project_config()` therefore reads it from the
+  main checkout's HEAD (`git show HEAD:./.project/pipeline.toml`), so an
+  uncommitted edit is inert; it falls back to disk only when git has no copy at
+  all. A committed edit lands in the ticket's diff, and
+  `.project/pipeline.toml` is in `machine.FENCED`, so it parks at
+  `awaiting-merge`.
 - **`--add-dir` grants `<project>/.project`, not the project root, and a
   read-only stage's baseline is two snapshots**: `tree_snapshot(wt)` plus
   `dirty_snapshot(project)` — the second without HEAD, because `merging`
@@ -206,10 +212,11 @@ claiming the guard works.
 The agent edits its worktree copy while the dispatcher runs from the main
 checkout, so there is no mid-run self-modification hazard.
 
-But a change to `pipeline/hooks/dangerous-commands.py`, `transition()`, `validate_meta()`,
-`CONTROL_FIELDS` or `strip_settings_sources()` **requires human review before merge**, whatever the
-pipeline says. A pipeline that can weaken its own guard unattended is the one
-failure mode worth refusing to automate.
+But a change to `pipeline/hooks/dangerous-commands.py`, `pipeline/harnesses/claude-code.toml`,
+`transition()`, `validate_meta()`, `CONTROL_FIELDS`, `strip_settings_sources()`,
+`.project/pipeline.toml` or `.project/stages/` **requires human review before merge**, whatever the pipeline says.
+A pipeline that can weaken its own guard unattended is the one failure mode worth
+refusing to automate.
 
 This is enforced, not just written down: `machine.FENCED` names the same
 things in code, a diff touching any of them parks at the `awaiting-merge`

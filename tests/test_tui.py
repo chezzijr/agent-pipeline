@@ -13,7 +13,7 @@ from pipeline.core import PipelineError
 from pipeline.core.ticket import Ticket
 from pipeline.daemon.server import PTY_INPUT
 from pipeline.pty.host import Screen
-from pipeline.tui.app import PipelineApp, event_line, marker
+from pipeline.tui.app import PipelineApp, event_line, marker, tail_log
 
 APPROVABLE = """---
 id: TICKET-001
@@ -525,3 +525,46 @@ def test_raw_mode_is_visible_and_does_not_outlive_the_attachment():
             assert "RAW" not in status(app), status(app)
 
     asyncio.run(go())
+
+
+def test_tail_log_never_returns_a_raw_escape_byte_for_a_pty_dump():
+    """A finished `mode: interactive` stage leaves a raw PTY dump, not
+    stream-json. `tail_log()` must render it through the pyte `Screen`, the
+    same one the live pane uses, not hand escape bytes to a `RichLog`."""
+    d = make_project()
+    logs = d / ".project" / "logs"
+    logs.mkdir(parents=True)
+    (logs / "TICKET-001-planning.log").write_bytes(
+        b"\x1b[2C\x1b[3A\x1b[?25h\x1b[?25l\x1b[2D\x1b[3B hello\x1b[7A\x1b[38;5;174m*\x1b[39m\n")
+
+    lines = tail_log(str(d), "TICKET-001")
+
+    for line in lines:
+        assert "\x1b" not in line, f"raw escape byte reached the log line: {line!r}"
+
+
+def test_tail_log_renders_a_pty_dump_as_the_final_screen():
+    """Escape-free is not enough: the pyte screen is the point. A dump
+    whose second frame clears and overwrites the first must come back
+    as the last screen, once."""
+    d = make_project()
+    logs = d / ".project" / "logs"
+    logs.mkdir(parents=True)
+    (logs / "TICKET-001-planning.log").write_bytes(
+        b"\x1b[H\x1b[2Jfirst frame\x1b[H\x1b[2Jsecond frame\x1b[K\n")
+
+    assert tail_log(str(d), "TICKET-001") == ["second frame"]
+
+
+def test_tail_log_still_renders_a_stream_json_log():
+    """The sniff must not divert a headless stage's log into pyte: 35
+    of the 43 `planning` logs in this repo are stream-json, from runs
+    where nothing could attach."""
+    d = make_project()
+    logs = d / ".project" / "logs"
+    logs.mkdir(parents=True)
+    (logs / "TICKET-001-planning.log").write_bytes(
+        b'{"type":"assistant","message":{"content":'
+        b'[{"type":"text","text":"planning done"}]}}\n')
+
+    assert tail_log(str(d), "TICKET-001") == ["planning done"]

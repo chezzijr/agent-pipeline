@@ -71,6 +71,11 @@ pipeline --project ~/code/myproject resume  TICKET-001 \
     --stage planning --reset plan_validation_attempts
 ```
 
+Once `.project/` is committed, `pipeline.toml` is read from git `HEAD`, so an
+edit takes effect at the next commit -- a ticket working on a branch must not
+be able to change the commands that judge it. Until it is committed (and under
+`--private`, which never commits it) the file on disk is read as-is.
+
 Without installing it, `uv run python -m pipeline …` runs the same CLI.
 
 `run --once` drains the queue and exits -- what you want while you are still
@@ -365,6 +370,29 @@ are located from `__file__` -- at the repo root they would not survive
 Tickets live in the **target** project (`.project/tickets/`), not here, so they
 branch, diff, and revert with the code they describe.
 
+## Per-project stage config
+
+`pipeline/stages/<name>.md` is packaged, so every registered project reads
+the same stage files by default. A project can override one in two ways:
+
+- **Settings**, in `.project/pipeline.toml`, under `[stages.<name>]` --
+  `model`, `effort`, `write`, `tools`, `hooks`, `permission_mode`, `skills`,
+  `max_usd`, anything the packaged frontmatter carries. This table is merged
+  **shallow** onto the packaged frontmatter: a key you set replaces the
+  packaged one outright, it does not extend it -- a `skills` list you give
+  replaces the packaged list, not appends to it.
+- **Prose**, in `.project/stages/<name>.extra.md` -- free text appended after
+  the packaged prompt and before the ticket view. It can only add
+  instructions, never remove or relax one: there is no frontmatter in an
+  `.extra.md` file, so there is nothing to clamp there either.
+
+Both are read the same way the rest of a project's config is: the settings
+table comes from `.project/pipeline.toml` at `HEAD`, so an uncommitted edit
+is inert and a committed one lands in the ticket's diff, where
+`.project/pipeline.toml` being fenced parks it at `awaiting-merge` for a
+human to read before it merges. `.project/stages/` is fenced the same way,
+so a committed `.extra.md` change parks there too.
+
 ## Porting to another harness
 
 `pipeline/harnesses/codex.toml` is a second harness written to find out where the
@@ -425,8 +453,6 @@ second agent onto the same stage in the same worktree.
 
 ## Not built yet
 
-- **Per-project stage overrides** (`TICKET-035`). `pipeline/stages/` is inside
-  the package, so every registered project reads the same stage files.
 - **MCP servers** (`TICKET-036`). Stages spawn with `--strict-mcp-config` and no
   `--mcp-config`, so `mcp_servers: []`. Turning that on without widening the
   guard would put tools where `matcher: "Bash"` cannot see them.

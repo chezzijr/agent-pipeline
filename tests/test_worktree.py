@@ -125,3 +125,16 @@ def test_excluding_outside_a_git_repo_is_a_no_op_not_a_crash():
     still scaffold rather than blow up on the git call."""
     d = Path(tempfile.mkdtemp())
     assert W.exclude_project_dir(d) is None
+
+
+def test_head_file_reads_the_commit_not_the_working_tree():
+    """The dispatcher's own config is read through this. An uncommitted edit
+    to a tracked file must be invisible, and a file git does not have must
+    read as None so the caller can fall back to disk."""
+    d, sh = git_project()
+    (d / "f.py").write_text("dirty\n")
+    assert W.head_file(d, "f.py") == "base\n"
+    assert W.head_file(d, ".project/pipeline.toml") is None   # never committed
+    sh("git add -A && git commit -qm commit-config")
+    assert 'test_one="true"' in W.head_file(d, ".project/pipeline.toml")
+    assert W.head_file(Path(tempfile.mkdtemp()), "f.py") is None  # not a repo

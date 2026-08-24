@@ -1,7 +1,21 @@
 # How to run this project's tests. `{test}` is substituted with the ticket's
 # `test_file` frontmatter value.
+# The dispatcher reads this file from git HEAD, so an edit to a committed
+# config takes effect once it is committed. A config git does not have --
+# not yet committed, or excluded by `init --private` -- is read from disk.
 test_one                = "pytest -x {test}"
 test_suite              = "pytest"
 test_suite_without_new  = "pytest --deselect {test}"
 # The branch tickets are cut from, and the one Tier A re-runs {test} against.
 base                    = "main"
+
+# Per-project stage overrides. A [stages.<name>] table is merged shallow onto
+# that stage's packaged frontmatter -- a key here replaces the packaged one,
+# it does not extend it (a `skills` list included).
+# [stages.review]
+# model  = "haiku"
+# skills = []
+#
+# Prose that adds to a stage's instructions, rather than its settings, goes
+# in .project/stages/<name>.extra.md instead -- appended after the packaged
+# prompt and before the ticket view.

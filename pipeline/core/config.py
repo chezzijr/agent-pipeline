@@ -12,6 +12,7 @@ from pathlib import Path
 
 from pipeline.core import PipelineError
 from pipeline.core.ticket import split_frontmatter
+from pipeline.core.worktree import head_file
 
 PKG = Path(__file__).resolve().parent.parent
 STAGES_DIR = PKG / "stages"
@@ -21,26 +22,72 @@ TICKET_TEMPLATE = PKG / "templates" / "ticket.md"
 CONFIG_TEMPLATE = PKG / "templates" / "pipeline.toml"
 
 
-def stage_config(stage: str) -> dict:
+def project_stage_config(project: Path | None, stage: str) -> dict:
+    """A project's `[stages.<stage>]` table, or `{}` when it has none.
+
+    `project` of `None`, or a project with no `.project/pipeline.toml` at
+    all, both yield `{}` -- the packaged stage is untouched. A `stages` or
+    `[stages.<stage>]` value that is present but not a table is a config
+    error, not a silent no-op, so it raises.
+    """
+    if project is None:
+        return {}
+    try:
+        cfg = project_config(project)
+    except PipelineError:
+        return {}
+    stages = cfg.get("stages", {})
+    if not isinstance(stages, dict):
+        raise PipelineError(f"{project}: [stages] must be a table")
+    table = stages.get(stage, {})
+    if not isinstance(table, dict):
+        raise PipelineError(f"{project}: [stages.{stage}] must be a table")
+    return table
+
+
+def stage_config(stage: str, project: Path | None = None) -> dict:
     """Model, effort and write access come from the stage prompt's own
-    frontmatter, so a stage is one self-contained file."""
+    frontmatter, so a stage is one self-contained file -- overlaid, when a
+    project is given, with that project's `[stages.<stage>]` table.
+
+    The merge is shallow: a project's `skills` list REPLACES the packaged
+    list, it does not extend it.
+    """
     meta, _ = split_frontmatter(STAGES_DIR / f"{stage}.md")
-    return meta
+    return {**meta, **project_stage_config(project, stage)}
 
 
 def agent_stages() -> list[str]:
     return sorted(p.stem for p in STAGES_DIR.glob("*.md") if not p.stem.startswith("_"))
 
 
-def is_readonly(stage: str) -> bool:
-    return not stage_config(stage).get("write", False)
+def is_readonly(stage: str, project: Path | None = None) -> bool:
+    return not stage_config(stage, project).get("write", False)
 
 
 def project_config(project: Path) -> dict:
-    cfg = project / ".project" / "pipeline.toml"
-    if not cfg.is_file():
-        raise PipelineError(f"no {cfg} -- run `pipeline init {project}` first")
-    return tomllib.loads(cfg.read_text())
+    """The project's config as HEAD has it, not as the working tree has it.
+
+    Every stage can write the main checkout's `.project/` -- it is where the
+    ticket file lives, and `tree_snapshot()` excludes it -- and the guard's
+    `matcher` is `Bash`, so it never sees an `Edit`. Reading off disk let any
+    stage rewrite `test_one`, `test_suite` and `base`, the commands Tier A,
+    `verifying` and `merging` trust. Read from HEAD, an uncommitted edit is
+    inert, and a committed one is in the ticket's diff, where `review` sees
+    it and `machine.FENCED` parks it at `awaiting-merge`.
+
+    The disk fallback covers a project whose config git does not have:
+    freshly `pipeline init`-ed and not yet committed, or `.project/` excluded
+    from git (`pipeline init --private`). A ticket branch cannot reach it --
+    only a commit on the main checkout can take the file out of HEAD.
+    """
+    text = head_file(project, ".project/pipeline.toml")
+    if text is None:
+        cfg = project / ".project" / "pipeline.toml"
+        if not cfg.is_file():
+            raise PipelineError(f"no {cfg} -- run `pipeline init {project}` first")
+        text = cfg.read_text()
+    return tomllib.loads(text)
 
 
 def harness(name: str = "claude-code") -> dict:
@@ -50,7 +97,21 @@ def harness(name: str = "claude-code") -> dict:
     return tomllib.loads(p.read_text())
 
 
-def compose_prompt(stage: str, hcfg: dict | None = None, view: str = "") -> Path:
+def stage_extra(project: Path | None, stage: str) -> str:
+    """A project's own prose for this stage, or `""` when it has none.
+
+    Read straight off disk, unlike `project_config()`: prose cannot grant a
+    stage any privilege it doesn't already have, so there is no unattended-
+    merge hole in reading it before it is committed.
+    """
+    if project is None:
+        return ""
+    f = project / ".project" / "stages" / f"{stage}.extra.md"
+    return f.read_text() if f.is_file() else ""
+
+
+def compose_prompt(stage: str, hcfg: dict | None = None, view: str = "",
+                   project: Path | None = None) -> Path:
     """_common.md + this stage's body, frontmatter stripped, as one file.
 
     A stage's `skills:` only reaches the prompt when the harness declares the
@@ -66,6 +127,11 @@ def compose_prompt(stage: str, hcfg: dict | None = None, view: str = "") -> Path
                  "Invoke these before you start; they are here because this "
                  "stage's job depends on them.\n\n"
                  + "\n".join(f"- `/{sk}`" for sk in cfg["skills"]) + "\n")
+    extra = stage_extra(project, stage)
+    if extra:
+        text += ("\n\n---\n\n# This project's additions to this stage\n\n"
+                 f"From `.project/stages/{stage}.extra.md`. These instructions "
+                 "add to the rules above, and never relax them.\n\n" + extra)
     if view:
         text += ("\n\n---\n\n# The ticket\n\nThis is a bounded view of "
                  "the ticket named in your instructions -- the ticket's "

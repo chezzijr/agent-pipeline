@@ -1,6 +1,6 @@
 """Which fenced symbols a branch's diff touches.
 
-`CLAUDE.md` fences five things off from unattended merge. `machine.FENCED` is
+`CLAUDE.md` fences six things off from unattended merge. `machine.FENCED` is
 the machine-readable copy; this is the check. A whole-file entry (`None`) trips
 on any hunk. A symbol entry trips only when a hunk overlaps that symbol's own
 line range, so a ticket that edited a neighbouring function is not parked.
@@ -67,6 +67,8 @@ def fenced_touches(wt: Path, base: str, fenced: dict = FENCED) -> list[str]:
     Two dots against the merge base, NOT `base...HEAD`: three dots sees
     committed work only, and an uncommitted edit to the guard must not slip
     through.
+
+    A key ending in `/` is a directory: any changed file under it trips.
     """
     def git(cmd: str) -> str:
         return subprocess.run(f"git {cmd}", shell=True, cwd=wt, capture_output=True,
@@ -78,6 +80,9 @@ def fenced_touches(wt: Path, base: str, fenced: dict = FENCED) -> list[str]:
     changed = hunks(git(f"diff --unified=0 {mb}"))
     hits = []
     for path, symbols in fenced.items():
+        if path.endswith("/"):
+            hits.extend(sorted(p for p in changed if p.startswith(path)))
+            continue
         ranges = changed.get(path)
         if ranges is None:
             continue

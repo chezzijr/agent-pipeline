@@ -318,7 +318,7 @@ def spawn(project: Path, wt: Path, tid: str, stage: str, hcfg: dict,
           poller: Poller | None = None, emit=noop) -> dict:
     """Start an agent and return immediately. The dispatcher never blocks on an
     agent, which is what makes this a pipeline rather than a call tree."""
-    cfg = stage_config(stage)
+    cfg = stage_config(stage, project)
     # Above the `supports_hooks` refusal: a harness that cannot register the
     # guard hook must still not launch on top of a settings source that would
     # have disabled it, so the strip runs whether or not this spawn proceeds.
@@ -363,7 +363,7 @@ def spawn(project: Path, wt: Path, tid: str, stage: str, hcfg: dict,
         # (tests/test_pty.py:393). No view means the agent reads the file,
         # which is exactly what it did before this existed.
         view = ""
-    prompt = compose_prompt(stage, hcfg, view)
+    prompt = compose_prompt(stage, hcfg, view, project)
     settings = stage_settings(stage, cfg)
     cmd = render(hcfg, cfg, tid=tid, project=project,
                 ticket=ticket_path(project, tid),
@@ -647,8 +647,8 @@ def start(project: Path, path: Path, hcfg: dict, inflight: dict,
     # Strip before the baseline: a snapshot taken while the file is still
     # there would read its own removal as `wrote-in-readonly`.
     strip_settings_sources(wt)
-    before = tree_snapshot(wt) if is_readonly(stage) else None  # before Popen
-    before_main = dirty_snapshot(project) if is_readonly(stage) else None
+    before = tree_snapshot(wt) if is_readonly(stage, project) else None  # before Popen
+    before_main = dirty_snapshot(project) if is_readonly(stage, project) else None
     drop_result(project, tid)  # L3: never let a previous run's verdict be reused
     try:
         rec = spawn(project, wt, tid, stage, hcfg, poller, emit)

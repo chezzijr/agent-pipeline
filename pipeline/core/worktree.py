@@ -121,6 +121,25 @@ def strip_settings_sources(wt: Path) -> list[str]:
     return removed
 
 
+def head_file(project: Path, rel: str) -> str | None:
+    """The content of `rel` at `project`'s HEAD commit, or None if git has none.
+
+    None means git could not answer -- not a repo, no commit yet, or the
+    path is untracked -- and the caller falls back to the working tree.
+    `HEAD:./<rel>` resolves relative to cwd, so a project inside a
+    subdirectory of its repo reads its own copy.
+
+    Not `run_cmd()`: that returns `(stdout + stderr)[-4000:]`, which would
+    merge git's stderr into the file and truncate a long one.
+    """
+    if not project.is_dir():
+        return None
+    p = subprocess.run(f"git show {shlex.quote('HEAD:./' + rel)}", shell=True,
+                       cwd=project, capture_output=True, text=True,
+                       errors="replace", env=project_env())
+    return p.stdout if p.returncode == 0 else None
+
+
 def tree_snapshot(project: Path) -> str:
     """What a read-only stage must not change. `.project/` is excluded: writing
     to the ticket and the .result sidecar is every stage's job, including the

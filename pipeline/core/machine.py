@@ -11,15 +11,25 @@ BOUNDS = {
 }
 TERMINAL = {"done", "rejected", "escalated"}
 HUMAN_GATES = {"awaiting-approval", "needs-input", "awaiting-merge"}
-# The four things `CLAUDE.md` fences off from unattended merge, path to symbol
+# The six things `CLAUDE.md` fences off from unattended merge, path to symbol
 # tuple or None for whole-file. `CLAUDE.md` keeps the prose copy;
 # tests/test_stages.py::test_the_fenced_list_matches_the_rule_file compares
 # the two in both directions so they cannot drift.
 FENCED = {
+    ".project/pipeline.toml": None,
     "pipeline/hooks/dangerous-commands.py": None,
+    # The harness template carries `--settings` (which registers the guard),
+    # `--permission-mode`, `--setting-sources` and `--add-dir` -- what every
+    # stage can reach and what decides with code. `CLAUDE.md` already said to
+    # treat an edit here as a guard edit; without an entry it merged unattended.
+    "pipeline/harnesses/claude-code.toml": None,
     "pipeline/core/machine.py": ("transition", "CONTROL_FIELDS"),
     "pipeline/core/ticket.py": ("validate_meta",),
     "pipeline/core/worktree.py": ("strip_settings_sources",),
+    # A project's stage prose (TICKET-038) is append-only and grants no
+    # privilege, but `tree_snapshot()` excludes `.project/` -- nothing else
+    # notices a read-only stage writing one into its own worktree.
+    ".project/stages/": None,
 }
 KNOWN_STAGES = TERMINAL | HUMAN_GATES | {
     "new", "triage", "planning", "plan-validation", "revalidating",
