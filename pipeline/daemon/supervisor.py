@@ -18,10 +18,11 @@ from pipeline.core.config import (compose_prompt, harness, is_readonly,
                                   project_config, render, stage_config,
                                   stage_settings)
 from pipeline.core.fence import fenced_touches
-from pipeline.core.gate import gate
-from pipeline.core.machine import (BOUNDS, CLEANUP_STAGES, CONTROL_FIELDS,
+from pipeline.core.gate import gate, plan_steps
+from pipeline.core.machine import (CLEANUP_STAGES, CONTROL_FIELDS,
                                    HUMAN_GATES, MAX_ATTEMPTS, TERMINAL,
-                                   apply_claims, conflict_holder, transition)
+                                   apply_claims, bound_for, conflict_holder,
+                                   transition)
 from pipeline.core.ticket import (Ticket, all_tickets, drop_result,
                                   now, read_result, record_decision,
                                   result_file, stage_view, ticket_path,
@@ -100,6 +101,12 @@ def advance(project: Path, t: Ticket, result: str, note: str, emit=noop,
     # prompt lost the rule", and collapsing the two would count every
     # dispatcher pickup as a failure.
     stage = t.stage
+    # The size arrives through counters because `transition()` may not read a
+    # file. It is recomputed at every advance, so a re-plan is measured as it
+    # lands. It is written onto `t.counters` first, so the `charged` scan
+    # below still sees exactly one changed key.
+    t.counters = {**t.counters, "plan_steps": plan_steps(t.section("Plan")),
+                  "plan_files": len(t.files_declared)}
     nxt, counters = transition(stage, result, t.counters, t.klass)
     marker = has_marker(note) if agent else None   # BEFORE t.append copies the note
     ev = {} if marker is None else {"marker": marker}
@@ -118,7 +125,7 @@ def advance(project: Path, t: Ticket, result: str, note: str, emit=noop,
                         if v != t.counters.get(k, 0)), None)
         emit("escalated", ticket=t.id, stage=stage, reason=(
             f"`{charged}` reached its bound "
-            f"({counters[charged]}/{BOUNDS.get(t.klass, {}).get(charged, MAX_ATTEMPTS)})"
+            f"({counters[charged]}/{bound_for(t.klass, charged, counters)})"
             if charged else f"`{stage}` escalated on result `{result}`"))
     t.append(stage, "transition", f"**{stage} -> {nxt}** (result: `{result}`)\n\n{note}",
              to=nxt, result=result, **attrs)

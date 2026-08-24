@@ -697,7 +697,30 @@ def test_a_missing_marker_changes_no_transition_and_no_counter():
     t = Ticket.load(path)
     shutil.rmtree(d, ignore_errors=True)
     assert t.stage == "awaiting-approval"
-    assert t.counters == {}
+    # the dispatcher measured the FIXTURE plan; no attempt was charged
+    assert t.counters == {"plan_steps": 1, "plan_files": 1}
+
+
+def test_advance_seeds_the_plan_size_from_the_ticket():
+    plan = "\n".join(f"{i}. touch thing.py" for i in range(1, 25))
+    files = "\n".join(f"- f{i}.py" for i in range(10))
+    body = FIXTURE.replace(
+        "files_declared: [thing.py]", f"files_declared:\n{files}"
+    ).replace(
+        "counters: {}", "counters: {plan_validation_attempts: 1}"
+    ).replace(
+        "## Plan\n1. fix thing.py\n", f"## Plan\n{plan}\n"
+    )
+    d = project(body)
+    path = d / ".project/tickets/TICKET-001.md"
+    t = Ticket.load(path)
+    t.stage = "plan-validation"
+    supervisor.advance(d, t, "fail", "n", agent=False)
+    t = Ticket.load(path)
+    shutil.rmtree(d, ignore_errors=True)
+    assert t.stage == "planning"
+    assert t.counters["plan_steps"] == 24
+    assert t.counters["plan_files"] == 10
 
 
 def test_a_rebase_conflict_at_revalidating_leaves_a_way_back():
