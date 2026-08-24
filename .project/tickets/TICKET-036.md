@@ -64,3 +64,40 @@ whatever the pipeline says.
 ## Rollback
 
 ## Thread
+
+### 2026-08-24 · implementing · note
+
+**Todo (18 plan steps):**
+1. [x] `mcp_verdict()` in dangerous-commands.py
+2. [x] extend `main()` dispatch for `mcp__*`
+3. [x] guard test tables `MCP_BLOCKED`/`MCP_ALLOWED` + end-to-end case
+4. [x] widen matcher in `stage_settings()` + pin test + docstring
+5. [x] live probe check (MCP event reaches guard)
+6. [ ] `mcp_servers()` in config.py
+7. [ ] `mcp_config()` in config.py
+8. [ ] document `[mcp.<name>]` in templates/pipeline.toml
+9. [ ] tests for `mcp_servers`/`mcp_config`
+10. [ ] `mcp_flag` in claude-code.toml + fix stale comment
+11. [ ] `render()` gains `mcp` kwarg
+12. [ ] test_harness.py flag test + fix stale docstring
+13. [ ] wire `spawn()` in supervisor.py
+14. [ ] unlink mcp temp file at both cleanup sites
+15. [ ] test_harness.py spawn env test
+16. [ ] live check Bash event still reaches guard
+17. [ ] CLAUDE.md gotcha bullet
+18. [ ] README.md updates
+
+### 2026-08-24 · implementing · note
+
+Step 5 live check: an mcp__probe__ping call reaches the guard and is refused.
+grep -cF 'mcp__probe__ping' log -> 5. grep -cF 'MCP server probe is not
+declared for this stage' log -> 4. Block line verbatim: "MCP server probe is
+not declared for this stage.\nTool: mcp__probe__ping\nIf your stage genuinely
+needs this, stop and report it in the ticket rather than working around the
+guard." .probe-mcp.py, .probe-mcp.json and the log are deleted. git status
+--porcelain and grep -rF probe-mcp tests/ pipeline/ both print nothing.
+
+Gotcha found running this: a shell variable set in one Bash call does not
+persist into the next -- the first attempt ran with --settings "" (empty) and
+no hook fired at all. Re-ran the settings build and the claude -p call in one
+Bash invocation; fixed.

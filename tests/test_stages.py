@@ -3,10 +3,12 @@ import json
 import re
 import shlex
 import sys
+import tempfile
 from pathlib import Path
 
 from pipeline.core import config as C
 from pipeline.core import machine as M
+from pipeline.core import PipelineError
 
 
 def test_every_stage_prompt_declares_its_config():
@@ -102,6 +104,39 @@ def test_guard_matcher_covers_mcp_tool_calls():
     matcher = data["hooks"]["PreToolUse"][0]["matcher"]
     assert re.fullmatch(matcher, "mcp__github__create_pr"), \
         f"matcher {matcher!r} does not cover MCP tool calls"
+
+
+def test_a_stage_only_gets_the_mcp_servers_it_declares():
+    d = Path(tempfile.mkdtemp())
+    (d / ".project").mkdir(parents=True)
+    (d / ".project" / "pipeline.toml").write_text(
+        '[mcp.docs]\ncommand = "docs-mcp"\nreadonly = true\n'
+        '[mcp.github]\ncommand = "gh-mcp"\n')
+    assert C.mcp_servers(d, {}) == {}
+    got = C.mcp_servers(d, {"mcp": ["docs"]})
+    assert set(got) == {"docs"}
+    assert got["docs"]["readonly"] is True
+    f = C.mcp_config(got)
+    assert json.loads(f.read_text()) == {"mcpServers": {"docs": {"command": "docs-mcp"}}}
+    f.unlink()
+    assert C.mcp_config({}) is None
+
+
+def test_an_mcp_server_a_stage_did_not_declare_is_refused():
+    d = Path(tempfile.mkdtemp())
+    (d / ".project").mkdir(parents=True)
+    (d / ".project" / "pipeline.toml").write_text(
+        '[mcp.docs]\ncommand = "docs-mcp"\n')
+    try:
+        C.mcp_servers(d, {"mcp": ["gitlab"]})
+        assert False, "an undeclared server must raise"
+    except PipelineError:
+        pass
+    try:
+        C.mcp_servers(d, {"mcp": ["ev__il"]})
+        assert False, "a server name with __ must raise"
+    except PipelineError:
+        pass
 
 
 def test_every_stage_that_can_run_bash_has_the_guard():

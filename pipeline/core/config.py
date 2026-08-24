@@ -4,6 +4,7 @@ The stage prompts, hooks, harnesses and templates sit INSIDE the package:
 located from the repo root they are simply gone after `uv tool install .`.
 """
 import json
+import re
 import shlex
 import sys
 import tempfile
@@ -96,6 +97,47 @@ def harness(name: str = "claude-code") -> dict:
     if not p.is_file():
         raise PipelineError(f"no harness config {p}")
     return tomllib.loads(p.read_text())
+
+
+MCP_NAME = re.compile(r"^[a-zA-Z0-9-]+$")
+
+
+def mcp_servers(project: Path, cfg: dict) -> dict:
+    """The MCP servers this stage may use: `[mcp.<name>]` in the project's
+    `.project/pipeline.toml`, intersected with the stage's `mcp:` frontmatter.
+
+    A name containing `__` would be ambiguous to split back out of
+    `mcp__<server>__<tool>` in the guard, so `mcp_verdict()`'s split assumes
+    `[a-zA-Z0-9-]` only -- refused here rather than let through and mis-split.
+    """
+    wanted = cfg.get("mcp") or []
+    if not wanted:
+        return {}
+    declared = project_config(project).get("mcp") or {}
+    out = {}
+    for n in wanted:
+        if not isinstance(n, str) or not MCP_NAME.match(n):
+            raise PipelineError(f"bad MCP server name {n!r} -- [a-zA-Z0-9-] only")
+        if n not in declared:
+            raise PipelineError(
+                f"MCP server {n!r} is not declared in "
+                f"{project}/.project/pipeline.toml")
+        out[n] = dict(declared[n])
+    return out
+
+
+def mcp_config(servers: dict) -> Path | None:
+    """The `--mcp-config` file Claude Code wants: `mcpServers` keyed by name,
+    with `readonly` stripped -- that key is the pipeline's own, read by
+    `spawn()` to build `PIPELINE_MCP_READONLY`, and the CLI has no use for it.
+    """
+    if not servers:
+        return None
+    f = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
+    json.dump({"mcpServers": {n: {k: v for k, v in s.items() if k != "readonly"}
+                              for n, s in servers.items()}}, f)
+    f.close()
+    return Path(f.name)
 
 
 def stage_extra(project: Path | None, stage: str) -> str:

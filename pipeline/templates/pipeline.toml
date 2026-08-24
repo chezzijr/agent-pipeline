@@ -19,3 +19,11 @@ base                    = "main"
 # Prose that adds to a stage's instructions, rather than its settings, goes
 # in .project/stages/<name>.extra.md instead -- appended after the packaged
 # prompt and before the ticket view.
+
+# MCP servers this project offers. A stage opts in with mcp: [docs] in its
+# frontmatter; a server nobody declares is never spawned and costs no tokens.
+# readonly = true is what lets a write: false stage call it at all.
+# [mcp.docs]
+# command = "npx"
+# args = ["-y", "@upstash/context7-mcp"]
+# readonly = true
