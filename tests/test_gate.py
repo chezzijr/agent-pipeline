@@ -175,6 +175,20 @@ def test_an_acceptance_criterion_must_name_something_test_shaped():
     shutil.rmtree(d)
 
 
+def test_a_wrapped_criterion_is_checked_whole_not_first_line_only():
+    """DEC-042: the criteria scan does not join an indented continuation
+    line onto the bullet above it, unlike the `## Plan` scan. A criterion
+    whose test name falls on its second line draws a false `names no test`
+    finding even though the whole criterion does name one.
+    """
+    d = project(FIXTURE.replace(
+        "- `test_broken` passes",
+        "- passes once the fix lands:\n  `test_broken` no longer errors"))
+    ok, failures = gate(d, "TICKET-001")
+    assert ok, failures
+    shutil.rmtree(d)
+
+
 def test_gate_blocks_a_failure_that_is_not_the_reported_one():
     """A red test proves nothing if it is red for the wrong reason."""
     d = project(FIXTURE.replace("expect: test_broken", "expect: KeyError: 'evict'"))
