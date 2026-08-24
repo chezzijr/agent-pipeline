@@ -4,7 +4,7 @@ import tempfile
 from pathlib import Path
 
 from pipeline.core import PipelineError
-from pipeline.core.config import project_config
+from pipeline.core.config import project_config, stage_extra
 from tests.helpers import git_project
 
 
@@ -43,3 +43,18 @@ def test_project_config_still_raises_when_there_is_no_config_anywhere():
         assert False, "a project with no config must raise"
     except PipelineError as e:
         assert "run `pipeline init" in str(e)
+
+
+def test_an_uncommitted_stage_extra_must_not_reach_stage_extra():
+    """A read-only stage can write `.project/stages/<stage>.extra.md` with no
+    commit, no diff, no snapshot and no gate. `stage_extra()` must read it the
+    way `project_config()` reads its own file: from HEAD, falling back to disk
+    only when git has no copy at all."""
+    d, sh = git_project()
+    (d / ".project" / "stages").mkdir(parents=True)
+    (d / ".project" / "stages" / "implementing.extra.md").write_text("SAFE\n")
+    sh("git add -A && git commit -qm init-extra")
+
+    (d / ".project" / "stages" / "implementing.extra.md").write_text("INJECTED-9137\n")
+
+    assert "INJECTED-9137" not in stage_extra(d, "implementing")
