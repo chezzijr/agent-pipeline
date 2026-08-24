@@ -8,6 +8,7 @@ from pathlib import Path
 from helpers import FIXTURE, project
 from pipeline.core import ticket as T
 from pipeline.core.gate import _dedupe, gate, plan_steps
+from pipeline.core.machine import transition
 
 
 def _set_digest(body: str) -> str:
@@ -323,6 +324,34 @@ def test_gate_passes_a_test_that_fails_on_base_too():
     ok, failures = gate(d, "TICKET-001", workdir=wt)
     assert ok, failures
     assert "fails on base" in (d / ".project/tickets/TICKET-001.md").read_text()
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_a_ticket_promoted_from_quick_review_meets_a_gate_it_cannot_pass():
+    """`triage` can route a small ticket onto the cheap route: `chore` sets
+    `cheap_route` and sends it straight to `implementing`, skipping
+    `planning` and `plan-validation`. `implementing` commits the fix and the
+    ticket goes to `quick-review`. When `quick-review` answers `fail` the
+    ticket is promoted to `planning`. Expected: whatever repairs the branch
+    before `plan-validation` runs its gate() leaves the reported bug still
+    reproducible (`test_file` still fails), so the promoted ticket's gate()
+    passes Tier A. Today nothing repairs it -- the cheap route's fix is still
+    committed on the branch when `plan-validation` gates it, so `test_file`
+    PASSES and the gate rejects a ticket that did everything asked of it."""
+    stage, counters = "triage", {}
+    stage, counters = transition(stage, "chore", counters)
+    assert stage == "implementing" and counters.get("cheap_route") == 1
+    stage, counters = transition(stage, "ok", counters)
+    assert stage == "quick-review" and "cheap_route" not in counters
+    stage, counters = transition(stage, "fail", counters)
+    assert stage == "planning"
+
+    # the cheap route's fix is still committed on the branch by the time
+    # `planning` -> `plan-validation` runs gate() against it -- nothing has
+    # repaired it
+    d, wt = _git_ticket_project("buggy\n", "fixed\n")
+    ok, failures = gate(d, "TICKET-001", workdir=wt)
+    assert ok, failures
     shutil.rmtree(d, ignore_errors=True)
 
 
