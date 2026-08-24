@@ -277,12 +277,30 @@ def file_verdict(tool_input: dict) -> str | None:
     return path_verdict(path, wt, allowed)
 
 
+def mcp_verdict(tool: str) -> str | None:
+    """An MCP tool is named `mcp__<server>__<tool>`. The guard parses shell and
+    cannot judge `mcp__github__create_pr`, so the rule is a per-server
+    allowlist, default deny -- the same shape as the read-only rules."""
+    parts = tool.split("__")
+    if len(parts) < 3 or not parts[1]:
+        return f"{tool} is not a recognisable MCP tool name"
+    server = parts[1]
+    allow = {s for s in os.environ.get("PIPELINE_MCP_ALLOW", "").split(",") if s}
+    if server not in allow:
+        return f"MCP server {server} is not declared for this stage"
+    if os.environ.get("PIPELINE_READONLY") == "1":
+        ro = {s for s in os.environ.get("PIPELINE_MCP_READONLY", "").split(",") if s}
+        if server not in ro:
+            return f"MCP server {server} is not marked readonly and this stage is read-only"
+    return None
+
+
 def main() -> int:
     try:
         event = json.load(sys.stdin)
     except Exception:
         return 0  # never break the agent over a malformed event
-    tool = event.get("tool_name")
+    tool = str(event.get("tool_name") or "")
     tool_input = event.get("tool_input") or {}
     if tool in FILE_TOOLS:
         label = "Path"
@@ -293,6 +311,9 @@ def main() -> int:
         label = "Command"
         subject = tool_input.get("command", "")
         why = verdict(subject, os.environ.get("PIPELINE_READONLY") == "1")
+    elif tool.startswith("mcp__"):
+        label, subject = "Tool", tool
+        why = mcp_verdict(tool)
     else:
         return 0
     if why is None:

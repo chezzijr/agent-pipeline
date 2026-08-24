@@ -69,6 +69,34 @@ def check(cmds, readonly, expect_block, label):
             f"{label}: {c!r} -> {got!r} (expected {'block' if expect_block else 'allow'})"
         print(f"ok  {'BLOCK' if expect_block else 'allow'} [{label}] {c}")
 
+# (tool, PIPELINE_MCP_ALLOW, PIPELINE_MCP_READONLY, PIPELINE_READONLY)
+MCP_BLOCKED = [
+    ("mcp__github__create_pr", "", "", "0"),
+    ("mcp__github__create_pr", "docs", "docs", "0"),
+    ("mcp__docs__search", "docs", "", "1"),
+    ("mcp__", "docs", "docs", "0"),
+]
+MCP_ALLOWED = [
+    ("mcp__docs__search", "docs", "docs", "1"),
+    ("mcp__github__create_pr", "github,docs", "docs", "0"),
+]
+
+
+def check_mcp(cases, expect_block, label):
+    saved = dict(os.environ)
+    try:
+        for tool, allow, ro_allow, readonly in cases:
+            os.environ["PIPELINE_MCP_ALLOW"] = allow
+            os.environ["PIPELINE_MCP_READONLY"] = ro_allow
+            os.environ["PIPELINE_READONLY"] = readonly
+            got = guard.mcp_verdict(tool)
+            assert bool(got) == expect_block, \
+                f"{label}: {tool!r} -> {got!r} (expected {'block' if expect_block else 'allow'})"
+            print(f"ok  {'BLOCK' if expect_block else 'allow'} [{label}] {tool}")
+    finally:
+        os.environ.clear()
+        os.environ.update(saved)
+
 def test_unparseable_commands_are_refused_not_ignored():
     assert guard.verdict("echo 'unbalanced", False), \
         "a command that will not lex must not be waved through"
@@ -87,6 +115,12 @@ def test_end_to_end_exit_code():
     p = subprocess.run([sys.executable, str(GUARD)], input="not json",
                        capture_output=True, text=True)
     assert p.returncode == 0, "a malformed event must never break the agent"
+    event = json.dumps({"tool_name": "mcp__github__create_pr", "tool_input": {}})
+    env = dict(os.environ, PIPELINE_MCP_ALLOW="")
+    p = subprocess.run([sys.executable, str(GUARD)], input=event,
+                       capture_output=True, text=True, env=env)
+    assert p.returncode == 2, p
+    assert "is not declared for this stage" in p.stderr, p.stderr
     print("ok  end-to-end exit codes")
 
 def test_write_outside_worktree_is_not_blocked():
@@ -182,6 +216,8 @@ if __name__ == "__main__":
     check(ALLOWED_ALWAYS, False, False, "always")
     check(BLOCKED_READONLY, True, True, "readonly")
     check(ALLOWED_READONLY, True, False, "readonly")
+    check_mcp(MCP_BLOCKED, True, "mcp")
+    check_mcp(MCP_ALLOWED, False, "mcp")
     test_end_to_end_exit_code()
     test_write_outside_worktree_is_not_blocked()
     test_paths_outside_the_worktree_are_blocked()
