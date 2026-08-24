@@ -88,6 +88,12 @@ def cmd_gate(args) -> None:
     sys.exit(0 if ok else 1)
 
 
+def cmd_plan(args) -> None:
+    t = Ticket.find(proj(args), args.id)
+    print(t.section("Plan"))
+    print(t.section("Acceptance criteria"))
+
+
 def record(project: Path, t: Ticket, frm: str, result: str) -> None:
     """A human gate is left in THIS process, not the daemon's.
 
@@ -484,6 +490,7 @@ def main() -> None:
     p = sub.add_parser("init"); p.add_argument("dir", nargs="?", default=None); p.add_argument("--private", action="store_true", help="hide .project/ from git in this clone only (.git/info/exclude)"); p.set_defaults(fn=cmd_init)
     p = sub.add_parser("new"); p.add_argument("title"); p.add_argument("--class", dest="cls", default="bugfix"); p.set_defaults(fn=cmd_new)
     p = sub.add_parser("gate"); p.add_argument("id"); p.set_defaults(fn=cmd_gate)
+    p = sub.add_parser("plan"); p.add_argument("id"); p.set_defaults(fn=cmd_plan)
     p = sub.add_parser("approve"); p.add_argument("id"); p.add_argument("--by"); p.set_defaults(fn=cmd_approve)
     p = sub.add_parser("reject"); p.add_argument("id"); p.add_argument("reason"); p.set_defaults(fn=cmd_reject)
     p = sub.add_parser("answer"); p.add_argument("id"); p.add_argument("text"); p.set_defaults(fn=cmd_answer)

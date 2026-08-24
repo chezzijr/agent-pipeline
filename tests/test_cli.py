@@ -275,10 +275,19 @@ def test_answer_and_reject_record_too():
 
 def test_plan_prints_only_the_plan_and_acceptance_criteria():
     """The approval gate needs a decision, not a search through a ticket
-    file that can exceed 65KB. `pipeline plan` doesn't exist yet."""
+    file that can exceed 65KB."""
     d = Path(tempfile.mkdtemp())
     cli(d, "new", "t")
+    path = d / ".project/tickets/TICKET-001.md"
+    body = path.read_text()
+    body = body.replace("## Plan\n\n", "## Plan\n\nmove the widget.\n\n")
+    body = body.replace("## Acceptance criteria\n\n",
+                         "## Acceptance criteria\n\nwidget moved.\n\n")
+    path.write_text(body)
     r = cli(d, "plan", "TICKET-001")
-    assert r.returncode != 0, r.stdout
-    assert "invalid choice: 'plan'" in r.stderr, r.stderr
+    assert r.returncode == 0, r.stderr
+    assert "move the widget." in r.stdout
+    assert "widget moved." in r.stdout
+    assert "## Summary" not in r.stdout
+    assert "## Reproduction" not in r.stdout
     shutil.rmtree(d)
