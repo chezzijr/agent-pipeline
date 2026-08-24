@@ -61,62 +61,13 @@ GUARDED = {
 PY_MODULES_OK = {"pytest", "unittest", "tox", "nox"}
 
 
-def strip_continuations(command: str) -> str:
-    """Remove an unquoted `\\` + newline: a shell joins the two lines with no
-    separator there, so `rm -rf \\<newline>/` is one word, `/`, not two.
-    Left alone, shlex keeps the newline in the token (`'\\n/'`, which
-    `HOME_ISH` does not match) or, when whitespace follows, emits a bare
-    `'\\n'` token that `segments()` reads as a real separator -- either way
-    the command that follows escapes `always_rules()`. Inside a single-quoted
-    string a backslash is literal, so it is left alone there; POSIX strips the
-    same continuation inside double quotes too, but nothing in this guard's
-    tables needs that case.
-    """
-    out = []
-    in_single = False
-    i, n = 0, len(command)
-    while i < n:
-        c = command[i]
-        if c == "'":
-            in_single = not in_single
-            out.append(c)
-            i += 1
-        elif not in_single and c == "\\" and i + 1 < n and command[i + 1] == "\n":
-            i += 2
-        else:
-            out.append(c)
-            i += 1
-    return "".join(out)
-
-
-def segments(command: str) -> list[list[str]] | None:
-    """Split a shell command into argv lists, one per segment. None if the
-    string will not lex -- which is itself a reason to refuse.
-
-    A newline separates two commands only where a shell would separate
-    them. It is a punctuation char here rather than whitespace, so shlex
-    emits it as its own token outside quotes and keeps it in the token
-    inside a quoted string or after a backslash. Splitting the raw string
-    on newlines before lexing -- what this did until TICKET-057 -- refused
-    every quoted multi-line command as "does not parse".
-
-    `commenters` is off deliberately. shlex eats the newline that ends a
-    comment, so with comments on, `echo hi # note<newline>sudo rm -rf
-    /etc` lexes as one argv and the `sudo` rule never sees it.
-    """
-    lex = shlex.shlex(strip_continuations(command), posix=True, punctuation_chars=PUNCTUATION)
-    lex.whitespace = " \t\r"
-    lex.commenters = ""
-    lex.whitespace_split = True
-    try:
-        tokens = list(lex)
-    except ValueError:
-        return None
+def split_segments(tokens: list[str]) -> list[list[str]]:
+    """Token list to argv lists. A token that is a run of separator
+    characters ends the segment it follows. A punctuation run carrying a
+    newline separates too: shlex welds `>` to the newline after it, and
+    `echo x ><newline>rm -rf /` must not hide the `rm` inside echo's argv."""
     out, current = [], []
     for tok in tokens:
-        # a punctuation run carrying a newline separates too: shlex welds
-        # `>` to the newline after it, and `echo x ><newline>rm -rf /`
-        # must not hide the `rm` inside echo's argv
         if tok and (set(tok) <= SEPARATORS
                     or "\n" in tok and set(tok) <= set(PUNCTUATION)):
             if current:
@@ -127,6 +78,68 @@ def segments(command: str) -> list[list[str]] | None:
     if current:
         out.append(current)
     return out
+
+
+def presplit_segments(command: str) -> list[list[str]] | None:
+    """The pre-TICKET-057 splitter: split on newlines, lex each line alone.
+
+    Reached only for a command containing a backslash. A line ending in one
+    does not lex ("No escaped character"), so a line continuation is refused
+    rather than joined, and a newline inside a quoted string is refused
+    rather than kept. Both are fail-closed, which is why this is the route.
+    """
+    out = []
+    for line in command.split("\n"):
+        if not line.strip():
+            continue
+        lex = shlex.shlex(line, posix=True, punctuation_chars=True)
+        lex.whitespace_split = True
+        try:
+            out.extend(split_segments(list(lex)))
+        except ValueError:
+            return None
+    return out
+
+
+def lexed_segments(command: str) -> list[list[str]] | None:
+    """The newline-aware splitter, for a command with no backslash in it.
+
+    A newline is a punctuation char here rather than whitespace, so shlex
+    emits it as its own token outside quotes and keeps it inside a quoted
+    string. Splitting the raw string on newlines instead refuses every
+    quoted multi-line command as "does not parse", which is the defect
+    TICKET-057 opened on.
+
+    `commenters` is off deliberately. shlex eats the newline that ends a
+    comment, so with comments on, `echo hi # note<newline>sudo rm -rf /etc`
+    lexes as one argv and the `sudo` rule never sees it.
+    """
+    lex = shlex.shlex(command, posix=True, punctuation_chars=PUNCTUATION)
+    lex.whitespace = " \t\r"
+    lex.commenters = ""
+    lex.whitespace_split = True
+    try:
+        return split_segments(list(lex))
+    except ValueError:
+        return None
+
+
+def segments(command: str) -> list[list[str]] | None:
+    """Split a shell command into argv lists, one per segment. None if the
+    string will not lex -- which is itself a reason to refuse.
+
+    A command containing a backslash goes down `presplit_segments()`, which
+    refuses more than it parses. This guard does not model shell backslash
+    grammar: TICKET-057 hand-rolled that pre-pass three times and every
+    pass was found allowing a command the old splitter blocked -- last an
+    apostrophe inside double quotes, and a doubled backslash before a
+    newline. Refusing what the old splitter cannot parse costs the line
+    continuation and buys a grammar with no known escape. Do not add a
+    backslash pre-pass.
+    """
+    if "\\" in command:
+        return presplit_segments(command)
+    return lexed_segments(command)
 
 
 def flatten(argv: list[str]) -> list[list[str]]:
@@ -260,6 +273,10 @@ def readonly_rules(segs: list[list[str]], raw: str) -> str | None:
 def verdict(command: str, readonly: bool) -> str | None:
     segs = segments(command)
     if segs is None:
+        if "\\" in command:
+            return ("command does not parse as a shell command: it contains a "
+                    "backslash, which this guard refuses rather than models -- "
+                    "put the command on one line without one")
         return "command does not parse as a shell command"
     segs = [a for seg in segs for a in flatten(seg)]
     why = always_rules(segs, command)
