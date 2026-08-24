@@ -70,6 +70,15 @@ BLOCKED_READONLY = [
     "cat a >\nfile",
     # a backslash continuation is refused, not parsed -- TICKET-057
     "pytest -x \\\ntests/test_x.py",
+    # sed is off the read-only allowlist -- TICKET-057. Each of the first
+    # three writes and none carries `-i`: an abbreviation GNU accepts, sed's
+    # `w` command, and a script file the guard never reads.
+    "sed --in s/a/Z/ f.txt",
+    "sed -n 's/a/Z/w /tmp/out.txt' f.txt",
+    "sed -f /tmp/script.sed f.txt",
+    "sed 's/a/b/' thing.py",
+    "sed -n '10,20p' README.md",
+    "sed -E 's/a+/b/' thing.py",
 ]
 ALLOWED_READONLY = [
     "pytest -x", "git diff main...HEAD", "grep -rn foo .", "git log --oneline",
@@ -78,9 +87,6 @@ ALLOWED_READONLY = [
     "pytest -x 2>&1", "find . -name '*.py'", "cargo test", "go test ./...",
     "git status --porcelain", "wc -l thing.py", "python3 -m unittest",
     "git diff main...HEAD | head -50",
-    "sed 's/a/b/' thing.py",
-    "sed -n '10,20p' README.md",
-    "sed -E 's/a+/b/' thing.py",
     'grep -rn "a\nb" .',
     "cat a.py\ncat b.py",
     "grep -rn 'a\\.b' src/",
