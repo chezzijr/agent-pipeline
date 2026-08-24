@@ -461,3 +461,24 @@ def test_one_gate_run_quotes_the_branch_and_base_output_once():
     assert len(fences) == 1, fences
     assert "identical output, already quoted in this entry, above" in thread
     shutil.rmtree(d, ignore_errors=True)
+
+
+def test_a_failed_gate_returns_a_reference_not_a_second_copy_of_the_output():
+    """TICKET-046: `gate()` writes its findings into `## Thread` and then
+    returns them; returning the fence verbatim puts the same output in the
+    thread twice in one tick, once written by `gate()` and once by whatever
+    copies the returned findings into a note of its own. Fails today: the
+    returned failure still carries the fence."""
+    d = project()
+    (d / ".project" / "pipeline.toml").write_text(
+        'test_one = "echo nope; exit 1"\n'
+        'test_suite = "true"\n'
+        'test_suite_without_new = "true"\n')
+    ok, failures = gate(d, "TICKET-001")
+    assert not ok
+    assert any("never appears" in f for f in failures), failures
+    assert not any("```" in f for f in failures), failures
+    assert any("## Thread` entry" in f for f in failures), failures
+    thread = T.sections((d / ".project/tickets/TICKET-001.md").read_text())["Thread"]
+    assert thread.count("nope") == 1, thread
+    shutil.rmtree(d, ignore_errors=True)

@@ -357,4 +357,6 @@ def gate(project: Path, tid: str, workdir: Path | None = None) -> tuple[bool, li
         verdict, "\n".join(f"- {f}" for f in findings) or "- (no checks ran)"),
         verdict=verdict)
     t.save()
-    return not failed, failed
+    here = _entry_ref(t.thread()[-1].raw)
+    mine = {body: here for f in findings for _, _, body in _blocks(f) if body.strip()}
+    return not failed, [_dedupe(f, mine, here) for f in failed]
