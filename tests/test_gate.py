@@ -447,3 +447,17 @@ def test_dedupe_replaces_a_repeated_fence_and_keeps_the_first():
     fresh: dict[str, str] = {}
     _dedupe("prose\n~~~\nboom\n~~~\n", fresh, "x")
     assert fresh == {"boom": "x"}
+
+
+def test_one_gate_run_quotes_the_branch_and_base_output_once():
+    """TICKET-046: the branch run and the base run of the same test produce
+    byte-identical output, so one `gate()` run should quote it once and
+    reference it the second time. Fails today: 2 blocks, 1 unique."""
+    d, wt = _git_ticket_project("buggy\n", "buggy\n")
+    ok, _ = gate(d, "TICKET-001", workdir=wt)
+    assert ok
+    thread = T.sections((d / ".project/tickets/TICKET-001.md").read_text())["Thread"]
+    fences = re.findall(r"```\n.*?\n```", thread, re.S)
+    assert len(fences) == 1, fences
+    assert "identical output, already quoted in this entry, above" in thread
+    shutil.rmtree(d, ignore_errors=True)

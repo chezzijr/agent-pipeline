@@ -344,6 +344,13 @@ def gate(project: Path, tid: str, workdir: Path | None = None) -> tuple[bool, li
                          line, re.I):
             findings.append(f"acceptance criterion names no test: {line.strip()}")
 
+    seen: dict[str, str] = {}
+    for e in t.thread():
+        for _, _, body in _blocks(e.text):
+            if body.strip():
+                seen.setdefault(body, _entry_ref(e.raw))
+    findings = [_dedupe(f, seen, "this entry, above") for f in findings]
+
     failed = [f for f in findings if not f.startswith("ok:")]
     verdict = "PASS" if not failed else "FAIL"
     t.append("plan-validation", "gate", "**Tier A gate: %s**\n\n%s" % (
