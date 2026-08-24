@@ -311,6 +311,55 @@ TICKET-001   review    bugfix  {'review_loops': 1, ...}
 Under the daemon the child's stdout comes back over a pipe, but it is *teed* to
 the same log file -- otherwise both of those stop working.
 
+## When a ticket escalates
+
+`escalated` means a bounded loop hit its bound, or the dispatcher saw a thing it
+refuses to guess about. Nothing retries it and no stage can un-escalate it: a
+human decides.
+
+```
+$ pipeline ls
+TICKET-017   escalated   bugfix   {'review_loops': 0, ..., 'no_result': 2}
+```
+
+The reason is the last entry in the ticket's thread, written by the dispatcher
+itself:
+
+```
+### 2026-08-21 04:36:36Z · plan-validation · escalation
+
+`plan-validation` wrote no .result sidecar 2 times
+```
+
+So: `tail -n 30 .project/tickets/TICKET-017.md` for the reason and the stage
+that hit it, `pipeline logs TICKET-017` for that stage's log. The worktree is
+still there -- `escalated` is not in `CLEANUP_STAGES`, so whatever failed is
+left where it happened, `git -C .worktrees/TICKET-017 status` and all.
+
+Then one of three:
+
+| The reason is | Do |
+|---|---|
+| a flake -- crashed harness, expired lease, no sidecar | `pipeline resume TICKET-017 --stage plan-validation --reset no_result` |
+| real, but the stage deserves another go with the thread it has now | `pipeline resume TICKET-017 --stage planning --grant plan_validation_attempts` |
+| the ticket itself is wrong | `pipeline reject TICKET-017 "why"` |
+
+`--reset` zeroes a counter; `--grant` hands back one spent attempt (`N` with
+`--grant counter=N`) and cannot return more than was spent. Naming the same
+counter in both is an error, not a merge.
+
+The bound that was hit lives in the dispatcher, never in a stage prompt:
+`BOUNDS[class][counter]` in `pipeline/core/machine.py`, which is 2 for `bugfix`
+and `feature` and 3 for `refactor` on `review_loops` and
+`plan_validation_attempts`. `plan_validation_attempts` is the only one that
+grows with the plan -- one more attempt per 8 steps or 4 declared files, never
+past 5. `lease_expiries` and `no_result` are the dispatcher's own counters and
+stay at 2 whatever the class.
+
+Resetting a counter because the loop is tiresome is how an unbounded loop gets
+back in. A stage that escalates twice for the same reason is telling you the
+ticket is wrong, not that the budget is small.
+
 ## The invariants
 
 0. **No agent waits on another agent.** The dispatcher launches and returns;

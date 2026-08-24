@@ -171,6 +171,9 @@ do not describe filing as "it will be fixed automatically".
 - **Do not fill `## Plan`.** The gate requires numbered steps citing declared files, and
   plan-validation scores the plan against eight judgment checks. A plan written here
   skips both.
+- **Do not resume or reject an escalated ticket on the user's behalf.** The bound it
+  hit is the checkpoint, the same as approval is. Read it -- README's *When a ticket
+  escalates* is the procedure -- and hand the user the command.
 - **Do not edit a ticket that is not in `new`.** A stage may hold its lease; use
   `pipeline answer <id> "..."` or `pipeline reject <id> "why"`, which append to the
   thread properly. To edit a running ticket by hand, interrupt the stage first
