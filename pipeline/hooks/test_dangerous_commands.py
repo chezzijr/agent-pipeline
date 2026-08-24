@@ -89,10 +89,20 @@ def test_end_to_end_exit_code():
     assert p.returncode == 0, "a malformed event must never break the agent"
     print("ok  end-to-end exit codes")
 
+def test_write_outside_worktree_is_not_blocked():
+    event = json.dumps({"tool_name": "Write", "tool_input": {"file_path": "/home/chezzijr/proj/agent-pipeline/tests/_probe.txt", "content": "probe123\n"}})
+    env = dict(os.environ)
+    env["PIPELINE_WORKTREE"] = "/home/chezzijr/proj/agent-pipeline/.worktrees/TICKET-052"
+    p = subprocess.run([sys.executable, str(GUARD)], input=event, capture_output=True, text=True, env=env)
+    msg = "expected block, got returncode=" + repr(p.returncode) + " stderr=" + repr(p.stderr)
+    assert p.returncode == 2, msg
+    print("ok  write outside worktree blocked")
+
 if __name__ == "__main__":
     check(BLOCKED_ALWAYS, False, True, "always")
     check(ALLOWED_ALWAYS, False, False, "always")
     check(BLOCKED_READONLY, True, True, "readonly")
     check(ALLOWED_READONLY, True, False, "readonly")
     test_end_to_end_exit_code()
+    test_write_outside_worktree_is_not_blocked()
     print("\nguard: all passed")
