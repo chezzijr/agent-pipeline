@@ -317,14 +317,34 @@ def test_every_stage_can_write_its_result_sidecar():
             f"{stage} has no file tool, so it cannot write its .result: {tools}"
 
 
+def test_the_mcp_config_flag_reaches_the_rendered_command():
+    hcfg = config.harness("claude-code")
+    stage_cfg = config.stage_config("review")
+    prompt = config.compose_prompt("review")
+    kwargs = dict(hcfg=hcfg, cfg=stage_cfg, tid="TICKET-001",
+                  project=Path("/proj"), ticket=Path("/proj/t.md"),
+                  result_file=Path("/proj/t.result"), session="s1",
+                  prompt=prompt, settings=Path("/proj/settings.json"))
+    no_mcp = config.render(**kwargs)
+    with_mcp = config.render(**kwargs, mcp=Path("/tmp/m.json"))
+    prompt.unlink()
+
+    assert "--mcp-config" not in no_mcp
+    assert "--mcp-config /tmp/m.json" in with_mcp
+    assert "--strict-mcp-config" in no_mcp
+    assert "--strict-mcp-config" in with_mcp
+
+
 def test_a_stage_does_not_inherit_the_developers_mcp_servers():
     """`--tools` restricts built-in tools only. Every MCP server configured in
     the developer's `~/.claude` still loads, so TICKET-024's `planning` asked
     for `Read,Grep,Glob,Bash,Edit,Write,Skill` and the `init` event of the
     session it got granted 53 tools from 9 servers, among them
     `mcp__claude_ai_Gmail__apply_sensitive_message_label`. The guard's
-    `PreToolUse` matcher names built-in tools only, so it has nothing to say
-    about any of them, and the same ticket runs differently on two machines.
+    `PreToolUse` matcher covers `mcp__.*` and `mcp_verdict()` refuses a
+    server the project did not declare, so `--strict-mcp-config` remains what
+    keeps the operator's `~/.claude` servers out of a session, and the same
+    ticket runs differently on two machines without it.
 
     `--strict-mcp-config` limits a session to the servers named by
     `--mcp-config`, i.e. none. Both templates carry `--tools`, so both need it."""

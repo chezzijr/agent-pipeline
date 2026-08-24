@@ -194,7 +194,8 @@ def compose_prompt(stage: str, hcfg: dict | None = None, view: str = "",
 
 def render(hcfg: dict, cfg: dict, *, tid: str, project: Path, ticket: Path,
            result_file: Path, session: str, prompt: Path,
-           settings: Path | None = None, key: str = "cmd") -> str:
+           settings: Path | None = None, mcp: Path | None = None,
+           key: str = "cmd") -> str:
     """Fill a harness's `cmd` template. Pulled out of `spawn()` so a harness
     can be exercised -- rendered command asserted -- without ever running an
     agent, which is how `codex.toml` is tested.
@@ -208,7 +209,11 @@ def render(hcfg: dict, cfg: dict, *, tid: str, project: Path, ticket: Path,
     `key` picks the template: "cmd" headless, "interactive_cmd" for a stage
     with `mode: interactive`. A harness with no interactive template falls
     back to its normal command under the PTY -- what you lose is the
-    harness's interactive flags, not the terminal."""
+    harness's interactive flags, not the terminal.
+
+    `mcp`, like `settings`, is a path to a file the dispatcher already wrote --
+    here the `--mcp-config` file `mcp_config()` built. `None` renders no flag,
+    which is what a harness with no `{mcp_flag}` in its template already gets."""
     ticket_q, result_q = shlex.quote(str(ticket)), shlex.quote(str(result_file))
     work = (f"Work ticket {tid}. Your prompt carries a bounded view of "
             f"{ticket_q}; open that file only for what the view says it "
@@ -223,6 +228,8 @@ def render(hcfg: dict, cfg: dict, *, tid: str, project: Path, ticket: Path,
         session_flag=hcfg.get("session_flag", "").format(session=session),
         settings_flag=(hcfg.get("settings_flag", "").format(
             settings=shlex.quote(str(settings))) if settings else ""),
+        mcp_flag=(hcfg.get("mcp_flag", "").format(mcp=shlex.quote(str(mcp)))
+                  if mcp else ""),
         # stage frontmatter wins, then the harness's default for THIS template
         # (headless and interactive want opposite answers -- see
         # `claude-code.toml`), then the pre-2026-08-21 value for a harness that

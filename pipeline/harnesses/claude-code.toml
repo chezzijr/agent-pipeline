@@ -32,6 +32,10 @@ supports_hooks = true    # PreToolUse hooks registered via --settings
 effort_flag = "--effort {effort}"
 session_flag = "--session-id {session}"
 settings_flag = "--settings {settings}"
+# The MCP servers this stage declared (TICKET-036), or empty for a stage that
+# declared none -- `--strict-mcp-config` stays either way (DEC-025), and with
+# it `--mcp-config` means "only the servers this file names".
+mcp_flag = "--mcp-config {mcp}"
 # `write: false` names the WORKING TREE, not the ticket. Every stage has to
 # write its `.result` sidecar, and `tree_snapshot()` excludes `.project/` for
 # exactly that reason -- so a read-only stage needs a file tool to do it. Given
@@ -107,8 +111,12 @@ no_skills_flag = "--disable-slash-commands"
 # Both flags exist in `claude --help`; re-enabling either is a one-line edit.
 # `--tools` restricts the built-in tool set only, not MCP. TICKET-024's
 # `planning` asked for 7 tools and its `init` event granted 53 from 9
-# `~/.claude` MCP servers, Gmail among them -- the guard's matcher names
-# built-in tools only, so it covers none of those tool names. Measured on `claude-haiku-4-5-20251001`,
+# `~/.claude` MCP servers, Gmail among them. The guard's `PreToolUse` matcher
+# now also covers `mcp__.*` (TICKET-036), and `mcp_verdict()` allows a call
+# only for a server the stage declared in `mcp:` -- but that server still has
+# to be OFFERED to the session before any tool call can name it, which is what
+# `--strict-mcp-config` and `--mcp-config` (or its absence) below control.
+# Measured on `claude-haiku-4-5-20251001`,
 # 2026-08-21: without `--strict-mcp-config`, `init` reports 68 tools and 9
 # servers; with it, exactly `["Bash","Edit","Glob","Grep","Read","Skill",
 # "Write"]` and `"mcp":[]`. `--bare` is not the alternative -- it skips hooks,
@@ -174,7 +182,7 @@ cmd = """claude -p --model {model} {effort_flag} {session_flag} {settings_flag} 
 --output-format stream-json --verbose \
 --setting-sources project \
 --append-system-prompt "$(cat {stage_prompt})" \
---tools "{tools}" --strict-mcp-config {skills_flag} \
+--tools "{tools}" --strict-mcp-config {mcp_flag} {skills_flag} \
 --permission-mode {permission_mode} \
 --max-budget-usd {cap} \
 --add-dir {project}/.project -- \
@@ -191,7 +199,7 @@ cmd = """claude -p --model {model} {effort_flag} {session_flag} {settings_flag} 
 interactive_cmd = """claude --model {model} {effort_flag} {session_flag} {settings_flag} \
 --setting-sources project \
 --append-system-prompt "$(cat {stage_prompt})" \
---tools "{tools}" --strict-mcp-config {skills_flag} \
+--tools "{tools}" --strict-mcp-config {mcp_flag} {skills_flag} \
 --permission-mode {permission_mode} \
 --max-budget-usd {cap} \
 --add-dir {project}/.project -- \
