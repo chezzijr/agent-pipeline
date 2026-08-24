@@ -62,7 +62,7 @@ pipeline init ~/code/myproject                # scaffold .project/
 pipeline init ~/code/myproject --private      # ...and hide it from git, this clone only
 $EDITOR ~/code/myproject/.project/pipeline.toml   # how to run this project's tests
 pipeline --project ~/code/myproject new "cache leaks on evict"
-pipeline --project ~/code/myproject run       # dispatcher loop, no daemon
+pipeline --project ~/code/myproject run       # dispatcher loop, no daemon; interactive stages run headless
 
 pipeline --project ~/code/myproject ls
 pipeline --project ~/code/myproject approve TICKET-001   # -> revalidating, or -> merging from awaiting-merge
@@ -116,7 +116,7 @@ database under your state directory (see *Where it keeps things*).
 
 ```sh
 pipeline register ~/code/myproject   # one path per line in the registry file
-pipeline start                       # spawns pipelined, detached
+pipeline start                       # spawns pipelined, detached; interactive stages wait for `pipeline tui`
 pipeline status                      # is it running, and how many projects
 pipeline ls                          # every registered project's tickets
 pipeline ls --project ~/code/myproject     # --project is a FILTER here
@@ -187,7 +187,9 @@ the daemon a dependency for every ticket that reaches `planning`. Without an
 attachable supervisor the stage runs **headless** instead, and says so on
 stdout. Nothing is lost but the steering: `planning`'s own escape hatch is
 `result: needs-input`, which parks the ticket at a human gate for
-`pipeline answer`.
+`pipeline answer`. `pipeline start --help` and `pipeline run --help` each say
+which side they are on, and `tests/test_cli.py::test_the_help_text_matches_the_code_it_describes`
+fails if either stops saying it.
 
 An interactive session also ends on its `.result` sidecar, not on `/exit`: a
 REPL does not exit when the agent reports a verdict, so the supervisor sends it

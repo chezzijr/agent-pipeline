@@ -453,6 +453,27 @@ def cmd_tui(args) -> None:
     sys.exit(app.return_code or 0)
 
 
+# `add_parser(help=...)` reaches the top-level `pipeline --help` listing only:
+# argparse pops it for the parent and never sets `description`, so `pipeline
+# start --help` printed usage and options alone. `description=` is what a
+# subcommand's own --help prints. Both strings are bound by
+# tests/test_cli.py::test_the_help_text_matches_the_code_it_describes.
+START_DESC = (
+    "Start the one daemon for every registered project. A stage whose "
+    "frontmatter says `mode: interactive` -- `planning` -- runs on a PTY the "
+    "daemon owns and blocks on its first permission prompt until a human "
+    "attaches with `pipeline tui`. `pipeline run` executes that same stage "
+    "headless instead."
+)
+RUN_DESC = (
+    "Run one project's dispatcher loop, with no daemon and no socket. Nothing "
+    "can attach, so a stage whose frontmatter says `mode: interactive` -- "
+    "`planning` -- runs headless here and never waits for a human; its escape "
+    "hatch is `result: needs-input`, which parks the ticket for `pipeline "
+    "answer`. Under `pipeline start` that same stage waits at `pipeline tui`."
+)
+
+
 def main() -> None:
     line_buffer_stdout()
     ap = argparse.ArgumentParser(description=__doc__)
@@ -474,9 +495,9 @@ def main() -> None:
     p = sub.add_parser("register"); p.add_argument("path", nargs="?", default="."); p.set_defaults(fn=cmd_register)
     p = sub.add_parser("unregister"); p.add_argument("path", nargs="?", default="."); p.set_defaults(fn=cmd_unregister)
     p = sub.add_parser("projects"); p.set_defaults(fn=cmd_projects)
-    p = sub.add_parser("start", help="start the one daemon"); p.add_argument("--interval", type=int, default=10); p.add_argument("--harness", default="claude-code"); p.add_argument("-j", "--max-parallel", type=int, default=3); p.set_defaults(fn=cmd_start)
+    p = sub.add_parser("start", help="start the one daemon (interactive stages wait at `pipeline tui`)", description=START_DESC); p.add_argument("--interval", type=int, default=10); p.add_argument("--harness", default="claude-code"); p.add_argument("-j", "--max-parallel", type=int, default=3); p.set_defaults(fn=cmd_start)
     p = sub.add_parser("stop"); p.set_defaults(fn=cmd_stop)
-    p = sub.add_parser("run", help="one project, no daemon, no socket"); p.add_argument("--once", action="store_true"); p.add_argument("--interval", type=int, default=10); p.add_argument("--harness", default="claude-code"); p.add_argument("-j", "--max-parallel", type=int, default=3); p.set_defaults(fn=None)
+    p = sub.add_parser("run", help="one project, no daemon, no socket (interactive stages run headless)", description=RUN_DESC); p.add_argument("--once", action="store_true"); p.add_argument("--interval", type=int, default=10); p.add_argument("--harness", default="claude-code"); p.add_argument("-j", "--max-parallel", type=int, default=3); p.set_defaults(fn=None)
     p = sub.add_parser("metrics", help="six views over the event log")
     p.add_argument("--since", help="7d|24h|2w|<ISO date> (default: all history)")
     # SUPPRESS: a bare `pipeline metrics` must not clobber a `--project`

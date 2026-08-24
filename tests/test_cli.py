@@ -48,6 +48,41 @@ def test_start_and_run_help_explain_the_interactive_stage_difference():
     assert "interactive" in r_run.stdout.lower(), r_run.stdout
 
 
+def test_the_help_text_matches_the_code_it_describes():
+    """A help string asserting a behaviour is a promise, and an untested one
+    drifts. `start --help` says an interactive stage waits at `pipeline tui`;
+    `run --help` says it runs headless. Both rest on `Server.attachable` being
+    true and the bare `Poller`'s being false, and on which stages declare
+    `mode: interactive`. Flip either, or add a second interactive stage, and
+    this fails until the help text and the README say the new truth."""
+    from pipeline.core import config as C
+    from pipeline.daemon.server import Poller, Server
+
+    assert Server.attachable is True and Poller.attachable is False
+
+    interactive = [s for s in C.agent_stages()
+                   if C.stage_config(s).get("mode") == "interactive"]
+    assert interactive, "no stage declares `mode: interactive`"
+
+    def help_of(cmd):
+        r = subprocess.run([sys.executable, "-m", "pipeline", cmd, "--help"],
+                            cwd=ROOT, capture_output=True, text=True)
+        assert r.returncode == 0, r.stderr
+        return " ".join(r.stdout.split()).lower()   # argparse wraps at $COLUMNS
+
+    start, run = help_of("start"), help_of("run")
+    for stage in interactive:
+        assert stage in start and stage in run, f"{stage} is unnamed: {start} {run}"
+    assert "pipeline tui" in start and "headless" in start, start
+    assert "headless" in run and "pipeline tui" in run, run
+
+    readme = (Path(ROOT) / "README.md").read_text().splitlines()
+    run_line = [ln for ln in readme if "myproject run  " in ln]
+    start_line = [ln for ln in readme if ln.startswith("pipeline start ")]
+    assert run_line and "headless" in run_line[0], run_line
+    assert start_line and "tui" in start_line[0], start_line
+
+
 def test_cli_new_then_ls():
     """`ls` lists tickets; `status` is the daemon's own liveness -- there is
     one daemon and many projects, so they cannot be the same command."""
