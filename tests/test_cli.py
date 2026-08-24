@@ -36,6 +36,18 @@ def test_resume_refuses_a_stage_that_does_not_exist():
     shutil.rmtree(d)
 
 
+def test_start_and_run_help_explain_the_interactive_stage_difference():
+    """A `mode: interactive` stage waits for a human under `start` (attach via
+    `pipeline tui`) but runs headless under `run` (nothing can attach). Neither
+    --help currently says so."""
+    r_start = subprocess.run([sys.executable, "-m", "pipeline", "start", "--help"],
+                              cwd=ROOT, capture_output=True, text=True)
+    r_run = subprocess.run([sys.executable, "-m", "pipeline", "run", "--help"],
+                            cwd=ROOT, capture_output=True, text=True)
+    assert "interactive" in r_start.stdout.lower(), r_start.stdout
+    assert "interactive" in r_run.stdout.lower(), r_run.stdout
+
+
 def test_cli_new_then_ls():
     """`ls` lists tickets; `status` is the daemon's own liveness -- there is
     one daemon and many projects, so they cannot be the same command."""
