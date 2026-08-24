@@ -293,6 +293,22 @@ def test_init_honours_project_like_every_other_command():
     shutil.rmtree(d, ignore_errors=True)
 
 
+def test_init_installs_the_file_ticket_skill():
+    """CLAUDE.md calls `.claude/skills/file-ticket/SKILL.md` part of the
+    interface: it is what a session reads before filing a ticket into this
+    pipeline. `init` scaffolds `.project/` but never copies it, so a project
+    it creates has a queue and no description of the protocol."""
+    d = Path(tempfile.mkdtemp())
+    r = cli(d, "init")
+    assert r.returncode == 0, r.stderr
+    skill = d / ".claude" / "skills" / "file-ticket" / "SKILL.md"
+    assert skill.is_file(), (
+        f"expected {skill} to exist after `pipeline init`, "
+        f"found: {list(d.rglob('SKILL.md'))}"
+    )
+    shutil.rmtree(d, ignore_errors=True)
+
+
 def test_a_human_gate_records_the_moment_the_human_acted():
     """View 6 measures time parked in a human gate: entering it is a
     `transition` event, and leaving it was "the next transition on that
