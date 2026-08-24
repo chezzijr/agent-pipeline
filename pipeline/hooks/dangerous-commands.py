@@ -37,6 +37,7 @@ PUNCTUATION = "();<>|&\n"            # what shlex emits as punctuation tokens
 SEPARATORS = {"&", "|", ";", "\n"}   # a run of these separates two commands
 SHELLS = {"sh", "bash", "zsh", "fish", "dash", "ksh", "csh", "tcsh", "shell"}
 HOME_ISH = re.compile(r"^(/|~|~/|\$HOME/?|\$\{HOME\}/?|/\*)$")
+SED_IN_PLACE = re.compile(r"-[nrsuEz]*i.*|--in-place(=.*)?")
 
 # read-only allowlist -----------------------------------------------------
 GIT_READ = {"status", "log", "diff", "show", "blame", "grep", "ls-files",
@@ -46,7 +47,8 @@ GIT_WORKTREE_READ = {"list"}
 READ_TOOLS = {"ls", "cat", "head", "tail", "wc", "grep", "rg", "ag", "find",
               "file", "stat", "du", "tree", "echo", "true", "false", "pwd",
               "which", "basename", "dirname", "sort", "uniq", "cut", "awk",
-              "diff", "column", "jq", "yq", "date", "printf", "test", "["}
+              "diff", "column", "jq", "yq", "date", "printf", "test", "[",
+              "sed"}
 TEST_RUNNERS = {"pytest", "py.test", "tox", "nox", "unittest"}
 # programs allowed only with a vetted first argument
 GUARDED = {
@@ -55,7 +57,6 @@ GUARDED = {
     "go": {"test", "vet", "build"},
     "npm": {"test", "run"}, "pnpm": {"test", "run"}, "yarn": {"test", "run"},
     "make": {"test", "check", "lint"},
-    "sed": set(),  # only reaches here if -i was already rejected below
 }
 PY_MODULES_OK = {"pytest", "unittest", "tox", "nox"}
 
@@ -211,7 +212,7 @@ def readonly_rules(segs: list[list[str]], raw: str) -> str | None:
             continue
 
         if name in READ_TOOLS or name in TEST_RUNNERS:
-            if name == "sed" and any(a.startswith("-i") for a in args):
+            if name == "sed" and any(SED_IN_PLACE.fullmatch(a) for a in args):
                 return "sed -i is an in-place edit"
             continue
 
