@@ -92,12 +92,14 @@ machine — `--setting-sources project` means one is not.
 
 ```sh
 uv run --group dev pytest -q                # the dispatcher suite
-./pipeline/hooks/test_dangerous_commands.py # 79 guard cases (table-driven, NOT collected by pytest)
+./pipeline/hooks/test_dangerous_commands.py # 86 guard cases (table-driven)
 ```
 
-`pytest` collects only the two `test_*` functions in the guard file — it misses
-the allow/block tables entirely. **Run the guard script directly** before
-claiming the guard works.
+`pytest` sees the allow/block tables through `test_the_allow_and_block_tables`,
+which calls `tables()`. Until TICKET-057 the tables ran only under
+`__main__`, and `pytest` missed all 80 of them — so the pipeline's own
+`test_one` could report a red guard as green. Running the script directly is
+still worth it: it prints one line per case, and the failure names the case.
 
 ## Gotchas, each found the hard way
 

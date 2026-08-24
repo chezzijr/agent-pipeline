@@ -497,7 +497,7 @@ Do not write a third harness speculatively -- this one only exists to answer
 ## Tests
 
     uv run --group dev pytest -q
-    ./pipeline/hooks/test_dangerous_commands.py   # NOT collected by pytest
+    ./pipeline/hooks/test_dangerous_commands.py   # the same cases, one line each
 
 Covers the transition table's bounds, gate rejections, worktree lifecycle,
 frontmatter validation, the guard's allowlist, and every bypass an adversarial

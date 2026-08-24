@@ -99,6 +99,23 @@ def check_mcp(cases, expect_block, label):
         os.environ.clear()
         os.environ.update(saved)
 
+def tables():
+    """Every allow/block table, in one call, so `__main__` and pytest run the
+    same cases. Until TICKET-057 only `__main__` ran them: pytest collected the
+    `test_*` functions below and missed all 80 table cases, so the pipeline's
+    `test_one` -- pytest -- reported a red guard as green."""
+    check(BLOCKED_ALWAYS, False, True, "always")
+    check(ALLOWED_ALWAYS, False, False, "always")
+    check(BLOCKED_READONLY, True, True, "readonly")
+    check(ALLOWED_READONLY, True, False, "readonly")
+    check_mcp(MCP_BLOCKED, True, "mcp")
+    check_mcp(MCP_ALLOWED, False, "mcp")
+
+
+def test_the_allow_and_block_tables():
+    tables()
+
+
 def test_unparseable_commands_are_refused_not_ignored():
     assert guard.verdict("echo 'unbalanced", False), \
         "a command that will not lex must not be waved through"
@@ -214,12 +231,7 @@ def test_the_guard_sees_every_file_tool_not_just_bash():
 
 
 if __name__ == "__main__":
-    check(BLOCKED_ALWAYS, False, True, "always")
-    check(ALLOWED_ALWAYS, False, False, "always")
-    check(BLOCKED_READONLY, True, True, "readonly")
-    check(ALLOWED_READONLY, True, False, "readonly")
-    check_mcp(MCP_BLOCKED, True, "mcp")
-    check_mcp(MCP_ALLOWED, False, "mcp")
+    tables()
     test_end_to_end_exit_code()
     test_write_outside_worktree_is_not_blocked()
     test_paths_outside_the_worktree_are_blocked()
