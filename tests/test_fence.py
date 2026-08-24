@@ -71,3 +71,26 @@ def test_editing_the_fenced_dict_itself_trips_the_fence():
     ))
     sh("git add -A")
     assert fenced_touches(d, "main") != []
+
+
+def test_an_unfenced_symbol_in_machine_py_still_merges_unattended():
+    """The `pipeline/core/machine.py` entry in `FENCED` names symbols, not
+    the whole file (DEC-031), so a ticket that edits only `BOUNDS` merges
+    unattended. Fails if the entry is widened to `None`."""
+    d, sh = git_project()
+    machine = d / "pipeline" / "core" / "machine.py"
+    machine.parent.mkdir(parents=True)
+    body = (
+        "CONTROL_FIELDS = ('stage',)\n\n\n"
+        "BOUNDS = {'bugfix': 2}\n\n\n"
+        "FENCED = {\n"
+        '    ".project/pipeline.toml": None,\n'
+        "}\n\n\n"
+        "def transition(stage, result):\n"
+        "    return stage\n"
+    )
+    machine.write_text(body)
+    sh("git add -A && git commit -qm commit-machine")
+    machine.write_text(body.replace("'bugfix': 2", "'bugfix': 3"))
+    sh("git add -A")
+    assert fenced_touches(d, "main") == []

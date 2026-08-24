@@ -11,7 +11,7 @@ BOUNDS = {
 }
 TERMINAL = {"done", "rejected", "escalated"}
 HUMAN_GATES = {"awaiting-approval", "needs-input", "awaiting-merge"}
-# The eight things `CLAUDE.md` fences off from unattended merge, path to symbol
+# The nine things `CLAUDE.md` fences off from unattended merge, path to symbol
 # tuple or None for whole-file. `CLAUDE.md` keeps the prose copy;
 # tests/test_stages.py::test_the_fenced_list_matches_the_rule_file compares
 # the two in both directions so they cannot drift.
@@ -23,7 +23,10 @@ FENCED = {
     # stage can reach and what decides with code. `CLAUDE.md` already said to
     # treat an edit here as a guard edit; without an entry it merged unattended.
     "pipeline/harnesses/claude-code.toml": None,
-    "pipeline/core/machine.py": ("transition", "CONTROL_FIELDS"),
+    # FENCED itself: without it a ticket adds or removes an entry and the
+    # fence never sees it -- TICKET-037 and TICKET-038 both merged such a
+    # diff unattended on 2026-08-23.
+    "pipeline/core/machine.py": ("transition", "CONTROL_FIELDS", "FENCED"),
     "pipeline/core/ticket.py": ("validate_meta",),
     "pipeline/core/worktree.py": ("strip_settings_sources",),
     # A project's stage prose (TICKET-038) is append-only and grants no

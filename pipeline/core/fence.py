@@ -1,6 +1,6 @@
 """Which fenced symbols a branch's diff touches.
 
-`CLAUDE.md` fences eight things off from unattended merge. `machine.FENCED` is
+`CLAUDE.md` fences nine things off from unattended merge. `machine.FENCED` is
 the machine-readable copy; this is the check. A whole-file entry (`None`) trips
 on any hunk. A symbol entry trips only when a hunk overlaps that symbol's own
 line range, so a ticket that edited a neighbouring function is not parked.
