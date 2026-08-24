@@ -57,6 +57,35 @@ def _git_ticket_project(base_py: str, branch_py: str):
     return d, wt
 
 
+def _cheap_route_project():
+    """A real git project whose ticket branch already carries the cheap
+    route's fix as its own commit, on top of triage's failing-test commit.
+
+    Deliberately local to this file, stdlib-only: DEC-017 -- the gate copies
+    THIS file onto a checkout of base and imports it there."""
+    d = Path(tempfile.mkdtemp())
+    sh = lambda c, cwd=d: subprocess.run(c, shell=True, cwd=cwd,
+                                         capture_output=True, text=True)
+    sh("git init -qb main && git config user.email t@t && git config user.name t")
+    (d / "f.py").write_text("buggy\n")
+    (d / ".project" / "tickets").mkdir(parents=True)
+    (d / ".project" / "pipeline.toml").write_text(
+        'test_one = "echo test_broken; grep -q fixed f.py"\n'
+        'test_suite = "true"\n'
+        'test_suite_without_new = "true"\n'
+        'base = "main"\n')
+    (d / ".project" / "tickets" / "TICKET-001.md").write_text(FIXTURE)
+    sh("git add -A && git commit -qm init")
+    wt = d / ".worktrees" / "TICKET-001"
+    sh(f"git worktree add -q -b ticket/001 {wt} main")
+    (wt / "test_thing.py").write_text("")
+    sh("git add -A && git commit -qm 'triage: the failing test'", cwd=wt)
+    triage_sha = sh("git rev-parse HEAD", cwd=wt).stdout.strip()
+    (wt / "f.py").write_text("fixed\n")
+    sh("git add -A && git commit -qm 'implementing: the fix'", cwd=wt)
+    return d, wt, triage_sha
+
+
 def test_gate_passes_a_complete_ticket():
     d = project()
     ok, failures = gate(d, "TICKET-001")
@@ -331,25 +360,27 @@ def test_a_ticket_promoted_from_quick_review_meets_a_gate_it_cannot_pass():
     """`triage` can route a small ticket onto the cheap route: `chore` sets
     `cheap_route` and sends it straight to `implementing`, skipping
     `planning` and `plan-validation`. `implementing` commits the fix and the
-    ticket goes to `quick-review`. When `quick-review` answers `fail` the
-    ticket is promoted to `planning`. Expected: whatever repairs the branch
-    before `plan-validation` runs its gate() leaves the reported bug still
-    reproducible (`test_file` still fails), so the promoted ticket's gate()
-    passes Tier A. Today nothing repairs it -- the cheap route's fix is still
-    committed on the branch when `plan-validation` gates it, so `test_file`
-    PASSES and the gate rejects a ticket that did everything asked of it."""
+    ticket goes to `quick-review`. When `quick-review` answers `fail`, the
+    ticket is promoted through a new dispatcher stage, `unwinding`, which
+    discards the cheap route's own commit before handing the ticket to
+    `planning` -- triage's failing-test commit survives. The repair must
+    leave a tree where `test_file` still fails, so the promoted ticket's
+    gate() passes Tier A."""
     stage, counters = "triage", {}
     stage, counters = transition(stage, "chore", counters)
     assert stage == "implementing" and counters.get("cheap_route") == 1
     stage, counters = transition(stage, "ok", counters)
     assert stage == "quick-review" and "cheap_route" not in counters
     stage, counters = transition(stage, "fail", counters)
-    assert stage == "planning"
+    assert stage == "unwinding", \
+        "planning is handed a branch that still carries the cheap route's fix"
+    assert transition("unwinding", "ok", counters)[0] == "planning"
 
-    # the cheap route's fix is still committed on the branch by the time
-    # `planning` -> `plan-validation` runs gate() against it -- nothing has
-    # repaired it
-    d, wt = _git_ticket_project("buggy\n", "fixed\n")
+    d, wt, triage_sha = _cheap_route_project()
+    subprocess.run(f"git reset --hard {triage_sha}", shell=True, cwd=wt,
+                   capture_output=True, text=True)
+    assert (wt / "test_thing.py").is_file(), "the repair discarded triage's test commit"
+
     ok, failures = gate(d, "TICKET-001", workdir=wt)
     assert ok, failures
     shutil.rmtree(d, ignore_errors=True)
