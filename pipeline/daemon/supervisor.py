@@ -21,11 +21,11 @@ from pipeline.core.fence import fenced_touches
 from pipeline.core.gate import gate
 from pipeline.core.machine import (BOUNDS, CLEANUP_STAGES, CONTROL_FIELDS,
                                    HUMAN_GATES, MAX_ATTEMPTS, TERMINAL,
-                                   apply_claims, files_conflict, transition)
+                                   apply_claims, conflict_holder, transition)
 from pipeline.core.ticket import (Ticket, all_tickets, drop_result,
-                                  read_result, record_decision, result_file,
-                                  stage_view, ticket_path, tickets_dir,
-                                  validate_meta)
+                                  now, read_result, record_decision,
+                                  result_file, stage_view, ticket_path,
+                                  tickets_dir, validate_meta)
 from pipeline.core.worktree import (base_ref, dirty_snapshot, drop_worktree,
                                     ensure_worktree, project_env, run_cmd,
                                     strip_settings_sources, tree_snapshot,
@@ -514,6 +514,24 @@ def merge_cmd(project: Path, t: Ticket, cfg: dict) -> str:
             f"git -C {proj} merge --ff-only {shlex.quote(t.branch)}\n")
 
 
+def note_wait(t: Ticket, held: tuple[str, str] | None) -> None:
+    """Record why `files_conflict` is holding `t`, so `ls` can say so.
+
+    Advisory display only, never read back as control flow. Writes only when
+    the reason changes -- `ticket_rows()` computes `stale` from this file's
+    mtime, and a write every tick would hide a stuck ticket forever.
+    """
+    if held is None:
+        if t.extra.pop("waiting", None) is not None:
+            t.save()
+        return
+    prev = t.extra.get("waiting")
+    if isinstance(prev, dict) and prev.get("on") == held[0] and prev.get("file") == held[1]:
+        return
+    t.extra["waiting"] = {"on": held[0], "file": held[1], "since": now().isoformat()}
+    t.save()
+
+
 def start(project: Path, path: Path, hcfg: dict, inflight: dict,
           poller: Poller | None = None, emit=noop) -> tuple[bool, dict | None]:
     """Try to move one ticket forward.
@@ -575,8 +593,10 @@ def start(project: Path, path: Path, hcfg: dict, inflight: dict,
         advance(project, t, "new", "dispatcher pickup", emit, agent=False)
         return True, None
 
-    if files_conflict(t.frontmatter(),
-                      [r["meta"].frontmatter() for r in inflight.values()]):
+    held = conflict_holder(t.frontmatter(),
+                           [r["meta"].frontmatter() for r in inflight.values()])
+    note_wait(t, held)  # also clears a stale reason once the holder is gone
+    if held is not None:
         return False, None  # wait, do not fail -- cheap ordering without a scheduler
 
     try:

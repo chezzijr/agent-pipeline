@@ -503,6 +503,72 @@ def test_a_ticket_held_by_files_conflict_reads_the_same_as_an_idle_one():
         f"idle ticket's row: {held_row}")
 
 
+def test_a_ticket_held_by_files_conflict_names_its_holder():
+    """Recording a wait must not move the ticket."""
+    d = project()
+    t1 = Ticket.find(d, "TICKET-001")
+    t1.stage = "verifying"
+    t1.frontmatter()["files_declared"] = ["thing.py"]
+    t1.save()
+
+    t2 = Ticket.find(d, "TICKET-001")  # stand-in for an inflight TICKET-002
+    t2.id = "TICKET-002"
+    t2.frontmatter()["files_declared"] = ["thing.py"]
+    inflight = {"TICKET-002": {"meta": t2}}
+
+    did, rec = supervisor.start(d, d / ".project/tickets/TICKET-001.md",
+                                 harness("fake"), inflight)
+    assert (did, rec) == (False, None)
+
+    row = ticket_rows(d)[0]
+    assert row["waiting"]["on"] == "TICKET-002"
+    assert row["waiting"]["file"] == "thing.py"
+    assert Ticket.find(d, "TICKET-001").stage == "verifying"
+
+
+def test_a_repeated_wait_does_not_rewrite_the_ticket():
+    """`ticket_rows()` computes `stale` from the ticket file's mtime, so a
+    per-tick write would hide a stuck ticket forever."""
+    d = project()
+    t1 = Ticket.find(d, "TICKET-001")
+    t1.stage = "verifying"
+    t1.frontmatter()["files_declared"] = ["thing.py"]
+    t1.save()
+
+    t2 = Ticket.find(d, "TICKET-001")
+    t2.id = "TICKET-002"
+    t2.frontmatter()["files_declared"] = ["thing.py"]
+    inflight = {"TICKET-002": {"meta": t2}}
+
+    path = d / ".project/tickets/TICKET-001.md"
+    supervisor.start(d, path, harness("fake"), inflight)
+    mtime = path.stat().st_mtime_ns
+
+    supervisor.start(d, path, harness("fake"), inflight)
+    assert path.stat().st_mtime_ns == mtime
+
+
+def test_the_wait_reason_clears_when_the_conflict_clears():
+    """The second `start()` goes on to `bail("could not create a worktree")`
+    because `project()` is not a git repo. The assertion is on `waiting` alone."""
+    d = project()
+    t1 = Ticket.find(d, "TICKET-001")
+    t1.stage = "verifying"
+    t1.frontmatter()["files_declared"] = ["thing.py"]
+    t1.save()
+
+    t2 = Ticket.find(d, "TICKET-001")
+    t2.id = "TICKET-002"
+    t2.frontmatter()["files_declared"] = ["thing.py"]
+    inflight = {"TICKET-002": {"meta": t2}}
+
+    path = d / ".project/tickets/TICKET-001.md"
+    supervisor.start(d, path, harness("fake"), inflight)
+
+    supervisor.start(d, path, harness("fake"), {})
+    assert ticket_rows(d)[0]["waiting"] is None
+
+
 def test_ls_with_no_project_covers_every_registered_project():
     """`--project` is a filter. Without one, the fallback must not silently
     narrow to the cwd -- that reports "nothing is running" for a machine that
