@@ -75,6 +75,10 @@ pipeline --project ~/code/myproject resume  TICKET-001 \
     --stage planning --grant plan_validation_attempts   # hand back one spent attempt, not the whole budget
 ```
 
+`init` also installs `.claude/skills/file-ticket/SKILL.md` -- the protocol a
+session reads before filing a ticket -- and prints where it put it. An
+existing file is kept, so a project that customised it keeps its version.
+
 Once `.project/` is committed, `pipeline.toml` is read from git `HEAD`, so an
 edit takes effect at the next commit -- a ticket working on a branch must not
 be able to change the commands that judge it. Until it is committed (and under
@@ -414,7 +418,7 @@ ticket is wrong, not that the budget is small.
     pipeline/stages/*.md         one self-contained stage: frontmatter (model,
                                  effort, write) plus the prompt. Harness-neutral.
     pipeline/harnesses/*.toml    how to spawn an agent. A new harness is a new file.
-    pipeline/templates/          the ticket schema and the project config example
+    pipeline/templates/          the ticket schema, the project config example, and the file-ticket skill
     tests/                       one file per module
 
 Adding a stage means adding `pipeline/stages/<name>.md` and a row in

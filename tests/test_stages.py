@@ -210,6 +210,26 @@ def test_the_repo_skill_is_the_packaged_file():
         f"{repo} is {repo.stat().st_size} bytes -- too large to load"
 
 
+def test_the_docs_name_the_skill_init_installs():
+    """`init` installs the file-ticket skill, so both rule files say so.
+
+    `CLAUDE.md`'s "Where things live" row for `pipeline/templates/` and
+    the README's copy of that row describe one directory. A reader who
+    finds only the schema and the config example there does not learn
+    that the skill ships too, and `## Use` is where a human reads what
+    `init` writes.
+    """
+    root = C.PKG.parent
+    for name in ("CLAUDE.md", "README.md"):
+        rows = [ln for ln in (root / name).read_text().splitlines()
+                if "pipeline/templates/" in ln and "file-ticket" in ln]
+        assert rows, \
+            f"{name}: the pipeline/templates/ row does not name the file-ticket skill"
+    readme = (root / "README.md").read_text()
+    assert "installs `.claude/skills/file-ticket/SKILL.md`" in readme, \
+        "README.md does not say `init` installs the file-ticket skill"
+
+
 def test_the_docs_name_the_dependencies_and_the_targets_the_code_has():
     """Two rules the review caught asserting something false.
 
