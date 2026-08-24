@@ -493,13 +493,21 @@ def merge_cmd(project: Path, t: Ticket, cfg: dict) -> str:
     ever fast-forwards, and only while it is actually sitting on `base`: a
     dirty, diverged or elsewhere-parked checkout escalates rather than landing
     the ticket half-way or onto some other branch. Nothing resolves a conflict.
+
+    The leading `git rebase {base}` is the catch-up when the tree allows it,
+    and it is what keeps base linear. It may not fail the child: `git rebase`
+    refuses a worktree with unstaged changes (`error: cannot rebase: You have
+    unstaged changes.`, exit 128) that `git merge` lands. `git rebase --abort`
+    restores the branch on any rebase failure, and the unchanged merge below
+    decides. After a successful rebase the merge prints `Already up to date.`.
     """
     # Only one merge runs at a time (see `start()`), so the base this reads is
     # the base the fast-forward below lands on, and nothing races the main
     # checkout's index.lock either.
-    base = shlex.quote(str(cfg.get("base", "main")))
+    base = shlex.quote(base_ref(cfg))
     proj = shlex.quote(str(project))
-    return (f"git merge --no-edit {base} || exit 1\n"
+    return (f"git rebase {base} || git rebase --abort 2>/dev/null\n"
+            f"git merge --no-edit {base} || exit 1\n"
             f"head=$(git -C {proj} rev-parse --abbrev-ref HEAD) || exit 1\n"
             f'[ "$head" = {base} ] || {{ echo "main checkout is parked on'
             f' $head, not the base branch -- refusing to land"; exit 1; }}\n'

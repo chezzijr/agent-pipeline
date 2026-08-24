@@ -138,6 +138,12 @@ claiming the guard works.
 - **Only one merge runs at a time.** Two tickets merging in one tick both
   `git merge base`, and the first fast-forward moves base under the second.
   `start()` waits, exactly like `files_conflict` does.
+- **`merging` rebases before it merges, and the rebase may not fail the
+  child.** `merge_cmd()` runs `git rebase <base> || git rebase --abort` and
+  then the `git merge --no-edit <base>` that was always there. The rebase
+  keeps base's history linear. The merge decides, because `git rebase`
+  refuses a worktree with unstaged changes that `git merge` lands. A conflict
+  still escalates and nothing resolves one.
 - **Snapshot before `Popen`, not after.** A baseline taken while the agent is
   already running bakes in whatever it wrote first.
 - **`--once` drains the queue**, it does not do one pass. A synchronous advance

@@ -248,6 +248,63 @@ def test_a_merge_conflict_escalates_and_keeps_the_worktree():
     shutil.rmtree(d, ignore_errors=True)
 
 
+def test_a_dirty_worktree_still_lands_through_the_merge_fallback():
+    """TICKET-045: `git rebase` refuses a worktree with unstaged changes --
+    `error: cannot rebase: You have unstaged changes.`, exit 128 -- where
+    `git merge` lands the same case today. The rebase step must not fail the
+    merge child, or worktrees that land today start escalating."""
+    d, sh = git_project()
+    path = d / ".project/tickets/TICKET-001.md"
+    path.write_text(FIXTURE.replace("stage: plan-validation", "stage: merging"))
+    wt = supervisor.ensure_worktree(
+        d, {"id": "TICKET-001", "branch": "ticket/001"}, {"base": "main"})
+    (wt / "ticket.py").write_text("the ticket's own change\n")
+    _commit(wt, "'ticket commit'")
+    (wt / "leftover.py").write_text("a file base never touches\n")
+    _commit(wt, "'a file base never touches'")
+    (wt / "leftover.py").write_text("uncommitted edit\n")   # left dirty, not committed
+
+    (d / "other.py").write_text("an unrelated ticket lands\n")
+    sh("git add -A && git commit -qm 'other ticket'")
+
+    did, rec = supervisor.start(d, path, harness("fake"), {})
+    assert did and rec and rec["kind"] == "merge"
+    rec["proc"].wait()
+    supervisor.finish(d, rec)
+
+    assert Ticket.load(path).stage == "done"
+    assert "ticket commit" in sh("git log --oneline main").stdout
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_a_merging_rebase_lands_a_linear_history_on_base():
+    """TICKET-045: the catch-up onto base at `merging` must be a replay, not a
+    merge -- a merge commit on base means the rebase step never ran."""
+    d, sh = git_project()
+    path = d / ".project/tickets/TICKET-001.md"
+    path.write_text(FIXTURE.replace("stage: plan-validation", "stage: merging"))
+    wt = supervisor.ensure_worktree(
+        d, {"id": "TICKET-001", "branch": "ticket/001"}, {"base": "main"})
+    (wt / "ticket.py").write_text("the ticket's own change\n")
+    _commit(wt, "'ticket commit'")
+
+    (d / "other1.py").write_text("an unrelated ticket lands\n")
+    sh("git add -A && git commit -qm 'other ticket 1'")
+
+    did, rec = supervisor.start(d, path, harness("fake"), {})
+    assert did and rec and rec["kind"] == "merge"
+    rec["proc"].wait()
+    supervisor.finish(d, rec)
+
+    assert Ticket.load(path).stage == "done"
+    log = sh("git log --oneline main").stdout
+    assert "ticket commit" in log
+    assert "other ticket 1" in log
+    assert sh("git log --merges --oneline main").stdout.strip() == "", \
+        "the catch-up put a merge commit on base instead of replaying the branch"
+    shutil.rmtree(d, ignore_errors=True)
+
+
 def test_a_main_checkout_parked_elsewhere_does_not_get_the_ticket_landed_on_it():
     """Step 2 merges into whatever the main checkout has checked out. If that
     is not `base`, a fast-forward can still succeed -- onto the wrong branch."""
