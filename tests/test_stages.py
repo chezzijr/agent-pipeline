@@ -80,7 +80,7 @@ def test_stage_settings_register_the_guard_as_a_pretooluse_hook():
     f = C.stage_settings("implementing", C.stage_config("implementing"))
     data = json.loads(f.read_text()); f.unlink()
     entry = data["hooks"]["PreToolUse"][0]
-    assert entry["matcher"] == "Bash|Write|Edit|MultiEdit|NotebookEdit"
+    assert entry["matcher"] == "Bash|Write|Edit|MultiEdit|NotebookEdit|mcp__.*"
     for tool in ("Bash", "Write", "Edit", "MultiEdit", "NotebookEdit"):
         assert re.fullmatch(entry["matcher"], tool), tool
     # An interpreter + a script, not a bare path: a shebang would pick up the
@@ -93,10 +93,10 @@ def test_stage_settings_register_the_guard_as_a_pretooluse_hook():
 
 def test_guard_matcher_covers_mcp_tool_calls():
     """TICKET-036: an MCP tool is named `mcp__<server>__<tool>` and the
-    guard is registered with `matcher: "Bash"`, so an MCP tool call never
-    reaches `dangerous-commands.py` and is not refused either -- it just
-    runs. The matcher must cover both or an MCP server is an unguarded
-    path around invariant 4."""
+    guard is registered with a regex over the tool name, so an MCP tool call
+    must match it or it never reaches `dangerous-commands.py` and is not
+    refused either -- it just runs. The matcher must cover both or an MCP
+    server is an unguarded path around invariant 4."""
     f = C.stage_settings("implementing", C.stage_config("implementing"))
     data = json.loads(f.read_text()); f.unlink()
     matcher = data["hooks"]["PreToolUse"][0]["matcher"]

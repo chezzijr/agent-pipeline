@@ -240,8 +240,14 @@ def stage_settings(stage: str, cfg: dict) -> Path | None:
     # matching `MultiEdit` by substring. With `Bash` alone a `Write` to any
     # absolute path never reached this hook -- step 14 of TICKET-052's plan
     # is the live check that Claude Code delivers a `Write` event here.
+    # `mcp__.*` covers every MCP tool name, unconditionally -- even for a stage
+    # with no `mcp:` -- because `mcp_verdict()` in the guard default-denies any
+    # server not in `PIPELINE_MCP_ALLOW`, so a server arriving by another route
+    # is refused rather than unobserved. `--tools` restricts built-in tools
+    # only (DEC-025); this matcher is what makes an MCP call visible at all.
     settings = {"hooks": {"PreToolUse": [
-        {"matcher": "Bash|Write|Edit|MultiEdit|NotebookEdit", "hooks": entries}]}}
+        {"matcher": "Bash|Write|Edit|MultiEdit|NotebookEdit|mcp__.*",
+         "hooks": entries}]}}
     f = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
     json.dump(settings, f)
     f.close()
