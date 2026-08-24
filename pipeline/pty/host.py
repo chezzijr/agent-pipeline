@@ -17,6 +17,7 @@ client socket touches neither the fd nor the child.
 import fcntl
 import os
 import pty
+import re
 import signal
 import struct
 import subprocess
@@ -26,6 +27,33 @@ import time
 import pyte
 
 ROWS, COLS = 40, 120
+MAX_DIM = 1000
+GEOM_OSC = re.compile(rb"\x1b\]9999;(\d{1,4});(\d{1,4})\x07")
+
+
+def geom_marker(rows: int, cols: int) -> bytes:
+    return b"\x1b]9999;%d;%d\x07" % (rows, cols)
+
+
+def last_geometry(data: bytes, rows: int = ROWS, cols: int = COLS) -> tuple:
+    """The geometry of the last marker in `data`, or `(rows, cols)` if none.
+
+    `data` is a PTY log: the child's own stdout is teed into it, so this is
+    hostile input. `GEOM_OSC` bounds each field to four digits and the result
+    is clamped to `1..MAX_DIM`, the same bound `_dim()` applies to a
+    socket-supplied dimension -- a marker a child prints can only replay a
+    later reader at a bounded wrong size, never blow up the allocation.
+
+    Only an interactive log gets a marker written into it: an ESC in a batch
+    log sends stream-json through pyte instead of rendering it (DEC-039).
+    """
+    match = None
+    for match in GEOM_OSC.finditer(data):
+        pass
+    if match is None:
+        return (rows, cols)
+    r, c = (min(max(int(v), 1), MAX_DIM) for v in match.groups())
+    return (r, c)
 
 
 def set_winsize(fd: int, rows: int, cols: int) -> None:

@@ -37,7 +37,7 @@ MAX_CONNS = 64   # clients; past this, accept-and-refuse rather than run out of 
 MAX_SUBS = 8     # subscriptions per connection
 OPS = ("ping", "ls", "projects", "subscribe", "kill",
        "attach", "input", "resize", "detach")
-MAX_DIM = 1000   # a terminal, not a memory allocator: pyte allocates rows*cols
+MAX_DIM = host.MAX_DIM   # one bound for the ioctl, the pyte allocation and the log marker
 PTY_BACKLOG = 16  # outbox depth past which PTY frames are the ones dropped.
                   # NOT a pty-only queue: `conn.out` is shared with event and
                   # replay frames, and the pty is what yields, because OUTBOX

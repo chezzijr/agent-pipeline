@@ -435,3 +435,22 @@ def test_a_harness_with_no_interactive_template_falls_back_to_its_command():
     fake = harness("fake")
     assert "interactive_cmd" not in fake
     assert rendered(fake, "interactive_cmd") == rendered(fake, "cmd")
+
+
+def test_the_geometry_marker_round_trips_and_clamps():
+    """`geom_marker()`/`last_geometry()` are the only place that knows the OSC
+    bytes. Hostile cases: five digits do not match the pattern, and a value
+    that does match is clamped to `1..MAX_DIM`."""
+    assert host.geom_marker(40, 124) == b"\x1b]9999;40;124\x07"
+    assert host.last_geometry(b"") == (host.ROWS, host.COLS)
+    assert host.last_geometry(b"no marker here") == (host.ROWS, host.COLS)
+    assert host.last_geometry(host.geom_marker(40, 124)) == (40, 124)
+    assert host.last_geometry(
+        host.geom_marker(40, 124) + host.geom_marker(50, 160)) == (50, 160)
+    assert host.last_geometry(b"\x1b]9999;99999;99999\x07") == (host.ROWS, host.COLS)
+    assert host.last_geometry(b"\x1b]9999;0;0\x07") == (1, 1)
+    assert host.last_geometry(b"\x1b]9999;40;9999\x07") == (40, host.MAX_DIM)
+
+    s = host.Screen(4, 20)
+    s.feed(host.geom_marker(40, 124) + b"hi")
+    assert s.display[0].strip() == "hi"
