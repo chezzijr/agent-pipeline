@@ -72,6 +72,33 @@ def test_a_broken_project_config_escalates_one_ticket_not_the_process():
     shutil.rmtree(d, ignore_errors=True)
 
 
+def test_a_spawn_tells_the_guard_where_its_worktree_is():
+    """`PIPELINE_WORKTREE`, `PIPELINE_TICKET` and `PIPELINE_RESULT` are what
+    the guard's path rule compares a file tool's path against."""
+    d, _ = git_project()
+    path = d / ".project/tickets/TICKET-001.md"
+    path.write_text(FIXTURE.replace("stage: plan-validation", "stage: implementing"))
+    dump = d / "dump.txt"
+
+    hcfg = dict(harness("fake"))
+    hcfg["cmd"] = (
+        'printf "%s\\n%s\\n%s\\n" "$PIPELINE_WORKTREE" "$PIPELINE_TICKET" '
+        f'"$PIPELINE_RESULT" > {dump}; '
+        'printf "result: ok\\nsummary: x\\n" > {result_file}')
+
+    did, rec = supervisor.start(d, path, hcfg, {})
+    assert did and rec is not None
+    rec["proc"].wait()
+
+    lines = dump.read_text().splitlines()
+    assert lines == [
+        str(d / ".worktrees" / "TICKET-001"),
+        str(path),
+        str(d / ".project/tickets/TICKET-001.result"),
+    ], lines
+    shutil.rmtree(d, ignore_errors=True)
+
+
 def test_an_agent_that_rewrote_stage_is_still_caught():
     """Invariant 1 through the typed model: control fields come back from the
     pre-spawn snapshot, and a ticket whose control fields moved is escalated."""

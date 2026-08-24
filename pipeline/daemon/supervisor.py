@@ -383,6 +383,12 @@ def spawn(project: Path, wt: Path, tid: str, stage: str, hcfg: dict,
     env = project_env()
     env["PIPELINE_STAGE"] = stage
     env["PIPELINE_READONLY"] = "0" if cfg.get("write") else "1"
+    # The guard's file-tool rule compares a Write/Edit path against these.
+    # The two exceptions -- the ticket file and the `.result` sidecar -- are
+    # exported by path rather than re-derived inside the hook.
+    env["PIPELINE_WORKTREE"] = str(wt)
+    env["PIPELINE_TICKET"] = str(ticket_path(project, tid))
+    env["PIPELINE_RESULT"] = str(tickets_dir(project) / f"{tid}.result")
     if interactive:
         # ponytail: the master fd dies with the daemon, so the child gets
         # SIGHUP and an interactive stage does NOT survive a daemon restart --
