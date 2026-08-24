@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Run: ./hooks/test_dangerous_commands.py"""
-import json, subprocess, sys, os
+import json, subprocess, sys, os, shutil, tempfile
 from pathlib import Path
 GUARD = Path(__file__).parent / "dangerous-commands.py"
 sys.path.insert(0, str(Path(__file__).parent))
@@ -98,6 +98,85 @@ def test_write_outside_worktree_is_not_blocked():
     assert p.returncode == 2, msg
     print("ok  write outside worktree blocked")
 
+def test_paths_outside_the_worktree_are_blocked():
+    proj = os.path.realpath(tempfile.mkdtemp())
+    try:
+        wt = proj + "/.worktrees/TICKET-001"
+        tickets = proj + "/.project/tickets"
+        os.makedirs(wt)
+        os.makedirs(tickets)
+        os.symlink(proj, wt + "/up")
+        ticket = tickets + "/TICKET-001.md"
+        result = tickets + "/TICKET-001.result"
+        allowed = [ticket, result]
+
+        blocked = [
+            proj + "/tests/_probe.txt",
+            proj + "/.project/pipeline.toml",
+            proj + "/.worktrees/TICKET-002/x.py",
+            tickets + "/TICKET-002.md",
+            wt + "/../../escape.py",
+            wt + "/up/tests/x.py",
+            "/etc/passwd",
+            "",
+        ]
+        for p in blocked:
+            got = guard.path_verdict(p, wt, allowed)
+            assert got, f"path_verdict({p!r}) -> {got!r} (expected BLOCK)"
+            print(f"ok  BLOCK [path] {p!r}")
+
+        clear = [
+            wt + "/pipeline/core/config.py",
+            wt + "/sub/../thing.py",
+            "thing.py",
+            ticket,
+            result,
+        ]
+        for p in clear:
+            got = guard.path_verdict(p, wt, allowed)
+            assert got is None, f"path_verdict({p!r}) -> {got!r} (expected allow)"
+            print(f"ok  allow [path] {p!r}")
+    finally:
+        shutil.rmtree(proj)
+
+
+def test_the_guard_sees_every_file_tool_not_just_bash():
+    proj = os.path.realpath(tempfile.mkdtemp())
+    try:
+        wt = proj + "/.worktrees/TICKET-001"
+        tickets = proj + "/.project/tickets"
+        os.makedirs(wt)
+        os.makedirs(tickets)
+        ticket = tickets + "/TICKET-001.md"
+        result = tickets + "/TICKET-001.result"
+        env = dict(os.environ, PIPELINE_WORKTREE=wt, PIPELINE_TICKET=ticket,
+                   PIPELINE_RESULT=result)
+
+        def run(event, env=env):
+            return subprocess.run([sys.executable, str(GUARD)],
+                                   input=json.dumps(event), capture_output=True,
+                                   text=True, env=env)
+
+        p = run({"tool_name": "Edit",
+                 "tool_input": {"file_path": proj + "/tests/test_gate.py"}})
+        assert p.returncode == 2, p
+        print("ok  edit outside worktree blocked")
+
+        for path in (ticket, result, wt + "/thing.py"):
+            p = run({"tool_name": "Write", "tool_input": {"file_path": path}})
+            assert p.returncode == 0, (path, p)
+        print("ok  ticket, result and in-worktree writes allowed")
+
+        no_wt = dict(env)
+        del no_wt["PIPELINE_WORKTREE"]
+        p = run({"tool_name": "Write", "tool_input": {"file_path": "/etc/passwd"}},
+                env=no_wt)
+        assert p.returncode == 0, p
+        print("ok  unset PIPELINE_WORKTREE allows the write")
+    finally:
+        shutil.rmtree(proj)
+
+
 if __name__ == "__main__":
     check(BLOCKED_ALWAYS, False, True, "always")
     check(ALLOWED_ALWAYS, False, False, "always")
@@ -105,4 +184,6 @@ if __name__ == "__main__":
     check(ALLOWED_READONLY, True, False, "readonly")
     test_end_to_end_exit_code()
     test_write_outside_worktree_is_not_blocked()
+    test_paths_outside_the_worktree_are_blocked()
+    test_the_guard_sees_every_file_tool_not_just_bash()
     print("\nguard: all passed")

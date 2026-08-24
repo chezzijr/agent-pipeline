@@ -227,20 +227,74 @@ def verdict(command: str, readonly: bool) -> str | None:
     return readonly_rules(segs, command)
 
 
+FILE_TOOLS = {"Write", "Edit", "MultiEdit", "NotebookEdit"}
+PATH_KEYS = ("file_path", "notebook_path")
+
+
+def resolve(path: str, base: str) -> str | None:
+    """A path, resolved against `base` when it is relative. `None` for
+    anything that will not resolve -- invariant 5: this reads hostile input."""
+    if not path:
+        return None
+    try:
+        full = path if os.path.isabs(path) else os.path.join(base, path)
+        return os.path.realpath(full)
+    except (OSError, ValueError):
+        return None
+
+
+def path_verdict(path: str, worktree: str, allowed: list[str]) -> str | None:
+    """None if `path` resolves inside `worktree` or matches an entry of
+    `allowed`; otherwise the reason it is blocked."""
+    wt = resolve(worktree, os.getcwd())
+    if wt is None:
+        return f"PIPELINE_WORKTREE={worktree!r} does not resolve to a path"
+    target = resolve(path, wt)
+    if target is None:
+        return f"{path!r} does not resolve to a path"
+    if any(target == resolve(p, wt) for p in allowed):
+        return None
+    if target == wt or target.startswith(wt + os.sep):
+        return None
+    return f"{target} is outside this stage's worktree {wt}"
+
+
+def file_verdict(tool_input: dict) -> str | None:
+    wt = os.environ.get("PIPELINE_WORKTREE")
+    if not wt:
+        return None
+    path = next((tool_input.get(k) for k in PATH_KEYS
+                 if isinstance(tool_input.get(k), str)), None)
+    if path is None:
+        return "a file tool with no path the guard can read"
+    allowed = [p for p in (os.environ.get("PIPELINE_TICKET"),
+                            os.environ.get("PIPELINE_RESULT")) if p]
+    return path_verdict(path, wt, allowed)
+
+
 def main() -> int:
     try:
         event = json.load(sys.stdin)
     except Exception:
         return 0  # never break the agent over a malformed event
-    if event.get("tool_name") != "Bash":
+    tool = event.get("tool_name")
+    tool_input = event.get("tool_input") or {}
+    if tool in FILE_TOOLS:
+        label = "Path"
+        subject = next((tool_input.get(k) for k in PATH_KEYS
+                         if isinstance(tool_input.get(k), str)), "")
+        why = file_verdict(tool_input)
+    elif tool == "Bash":
+        label = "Command"
+        subject = tool_input.get("command", "")
+        why = verdict(subject, os.environ.get("PIPELINE_READONLY") == "1")
+    else:
         return 0
-    command = (event.get("tool_input") or {}).get("command", "")
-    why = verdict(command, os.environ.get("PIPELINE_READONLY") == "1")
     if why is None:
         return 0
     stage = os.environ.get("PIPELINE_STAGE", "this stage")
     print(f"Blocked by the pipeline guard ({stage}): {why}.\n"
-          f"Command: {command}\n"
+          f"{label}: {subject}\n"
           f"If your stage genuinely needs this, stop and report it in the ticket "
           f"rather than working around the guard.", file=sys.stderr)
     return 2
