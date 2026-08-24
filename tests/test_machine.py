@@ -53,9 +53,9 @@ def test_bounds_escalate_on_the_second_failure():
 
 
 def test_a_fenced_file_is_gated_before_merge():
-    """CLAUDE.md fences eight things off from unattended merge:
+    """CLAUDE.md fences nine things off from unattended merge:
     `pipeline/hooks/dangerous-commands.py`, `pipeline/harnesses/claude-code.toml`,
-    `transition()`, `validate_meta()`, `CONTROL_FIELDS`,
+    `transition()`, `validate_meta()`, `CONTROL_FIELDS`, `FENCED`,
     `strip_settings_sources()`, `.project/pipeline.toml` and `.project/stages/`.
     The dispatcher holds no such list, and no human gate
     stands between `implementing` and `done` -- a diff touching a fenced file

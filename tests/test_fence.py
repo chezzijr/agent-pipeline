@@ -1,4 +1,6 @@
 """`fenced_touches()` matches symbols, not whole files."""
+from pathlib import Path
+
 from pipeline.core.fence import fenced_touches
 from tests.helpers import git_project
 
@@ -40,3 +42,55 @@ def test_a_change_to_the_committed_config_trips_the_fence():
     assert fenced_touches(d, "main") == []
     (d / ".project" / "pipeline.toml").write_text('test_one="true"\n')
     assert fenced_touches(d, "main") == [".project/pipeline.toml"]
+
+
+def test_editing_the_fenced_dict_itself_trips_the_fence():
+    """`FENCED` is what stops a guard change merging unattended, but
+    `machine.FENCED` maps `pipeline/core/machine.py` to
+    `("transition", "CONTROL_FIELDS")` -- not to `FENCED` itself. A ticket
+    that adds an entry to `FENCED`, touching nothing else in the file,
+    must trip the fence. Uses the real, module-level `FENCED` (like
+    TICKET-037/038 did on main)."""
+    d, sh = git_project()
+    machine = d / "pipeline" / "core" / "machine.py"
+    machine.parent.mkdir(parents=True)
+    body = (
+        "CONTROL_FIELDS = ('stage',)\n\n\n"
+        "FENCED = {\n"
+        '    ".project/pipeline.toml": None,\n'
+        "}\n\n\n"
+        "def transition(stage, result):\n"
+        "    return stage\n"
+    )
+    machine.write_text(body)
+    sh("git add -A && git commit -qm commit-machine")
+    assert fenced_touches(d, "main") == []
+    machine.write_text(body.replace(
+        '".project/pipeline.toml": None,\n',
+        '".project/pipeline.toml": None,\n    ".project/extra.toml": None,\n',
+    ))
+    sh("git add -A")
+    assert fenced_touches(d, "main") != []
+
+
+def test_an_unfenced_symbol_in_machine_py_still_merges_unattended():
+    """The `pipeline/core/machine.py` entry in `FENCED` names symbols, not
+    the whole file (DEC-031), so a ticket that edits only `BOUNDS` merges
+    unattended. Fails if the entry is widened to `None`."""
+    d, sh = git_project()
+    machine = d / "pipeline" / "core" / "machine.py"
+    machine.parent.mkdir(parents=True)
+    body = (
+        "CONTROL_FIELDS = ('stage',)\n\n\n"
+        "BOUNDS = {'bugfix': 2}\n\n\n"
+        "FENCED = {\n"
+        '    ".project/pipeline.toml": None,\n'
+        "}\n\n\n"
+        "def transition(stage, result):\n"
+        "    return stage\n"
+    )
+    machine.write_text(body)
+    sh("git add -A && git commit -qm commit-machine")
+    machine.write_text(body.replace("'bugfix': 2", "'bugfix': 3"))
+    sh("git add -A")
+    assert fenced_touches(d, "main") == []
