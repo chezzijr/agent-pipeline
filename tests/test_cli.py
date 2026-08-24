@@ -36,6 +36,28 @@ def test_resume_refuses_a_stage_that_does_not_exist():
     shutil.rmtree(d)
 
 
+def test_resume_reset_only_zeroes_it_cannot_grant_back_one():
+    """--reset always sets a counter to 0, even when a human wants to hand
+    back only the one attempt that was wasted, not the whole budget."""
+    d = Path(tempfile.mkdtemp())
+    cli(d, "new", "t")
+    cli(d, "resume", "TICKET-001", "--stage", "planning")
+    t = Ticket.load(d / ".project/tickets/TICKET-001.md")
+    t.counters["plan_validation_attempts"] = 2
+    t.save()
+
+    cli(d, "resume", "TICKET-001", "--stage", "planning",
+        "--reset", "plan_validation_attempts")
+
+    t = Ticket.load(d / ".project/tickets/TICKET-001.md")
+    assert t.counters["plan_validation_attempts"] == 1, (
+        f"expected --reset to hand back exactly one wasted attempt "
+        f"(2 -> 1), got {t.counters['plan_validation_attempts']} "
+        f"(--reset always zeroes the counter)"
+    )
+    shutil.rmtree(d)
+
+
 def test_start_and_run_help_explain_the_interactive_stage_difference():
     """A `mode: interactive` stage waits for a human under `start` (attach via
     `pipeline tui`) but runs headless under `run` (nothing can attach). Neither
