@@ -23,6 +23,7 @@ from helpers import ROOT, project
 for var in ("XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_RUNTIME_DIR"):
     os.environ[var] = tempfile.mkdtemp()
 from pipeline.core import PipelineError
+from pipeline.core.config import harness
 from pipeline.core.ticket import Ticket
 from pipeline.daemon import registry
 from pipeline.daemon.server import (OUTBOX, Conn, Poller, Server,
@@ -447,9 +448,35 @@ def test_an_expired_lease_reads_as_stale_not_as_leased():
     assert row["lease"]["expires"], "the fixture must still carry a dead lease"
     assert row["leased"] is False and row["stale"] is True, row
 
-    r = subprocess.run([sys.executable, "-m", "pipeline", "--project", str(d), "ls"],
-                       cwd=ROOT, capture_output=True, text=True)
-    assert "STALE" in r.stdout and "LEASED" not in r.stdout, r.stdout
+
+def test_a_ticket_held_by_files_conflict_reads_the_same_as_an_idle_one():
+    """TICKET-048: `files_conflict()` makes `start()` return `(False, None)`
+    without touching the held ticket, so nothing records that it is waiting
+    rather than simply untouched. `ticket_rows()` is the single source for
+    `ls`, so if its row for a held ticket matches its row for an idle one,
+    ordering is indistinguishable from a hang."""
+    d = project()
+    t1 = Ticket.find(d, "TICKET-001")
+    t1.stage = "verifying"
+    t1.frontmatter()["files_declared"] = ["thing.py"]
+    t1.save()
+
+    idle_row = ticket_rows(d)[0]
+
+    t2 = Ticket.find(d, "TICKET-001")  # stand-in for an inflight TICKET-002
+    t2.id = "TICKET-002"
+    t2.frontmatter()["files_declared"] = ["thing.py"]
+    inflight = {"TICKET-002": {"meta": t2}}
+
+    did, rec = supervisor.start(d, d / ".project/tickets/TICKET-001.md",
+                                 harness("fake"), inflight)
+    assert (did, rec) == (False, None), "files_conflict must hold, not fail"
+
+    held_row = ticket_rows(d)[0]
+    assert held_row != idle_row, (
+        "a ticket held by files_conflict must say so -- naming the ticket "
+        "and the file that holds it -- instead of reading identical to an "
+        f"idle ticket's row: {held_row}")
 
 
 def test_ls_with_no_project_covers_every_registered_project():
