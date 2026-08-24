@@ -202,6 +202,31 @@ def test_a_wrapped_criterion_whose_continuation_starts_with_a_flag_passes():
     shutil.rmtree(d)
 
 
+def test_an_unindented_second_line_is_a_criterion_of_its_own():
+    """Guards against over-fixing: only an indented line joins onto the
+    criterion above it. An unindented second line is still checked alone and
+    still fails if it names no test."""
+    d = project(FIXTURE.replace(
+        "- `test_broken` passes",
+        "- `test_broken` passes and `git status\n"
+        "--porcelain` prints nothing"))
+    ok, failures = gate(d, "TICKET-001")
+    assert not ok and any("names no test" in f for f in failures), failures
+    shutil.rmtree(d)
+
+
+def test_a_wrapped_criterion_naming_no_test_anywhere_still_fails():
+    """Guards against over-fixing: joining the lines must not make a vacuous
+    criterion pass just because it now spans two lines."""
+    d = project(FIXTURE.replace(
+        "- `test_broken` passes",
+        "- the code is clean and\n"
+        "  the latency drops below `10ms`"))
+    ok, failures = gate(d, "TICKET-001")
+    assert not ok and any("names no test" in f for f in failures), failures
+    shutil.rmtree(d)
+
+
 def test_gate_blocks_a_failure_that_is_not_the_reported_one():
     """A red test proves nothing if it is red for the wrong reason."""
     d = project(FIXTURE.replace("expect: test_broken", "expect: KeyError: 'evict'"))
