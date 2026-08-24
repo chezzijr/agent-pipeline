@@ -7,7 +7,7 @@ from pathlib import Path
 
 from helpers import FIXTURE, project
 from pipeline.core import ticket as T
-from pipeline.core.gate import gate
+from pipeline.core.gate import _dedupe, gate
 
 
 def _set_digest(body: str) -> str:
@@ -431,3 +431,19 @@ def test_a_regate_of_an_unchanged_ticket_does_not_duplicate_the_fenced_block():
         f"expected every fenced block to be unique, got {len(fences)} blocks, " \
         f"{len(set(fences))} unique"
     shutil.rmtree(d)
+
+
+def test_dedupe_replaces_a_repeated_fence_and_keeps_the_first():
+    """TICKET-046: the first copy of a body stays verbatim; a later copy of
+    the same body becomes a one-line reference to the entry that carries it.
+    Fails today: `_dedupe` does not exist."""
+    seen: dict[str, str] = {}
+    first = _dedupe("first prose\n```\nboom\n```\n", seen, "this entry, above")
+    assert "```\nboom\n```" in first
+    second = _dedupe("second prose\n```\nboom\n```\n", seen, "x")
+    assert "```" not in second
+    assert "this entry, above" in second
+
+    fresh: dict[str, str] = {}
+    _dedupe("prose\n~~~\nboom\n~~~\n", fresh, "x")
+    assert fresh == {"boom": "x"}

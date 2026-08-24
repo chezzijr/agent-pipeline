@@ -5,7 +5,7 @@ import shutil
 from pathlib import Path
 
 from pipeline.core.config import project_config
-from pipeline.core.ticket import (Ticket, _fenced, active_decisions,
+from pipeline.core.ticket import (FENCE_RE, Ticket, _fenced, active_decisions,
                                   decisions_dir, ticket_path)
 from pipeline.core.worktree import base_checkout, base_ref, run_cmd
 
@@ -50,6 +50,61 @@ def _cites(text: str, path: str) -> bool:
     contains it (`ratio.py`, `delegate.py` for `gate.py`)."""
     pat = r"(?<![\w./-])" + re.escape(path) + r"(?![\w-])"
     return re.search(pat, text) is not None
+
+
+def _entry_ref(raw: str) -> str:
+    return f"the `## Thread` entry `{raw}`"
+
+
+def _ref(where: str) -> str:
+    return f"*-- identical output, already quoted in {where} --*"
+
+
+def _blocks(text: str) -> list[tuple[int, int, str]]:
+    """Every fenced block in `text` as `(first line index, one past the
+    last, inner text)`, built on `_fenced()` per DEC-016 rather than a local
+    scan for three backticks, which misses `~~~` and closes early on
+    captured output that carries a fence of its own."""
+    lines = text.splitlines()
+    fenced = _fenced(lines)
+    out: list[tuple[int, int, str]] = []
+    i = 0
+    while i < len(lines):
+        if not fenced[i]:
+            i += 1
+            continue
+        start = i
+        while i < len(lines) and fenced[i]:
+            i += 1
+        end = i
+        inner = lines[start + 1:end]
+        if inner and FENCE_RE.match(lines[end - 1]):
+            inner = inner[:-1]
+        out.append((start, end, "\n".join(inner)))
+    return out
+
+
+def _dedupe(text: str, seen: dict[str, str], where: str) -> str:
+    """Replace every fenced block whose inner text is already a key of
+    `seen` with a one-line reference to the entry that carries it. The first
+    copy of a given body stays verbatim; a blank body keeps its fence,
+    because the reference line is longer than an empty block and would add
+    noise, not save it."""
+    lines = text.splitlines()
+    out: list[str] = []
+    last = 0
+    for start, end, body in _blocks(text):
+        out += lines[last:start]
+        if not body.strip():
+            out += lines[start:end]
+        elif body in seen:
+            out.append(_ref(seen[body]))
+        else:
+            out += lines[start:end]
+            seen[body] = where
+        last = end
+    out += lines[last:]
+    return "\n".join(out)
 
 
 def _base_findings(project: Path, cfg: dict, wd: Path, test: str,
