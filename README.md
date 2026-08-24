@@ -38,11 +38,9 @@ stopping twice at a human gate on the way. `.project/` is the real record --
 tickets, decisions, threads and all -- so you can read what the agents actually
 did rather than take this page's word for it.
 
-Not a product. There is one registered project (this one), and two known gaps
-that only appear with a second: stage prompts and hooks live inside the package,
-so customising them is global rather than per-project (`TICKET-035`), and no
-stage can be given an MCP server because the guard's matcher names built-in
-tools only and would not see one (`TICKET-036`).
+Not a product. There is one registered project (this one), and one known gap:
+stage prompts and hooks live inside the package, so customising them is global
+rather than per-project (`TICKET-035`).
 
 ## Why
 
@@ -457,12 +455,28 @@ the interruption in the ticket, and cleans up temp files. Without that the
 orphaned agent keeps writing while its lease expires, and the dispatcher spawns a
 second agent onto the same stage in the same worktree.
 
+## MCP servers
+
+A project declares one in `[mcp.<name>]` in `.project/pipeline.toml`:
+
+```toml
+[mcp.docs]
+command = "npx"
+args = ["-y", "@upstash/context7-mcp"]
+readonly = true
+```
+
+A stage opts in with `mcp: [docs]` in its frontmatter -- a server nobody
+declares is never spawned and costs no tokens. `readonly = true` is what lets
+a `write: false` stage call it at all; a server declared without it is
+unusable from a read-only stage. The guard's `PreToolUse` matcher covers
+`mcp__.*`, and `dangerous-commands.py` allows a call only for a server the
+stage declared, default deny. `--strict-mcp-config` still excludes every
+server the project did not name, so a stage never inherits the operator's
+`~/.claude` servers.
+
 ## Not built yet
 
-- **MCP servers** (`TICKET-036`). Stages spawn with `--strict-mcp-config` and no
-  `--mcp-config`, so `mcp_servers: []`. Turning that on without widening the
-  guard would put tools where its matcher, which names built-in tools only,
-  cannot see them.
 - **A second harness that actually runs.** `codex.toml` is asserted, not
   executed -- every stage declares `hooks:`, and it cannot register one.
 

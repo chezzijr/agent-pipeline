@@ -207,6 +207,15 @@ claiming the guard works.
   `claude` 2.1.238 on 2026-08-22 — so stripping at spawn is a complete
   defence. A tracked settings file is hidden with `--skip-worktree` so its
   deletion never enters the ticket's own diff.
+- **An MCP tool is guarded by server, not by command.** The `PreToolUse`
+  matcher is `Bash|Write|Edit|MultiEdit|NotebookEdit|mcp__.*`.
+  `dangerous-commands.py` parses shell and cannot judge
+  `mcp__github__create_pr`, so it allows a call only when the server is in
+  `PIPELINE_MCP_ALLOW`, and in a read-only stage only when it is also in
+  `PIPELINE_MCP_READONLY`. `spawn()` sets both from `[mcp.<name>]` in
+  `.project/pipeline.toml` intersected with the stage's `mcp:` frontmatter. A
+  server declared without `readonly = true` is unusable from every
+  `write: false` stage.
 
 ## Conventions
 

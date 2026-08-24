@@ -73,19 +73,19 @@ whatever the pipeline says.
 3. [x] guard test tables `MCP_BLOCKED`/`MCP_ALLOWED` + end-to-end case
 4. [x] widen matcher in `stage_settings()` + pin test + docstring
 5. [x] live probe check (MCP event reaches guard)
-6. [ ] `mcp_servers()` in config.py
-7. [ ] `mcp_config()` in config.py
-8. [ ] document `[mcp.<name>]` in templates/pipeline.toml
-9. [ ] tests for `mcp_servers`/`mcp_config`
-10. [ ] `mcp_flag` in claude-code.toml + fix stale comment
-11. [ ] `render()` gains `mcp` kwarg
-12. [ ] test_harness.py flag test + fix stale docstring
-13. [ ] wire `spawn()` in supervisor.py
-14. [ ] unlink mcp temp file at both cleanup sites
-15. [ ] test_harness.py spawn env test
-16. [ ] live check Bash event still reaches guard
-17. [ ] CLAUDE.md gotcha bullet
-18. [ ] README.md updates
+6. [x] `mcp_servers()` in config.py
+7. [x] `mcp_config()` in config.py
+8. [x] document `[mcp.<name>]` in templates/pipeline.toml
+9. [x] tests for `mcp_servers`/`mcp_config`
+10. [x] `mcp_flag` in claude-code.toml + fix stale comment
+11. [x] `render()` gains `mcp` kwarg
+12. [x] test_harness.py flag test + fix stale docstring
+13. [x] wire `spawn()` in supervisor.py
+14. [x] unlink mcp temp file at both cleanup sites
+15. [x] test_harness.py spawn env test
+16. [x] live check Bash event still reaches guard
+17. [x] CLAUDE.md gotcha bullet
+18. [x] README.md updates
 
 ### 2026-08-24 · implementing · note
 
@@ -101,3 +101,15 @@ Gotcha found running this: a shell variable set in one Bash call does not
 persist into the next -- the first attempt ran with --settings "" (empty) and
 no hook fired at all. Re-ran the settings build and the claude -p call in one
 Bash invocation; fixed.
+
+### 2026-08-24 · implementing · note
+
+Step 16 live check: a Bash event still reaches the widened matcher and is
+refused. grep -cF '"Bash"' log -> 3. grep -cF 'Blocked by the pipeline guard'
+log -> 1. Block line verbatim: "PreToolUse:Bash hook error:
+[.../.venv/bin/python3 .../dangerous-commands.py]: Blocked by the pipeline
+guard (live-check): worktrees are the dispatcher's to manage.\nCommand: git
+worktree remove foo\nIf your stage genuinely needs this, stop and report it in
+the ticket rather than working around the guard." Log deleted. No fallback
+needed for either step 5 or step 16 -- the six-way alternation delivers both
+tool classes.
