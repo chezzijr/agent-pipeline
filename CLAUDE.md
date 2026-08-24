@@ -159,6 +159,12 @@ claiming the guard works.
   file on disk is unchanged and stays the protocol. A stage that reads
   the whole file to make an edit undoes the saving -- `_common.md`
   rule 4 is what stops it.
+- **`gate()` quotes each distinct output once and references the rest.** A
+  re-gate re-runs the same test against the same code, so its fence is
+  byte-identical to one the thread already holds, and `_dedupe()` replaces
+  the copy with a pointer to the entry that carries it. Never fix thread
+  growth by truncating or summarising the fence -- `pipeline/stages/_common.md`
+  rule 7 requires verbatim output.
 - **The harness `.toml` is re-read once per tick**, by `_harness_reloader()`
   in `pipeline/daemon/supervisor.py`. Before this, `run()` and `serve()` each
   read it once above their loop, so a harness change that merged mid-run
