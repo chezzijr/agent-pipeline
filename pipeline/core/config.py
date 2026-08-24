@@ -1,7 +1,8 @@
 """Where the data files live and what a stage or a project asks for.
 
-The stage prompts, hooks, harnesses and templates sit INSIDE the package:
-located from the repo root they are simply gone after `uv tool install .`.
+The stage prompts, hooks, harnesses, templates and the file-ticket skill sit
+INSIDE the package: located from the repo root they are simply gone after
+`uv tool install .`.
 """
 import json
 import re
@@ -21,6 +22,7 @@ HOOKS_DIR = PKG / "hooks"
 HARNESSES_DIR = PKG / "harnesses"
 TICKET_TEMPLATE = PKG / "templates" / "ticket.md"
 CONFIG_TEMPLATE = PKG / "templates" / "pipeline.toml"
+SKILL_TEMPLATE = PKG / "templates" / "skills" / "file-ticket" / "SKILL.md"
 
 
 def project_stage_config(project: Path | None, stage: str) -> dict:

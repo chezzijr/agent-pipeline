@@ -182,10 +182,32 @@ def test_data_files_live_inside_the_package_so_they_survive_install():
     built wheel: an `exclude` in [tool.hatch.build.targets.wheel] would pass
     here and still ship a broken install."""
     for p in (C.STAGES_DIR, C.HOOKS_DIR, C.HARNESSES_DIR, C.TICKET_TEMPLATE,
-              C.CONFIG_TEMPLATE):
+              C.CONFIG_TEMPLATE, C.SKILL_TEMPLATE):
         assert p.exists(), p
         assert C.PKG in p.parents, f"{p} is outside {C.PKG} -> lost on install"
     assert (C.HOOKS_DIR / "dangerous-commands.py").is_file()
+
+
+def test_the_repo_skill_is_the_packaged_file():
+    """One copy of the skill's bytes, and the harness still loads it.
+
+    `.claude/skills/file-ticket/SKILL.md` is a symlink to the packaged
+    copy, so the two cannot drift. Claude Code 2.1.241 loads a symlinked
+    SKILL.md: its project-skills loader `stat`s the path -- not `lstat`,
+    which it uses elsewhere -- and skips the skill only when the target
+    is not a regular file, or is over its byte limit. These asserts are
+    that loader's conditions. Replacing the link with a copy fails here.
+    """
+    from helpers import ROOT
+    repo = ROOT / ".claude" / "skills" / "file-ticket" / "SKILL.md"
+    assert repo.is_symlink(), \
+        f"{repo} is a copy, not a symlink -- the two copies will drift"
+    assert repo.is_file(), \
+        f"{repo} is a broken symlink -- the skill would not load"
+    assert repo.resolve() == C.SKILL_TEMPLATE.resolve(), \
+        f"{repo} resolves to {repo.resolve()}, not to {C.SKILL_TEMPLATE}"
+    assert repo.stat().st_size < 128 * 1024, \
+        f"{repo} is {repo.stat().st_size} bytes -- too large to load"
 
 
 def test_the_docs_name_the_dependencies_and_the_targets_the_code_has():

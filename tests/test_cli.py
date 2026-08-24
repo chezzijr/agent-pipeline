@@ -309,6 +309,23 @@ def test_init_installs_the_file_ticket_skill():
     shutil.rmtree(d, ignore_errors=True)
 
 
+def test_init_keeps_a_customised_file_ticket_skill():
+    """`init` mirrors `.project/pipeline.toml`: a project that customised its
+    skill file keeps it on re-init, and `init` prints the skill's path either
+    way so a human knows where it went."""
+    d = Path(tempfile.mkdtemp())
+    r = cli(d, "init")
+    assert r.returncode == 0, r.stderr
+    skill = d / ".claude" / "skills" / "file-ticket" / "SKILL.md"
+    assert str(skill) in r.stdout, r.stdout
+    skill.write_text("# ours\n")
+    r = cli(d, "init")
+    assert r.returncode == 0, r.stderr
+    assert skill.read_text() == "# ours\n", "re-init overwrote a customised skill"
+    assert "kept" in r.stdout, r.stdout
+    shutil.rmtree(d, ignore_errors=True)
+
+
 def test_a_human_gate_records_the_moment_the_human_acted():
     """View 6 measures time parked in a human gate: entering it is a
     `transition` event, and leaving it was "the next transition on that
