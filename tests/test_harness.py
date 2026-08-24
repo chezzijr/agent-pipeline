@@ -322,9 +322,9 @@ def test_a_stage_does_not_inherit_the_developers_mcp_servers():
     the developer's `~/.claude` still loads, so TICKET-024's `planning` asked
     for `Read,Grep,Glob,Bash,Edit,Write,Skill` and the `init` event of the
     session it got granted 53 tools from 9 servers, among them
-    `mcp__claude_ai_Gmail__apply_sensitive_message_label`. The guard registers
-    `PreToolUse` with `matcher: "Bash"`, so it has nothing to say about any of
-    them, and the same ticket runs differently on two machines.
+    `mcp__claude_ai_Gmail__apply_sensitive_message_label`. The guard's
+    `PreToolUse` matcher names built-in tools only, so it has nothing to say
+    about any of them, and the same ticket runs differently on two machines.
 
     `--strict-mcp-config` limits a session to the servers named by
     `--mcp-config`, i.e. none. Both templates carry `--tools`, so both need it."""

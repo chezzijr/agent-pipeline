@@ -70,7 +70,8 @@ def project_config(project: Path) -> dict:
 
     Every stage can write the main checkout's `.project/` -- it is where the
     ticket file lives, and `tree_snapshot()` excludes it -- and the guard's
-    `matcher` is `Bash`, so it never sees an `Edit`. Reading off disk let any
+    path rule blocks a file tool there, but Bash still reaches the file.
+    Reading off disk let any
     stage rewrite `test_one`, `test_suite` and `base`, the commands Tier A,
     `verifying` and `merging` trust. Read from HEAD, an uncommitted edit is
     inert, and a committed one is in the ticket's diff, where `review` sees
@@ -235,7 +236,12 @@ def stage_settings(stage: str, cfg: dict) -> Path | None:
                 "command": f"{shlex.quote(sys.executable)} "
                            f"{shlex.quote(str(HOOKS_DIR / f'{n}.py'))}"}
                for n in names]
-    settings = {"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": entries}]}}
+    # A regex over the tool name, spelled out rather than relying on `Edit`
+    # matching `MultiEdit` by substring. With `Bash` alone a `Write` to any
+    # absolute path never reached this hook -- step 14 of TICKET-052's plan
+    # is the live check that Claude Code delivers a `Write` event here.
+    settings = {"hooks": {"PreToolUse": [
+        {"matcher": "Bash|Write|Edit|MultiEdit|NotebookEdit", "hooks": entries}]}}
     f = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
     json.dump(settings, f)
     f.close()

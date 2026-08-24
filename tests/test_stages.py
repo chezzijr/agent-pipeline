@@ -1,5 +1,6 @@
 """A stage is one self-contained file -- and it has to survive being installed."""
 import json
+import re
 import shlex
 import sys
 from pathlib import Path
@@ -79,7 +80,9 @@ def test_stage_settings_register_the_guard_as_a_pretooluse_hook():
     f = C.stage_settings("implementing", C.stage_config("implementing"))
     data = json.loads(f.read_text()); f.unlink()
     entry = data["hooks"]["PreToolUse"][0]
-    assert entry["matcher"] == "Bash"
+    assert entry["matcher"] == "Bash|Write|Edit|MultiEdit|NotebookEdit"
+    for tool in ("Bash", "Write", "Edit", "MultiEdit", "NotebookEdit"):
+        assert re.fullmatch(entry["matcher"], tool), tool
     # An interpreter + a script, not a bare path: a shebang would pick up the
     # operator's `python3`, and macOS ships a 3.9 that cannot import the guard.
     argv = shlex.split(entry["hooks"][0]["command"])
