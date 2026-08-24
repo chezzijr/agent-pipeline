@@ -271,3 +271,14 @@ def test_answer_and_reject_record_too():
                    ("awaiting-approval", "planning", "rejected")], got
     shutil.rmtree(d)
     shutil.rmtree(state)
+
+
+def test_plan_prints_only_the_plan_and_acceptance_criteria():
+    """The approval gate needs a decision, not a search through a ticket
+    file that can exceed 65KB. `pipeline plan` doesn't exist yet."""
+    d = Path(tempfile.mkdtemp())
+    cli(d, "new", "t")
+    r = cli(d, "plan", "TICKET-001")
+    assert r.returncode != 0, r.stdout
+    assert "invalid choice: 'plan'" in r.stderr, r.stderr
+    shutil.rmtree(d)
