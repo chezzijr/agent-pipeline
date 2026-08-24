@@ -248,6 +248,18 @@ def test_the_fenced_list_matches_the_rule_file():
     assert prose == code, f"CLAUDE.md says {prose}, machine.FENCED says {code}"
 
 
+def test_the_rule_file_documents_the_pty_log_geometry_marker():
+    """The marker number comes from `geom_marker()`, so the rule file
+    cannot drift from the bytes it names."""
+    from pipeline.pty import host
+    num = host.geom_marker(40, 120).decode("latin-1").split(";")[0].lstrip("\x1b]")
+    text = (C.PKG.parent / "CLAUDE.md").read_text()
+    hits = [" ".join(b.split()) for b in text.split("\n- ") if num in b]
+    assert len(hits) == 1, f"no CLAUDE.md bullet names the {num} geometry marker"
+    for claim in ("resize", "batch log", "render_pty"):
+        assert claim in hits[0], claim
+
+
 def test_stage_config_can_take_a_per_project_override(tmp_path):
     """TICKET-038: `stage_config()` resolves against the packaged stage only,
     with no way for a project to add a model, tool or skill of its own. A

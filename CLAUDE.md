@@ -216,6 +216,11 @@ claiming the guard works.
   `.project/pipeline.toml` intersected with the stage's `mcp:` frontmatter. A
   server declared without `readonly = true` is unusable from every
   `write: false` stage.
+- **A PTY log carries the width it was written at.** An interactive stage's log
+  opens with `\x1b]9999;<rows>;<cols>\x07` and gains one more marker per
+  resize; `render_pty()` replays the dump at that geometry instead of a fixed
+  40x120. A batch log must never get one -- `tail_log()` sniffs a PTY dump by
+  the raw ESC (DEC-039), so a marker there sends stream-json through pyte.
 
 ## Conventions
 

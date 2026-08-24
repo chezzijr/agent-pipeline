@@ -36,7 +36,7 @@ from pipeline.core.machine import HUMAN_GATES
 from pipeline.core.ticket import ticket_path
 from pipeline.daemon import registry
 from pipeline.daemon.server import PTY_INPUT, ticket_rows
-from pipeline.pty.host import COLS, ROWS, Screen
+from pipeline.pty.host import COLS, GEOM_OSC, ROWS, Screen, last_geometry
 from pipeline.stream import StreamReader
 
 REFRESH_SECS = 5.0     # the safety net; events are what make it feel live
@@ -100,16 +100,27 @@ def event_line(ev: dict) -> str:
     return f"[{kind}] " + " ".join(f"{k}={v}" for k, v in data.items())
 
 
-def render_pty(data: bytes) -> list[str]:
+def render_pty(data: bytes, rows: int = ROWS, cols: int = COLS) -> list[str]:
     """A raw PTY dump -> the final screen, as plain text lines.
 
     An interactive stage that ran attached leaves terminal bytes, not
     stream-json. Replay them through the same pyte `Screen` the live
     pane uses: 40 lines of what the stage last showed, instead of
     2852 spinner frames with their cursor codes intact.
+
+    `rows`/`cols` are the geometry the dump opens at. A marker inside it
+    (`\\x1b]9999;<rows>;<cols>\\x07`) resizes the screen at the same point
+    the daemon resized the live one, so the replay reproduces that screen
+    instead of one final width. Replaying at the wrong width re-wraps every
+    frame, so a later redraw lands on a leftover row instead of clearing it.
     """
-    screen = Screen()
-    screen.feed(data)
+    screen = Screen(rows, cols)
+    pos = 0
+    for m in GEOM_OSC.finditer(data):
+        screen.feed(data[pos:m.start()])
+        screen.resize(*last_geometry(m.group(0)))
+        pos = m.end()
+    screen.feed(data[pos:])
     lines = [ln.rstrip() for ln in screen.display]
     while lines and not lines[-1]:
         lines.pop()
@@ -129,14 +140,21 @@ def tail_log(project: str, tid: str) -> list[str]:
         if not logs:
             return ["(no log yet)"]
         raw = logs[-1].read_bytes()
-        # drop the first line when we cut into the middle of one
-        data = raw[-MAX_TAIL:].split(b"\n", 1)[-1] if len(raw) > MAX_TAIL else raw
+        # drop the first line when we cut into the middle of one; keep the
+        # head (spawn()'s marker can sit before the cut) to recover the
+        # geometry the cut tail lost
+        cut = max(0, len(raw) - MAX_TAIL)
+        head, data = raw[:cut], raw[cut:]
+        if cut:
+            first, sep, rest = data.partition(b"\n")
+            if sep:
+                head, data = head + first + sep, rest
         # A stage that ran attached leaves a PTY dump, and valid stream-json
         # never carries a raw ESC (JSON escapes it), so the byte is the test.
         # The stage's name is not: `planning` runs headless whenever nothing
         # can attach to it, and then its log IS stream-json.
         if b"\x1b" in data:
-            return render_pty(data)
+            return render_pty(data, *last_geometry(head))
         return [ln for ev in StreamReader().feed(data) if (ln := render(ev))]
     except OSError as e:
         return [f"(log unreadable: {e})"]

@@ -13,7 +13,8 @@ from pipeline.core import PipelineError
 from pipeline.core.ticket import Ticket
 from pipeline.daemon.server import PTY_INPUT
 from pipeline.pty.host import Screen
-from pipeline.tui.app import PipelineApp, event_line, marker, tail_log
+from pipeline.tui.app import (MAX_TAIL, PipelineApp, event_line, marker,
+                              render_pty, tail_log)
 
 APPROVABLE = """---
 id: TICKET-001
@@ -557,24 +558,86 @@ def test_tail_log_renders_a_pty_dump_as_the_final_screen():
 
 
 def test_tail_log_renders_a_pty_dump_at_its_own_width_not_120():
-    """`render_pty()` always replays on a `Screen()`, 40x120 by default. A
-    log written at a different width -- as every resized attach produces --
-    re-wraps at the wrong column count, and a later frame's redraw lands on
-    top of a leftover row instead of clearing it. Native width (150) stays
-    clean; the hardcoded 120 leaves 'BBBBBBBBBBBBBBBBBBBB' from the first
-    frame's wrapped second row under the second frame's 'SHORT'."""
+    """The width now rides in the log, as an OSC marker `spawn()` and
+    `_op_resize` write (`\\x1b]9999;<rows>;<cols>\\x07`). It is spelled out
+    literally here, not imported from `pipeline.pty.host`, so this file
+    still imports cleanly on base (DEC-017). Without it `render_pty()`
+    always replays on a `Screen()`, 40x120 by default: a log written at a
+    different width -- as every resized attach produces -- re-wraps at the
+    wrong column count, and a later frame's redraw lands on top of a
+    leftover row instead of clearing it."""
     d = make_project()
     logs = d / ".project" / "logs"
     logs.mkdir(parents=True)
+    geom = b"\x1b]9999;40;150\x07"
     frame1 = b"B" * 140
     redraw = b"\x1b[1A\r\x1b[KSHORT\n"
-    (logs / "TICKET-001-planning.log").write_bytes(frame1 + redraw)
+    (logs / "TICKET-001-planning.log").write_bytes(geom + frame1 + redraw)
 
     lines = tail_log(str(d), "TICKET-001")
 
     assert lines == ["SHORT"], (
         f"replaying at the log's own width (150) should be clean, got {lines!r}"
     )
+
+
+def test_render_pty_matches_the_screen_the_dump_was_written_on():
+    """A dump written at width 150 comes back equal to that screen's own
+    `display`."""
+    frames = b"\x1b[H\x1b[2J" + b"B" * 140 + b"\x1b[1A\r\x1b[KSHORT\n"
+    want_screen = Screen(40, 150)
+    want_screen.feed(frames)
+    want = [ln.rstrip() for ln in want_screen.display]
+    while want and not want[-1]:
+        want.pop()
+
+    assert render_pty(b"\x1b]9999;40;150\x07" + frames) == want
+
+
+def test_render_pty_resizes_where_the_log_says_the_screen_did():
+    """`render_pty()` resizes mid-replay where the log says the daemon
+    resized, so it reproduces the daemon's screen. Replaying the identical
+    bytes wholly at 150 gives `['tail']` instead -- a different screen."""
+    want_screen = Screen(40, 120)
+    want_screen.feed(b"A" * 130)
+    want_screen.resize(40, 150)
+    want_screen.feed(b"\r\x1b[Ktail\n")
+    want = [ln.rstrip() for ln in want_screen.display]
+    while want and not want[-1]:
+        want.pop()
+
+    got = render_pty(b"\x1b]9999;40;120\x07" + b"A" * 130 +
+                     b"\x1b]9999;40;150\x07" + b"\r\x1b[Ktail\n")
+
+    assert got == want
+    assert want == ["A" * 120, "tail"]
+
+
+def test_render_pty_ignores_a_hostile_width_marker():
+    """A five-digit marker does not match `GEOM_OSC` at all, so the default
+    40x120 stands. A four-digit one is clamped to `MAX_DIM` (1000) columns."""
+    assert render_pty(b"\x1b]9999;99999;99999\x07hello") == ["hello"]
+    assert [len(l) for l in render_pty(b"\x1b]9999;9999;9999\x07" + b"x" * 1500)] == \
+        [1000, 500]
+
+
+def test_tail_log_keeps_a_width_marker_the_tail_cut_dropped():
+    """`spawn()`'s opening marker sits in the head `MAX_TAIL` cuts off; the
+    geometry must survive the cut. `\\x1b[H\\x1b[2J` is load-bearing: `pad\\n`
+    is a bare line feed that fills the screen, so without the clear
+    `\\x1b[1A` lands on a pad row instead of clamping at row 0, and the B
+    row of the frame survives below SHORT at every width."""
+    d = make_project()
+    logs = d / ".project" / "logs"
+    logs.mkdir(parents=True)
+    geom = b"\x1b]9999;40;150\x07"
+    pad = b"pad\n" * (MAX_TAIL // 4 + 1)
+    frames = b"\x1b[H\x1b[2J" + b"B" * 140 + b"\x1b[1A\r\x1b[KSHORT\n"
+    (logs / "TICKET-001-planning.log").write_bytes(geom + pad + frames)
+
+    lines = tail_log(str(d), "TICKET-001")
+
+    assert lines == ["SHORT"]
 
 
 def test_tail_log_still_renders_a_stream_json_log():
