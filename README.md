@@ -13,6 +13,8 @@ did. Tickets are the queue; agents are stateless workers pulled off it.
       |    done <- merging <- [human?] <- verifying <- review <- implementing
       |                          |
       +-- (chore) -> implementing -> quick-review --+
+                                                      |
+      planning <- unwinding <-------------+   (fail: the cheap route's commit is undone first)
 
 ## What you need
 
@@ -336,10 +338,12 @@ the same log file -- otherwise both of those stop working.
    (`validate_meta`) and `shlex.quote`d on the way out. A ticket that fails
    validation is escalated, never executed.
 4. **The regression suite, the re-gate and the merge are run by the dispatcher.**
-   `verifying`, `revalidating` and `merging` have no agent at all -- a test
-   result should never pass through a model's mouth, and neither a rebase nor a
-   merge conflict is ever auto-resolved: both escalate and keep the conflicted
-   worktree as the evidence.
+   `verifying`, `revalidating`, `unwinding` and `merging` have no agent at all --
+   a test result should never pass through a model's mouth, and neither a rebase
+   nor a merge conflict is ever auto-resolved: both escalate and keep the
+   conflicted worktree as the evidence. Putting a promoted cheap-route branch
+   back where `triage` left it is a `git reset --hard` no prompt should be
+   trusted to aim.
 
 ## Layout
 

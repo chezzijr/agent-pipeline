@@ -156,7 +156,9 @@ pipeline logs TICKET-003 -f      # one stage's stream
 The ticket stops at `awaiting-approval` for the human, unless `triage` judges the fix
 small enough for the cheap route (`triage -> implementing -> quick-review -> verifying
 -> merging`), which has no plan-approval gate; `quick-review` returns it to `planning`, and
-so to the approval gate, if the diff or the test does not hold up. Either route stops
+so to the approval gate, if the diff or the test does not hold up; the dispatcher undoes
+the cheap route's commit on the way, so the ticket re-plans against the failing test
+`triage` committed. Either route stops
 again at `awaiting-merge`, a second human gate, if its diff touches anything `CLAUDE.md`
 fences off from unattended merge. The class table below does not change: there is no
 `chore` class, and a human cannot request the cheap route. That gate is the point, so
