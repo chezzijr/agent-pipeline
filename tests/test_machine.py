@@ -207,8 +207,8 @@ def test_a_small_fix_takes_the_cheap_route():
     assert t("triage", "chore")[0] == "implementing", \
         "a small fix still pays for planning, plan-validation and the approval gate"
     assert t("quick-review", "ok")[0] == "verifying"
-    assert t("quick-review", "fail")[0] == "planning", \
-        "a cheap path that cannot promote itself lands a vacuous test unattended"
+    assert t("quick-review", "fail")[0] == "unwinding", \
+        "the promoted ticket reaches planning with the cheap route's fix still committed"
     assert "quick-review" in M.KNOWN_STAGES
     nxt, c = t("triage", "chore")
     assert c["cheap_route"] == 1, "nothing carries the route as far as `implementing`"
@@ -217,9 +217,13 @@ def test_a_small_fix_takes_the_cheap_route():
     assert t("implementing", "ok", {})[0] == "review", "the full route changed"
     assert t("implementing", "blocked", {"cheap_route": 1})[0] == "planning", \
         "a blocked chore re-gates a plan that does not exist"
-    assert t("quick-review", "fail", {"cheap_route": 1})[0] == "planning"
+    assert t("quick-review", "fail", {"cheap_route": 1})[0] == "unwinding"
     assert "cheap_route" not in M.BOUNDS.get("bugfix", {}), \
         "a route flag is not a bounded loop counter"
+    assert t("unwinding", "ok")[0] == "planning"
+    assert t("unwinding", "fail")[0] == "escalated"
+    assert "unwinding" in M.KNOWN_STAGES
+    assert "unwinding" in M.DISPATCHER_STAGES
 
 
 def test_plan_validation_budget_ignores_the_plans_size():

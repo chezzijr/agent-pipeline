@@ -50,12 +50,13 @@ FENCED = {
 }
 KNOWN_STAGES = TERMINAL | HUMAN_GATES | {
     "new", "triage", "planning", "plan-validation", "revalidating",
-    "implementing", "review", "quick-review", "holistic-review", "verifying", "merging"}
+    "implementing", "review", "quick-review", "holistic-review", "verifying",
+    "merging", "unwinding"}
 # only these leave a worktree behind for a human to look at
 CLEANUP_STAGES = {"done", "rejected"}
 # stages the dispatcher runs itself, with no agent and so no prompt file. A
 # test subtracts this set rather than hard-coding the exceptions.
-DISPATCHER_STAGES = {"verifying", "merging", "revalidating"}
+DISPATCHER_STAGES = {"verifying", "merging", "revalidating", "unwinding"}
 
 
 def _size(counters: dict, key: str) -> int:
@@ -161,8 +162,13 @@ def transition(stage: str, result: str, counters: dict, klass: str = "bugfix"):
             # promotion, not a retry, so it charges no counter: the cheap check
             # found something outside its two questions, and the ticket takes
             # the full path from `planning`. It cannot come back -- the flag
-            # was consumed at `implementing`.
-            return "planning", c
+            # was consumed at `implementing`. This row IS the cheap-route
+            # marker: `quick-review` is reachable only from
+            # `("implementing", "ok")` with `cheap_route` set. The branch
+            # still carries that stage's own commit, so `unwinding` discards
+            # it before `planning` sees the tree -- otherwise Tier A runs
+            # `test_file` against a tree where it already passes.
+            return "unwinding", c
         case ("review", "ok"):
             # a one-line bugfix's incremental review already saw the whole diff
             # -- and so did any review that passed on its FIRST pass, whatever
@@ -196,6 +202,13 @@ def transition(stage: str, result: str, counters: dict, klass: str = "bugfix"):
         case ("merging", "fail"):
             # a conflict is never retried and never auto-resolved: the
             # conflicted worktree is what the human is being called for
+            return "escalated", c
+        case ("unwinding", "ok"):
+            return "planning", c
+        case ("unwinding", "fail"):
+            # a repair that already refused is never guessed at -- the same
+            # rule as `("merging", "fail")`. No counter is charged: there is
+            # nothing to retry differently.
             return "escalated", c
 
     # unknown (stage, result) is a bug or a lying agent -- never guess
