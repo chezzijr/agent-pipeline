@@ -556,6 +556,27 @@ def test_tail_log_renders_a_pty_dump_as_the_final_screen():
     assert tail_log(str(d), "TICKET-001") == ["second frame"]
 
 
+def test_tail_log_renders_a_pty_dump_at_its_own_width_not_120():
+    """`render_pty()` always replays on a `Screen()`, 40x120 by default. A
+    log written at a different width -- as every resized attach produces --
+    re-wraps at the wrong column count, and a later frame's redraw lands on
+    top of a leftover row instead of clearing it. Native width (150) stays
+    clean; the hardcoded 120 leaves 'BBBBBBBBBBBBBBBBBBBB' from the first
+    frame's wrapped second row under the second frame's 'SHORT'."""
+    d = make_project()
+    logs = d / ".project" / "logs"
+    logs.mkdir(parents=True)
+    frame1 = b"B" * 140
+    redraw = b"\x1b[1A\r\x1b[KSHORT\n"
+    (logs / "TICKET-001-planning.log").write_bytes(frame1 + redraw)
+
+    lines = tail_log(str(d), "TICKET-001")
+
+    assert lines == ["SHORT"], (
+        f"replaying at the log's own width (150) should be clean, got {lines!r}"
+    )
+
+
 def test_tail_log_still_renders_a_stream_json_log():
     """The sniff must not divert a headless stage's log into pyte: 35
     of the 43 `planning` logs in this repo are stream-json, from runs
