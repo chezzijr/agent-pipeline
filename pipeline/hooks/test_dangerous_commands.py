@@ -60,6 +60,8 @@ ALLOWED_READONLY = [
     "pytest -x 2>&1", "find . -name '*.py'", "cargo test", "go test ./...",
     "git status --porcelain", "wc -l thing.py", "python3 -m unittest",
     "git diff main...HEAD | head -50",
+    "sed 's/a/b/' thing.py",
+    "pytest -x \\\ntests/test_x.py",
 ]
 
 def check(cmds, readonly, expect_block, label):
