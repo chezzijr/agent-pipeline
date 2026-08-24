@@ -32,6 +32,10 @@ BLOCKED_ALWAYS = [
     "echo x >\nrm -rf /",
     "rm -rf \\\n/",
     "git clean \\\n  -fd",
+    # review found these three allowed on this branch, blocked on base
+    'echo "it\'s" ; rm -rf \\\n /',
+    'echo "it\'s" ; git clean \\\n  -fd',
+    "echo hi \\\\\nsudo rm -rf /etc",
 ]
 ALLOWED_ALWAYS = [
     "pytest -x", "git push origin ticket/001", "rm -rf build/",
@@ -64,6 +68,8 @@ BLOCKED_READONLY = [
     'python3 -c "\nimport os\n"',
     "python3 - <<PY\nimport os\nPY",
     "cat a >\nfile",
+    # a backslash continuation is refused, not parsed -- TICKET-057
+    "pytest -x \\\ntests/test_x.py",
 ]
 ALLOWED_READONLY = [
     "pytest -x", "git diff main...HEAD", "grep -rn foo .", "git log --oneline",
@@ -73,11 +79,11 @@ ALLOWED_READONLY = [
     "git status --porcelain", "wc -l thing.py", "python3 -m unittest",
     "git diff main...HEAD | head -50",
     "sed 's/a/b/' thing.py",
-    "pytest -x \\\ntests/test_x.py",
     "sed -n '10,20p' README.md",
     "sed -E 's/a+/b/' thing.py",
     'grep -rn "a\nb" .',
     "cat a.py\ncat b.py",
+    "grep -rn 'a\\.b' src/",
 ]
 
 def check(cmds, readonly, expect_block, label):
