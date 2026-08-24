@@ -533,6 +533,25 @@ def merge_cmd(project: Path, t: Ticket, cfg: dict) -> str:
             f"git -C {proj} merge --ff-only {shlex.quote(t.branch)}\n")
 
 
+def unwind_cmd(sha: str) -> str:
+    """Discard every commit after `sha` on the current branch.
+
+    `sha` is the branch tip recorded when the cheap route's `implementing` was
+    spawned, so everything after it is that stage's own work. The ancestor
+    guard is what stops a stale or hand-edited value from resetting the branch
+    onto an unrelated commit instead of refusing. `git clean -fd` runs because
+    an untracked file `implementing` left behind survives `git reset --hard`
+    and can make `test_file` pass at the very gate this repair exists to
+    satisfy; `-x` is left off so ignored build artefacts, not the cheap
+    route's work, survive.
+    """
+    q = shlex.quote(sha)
+    return (f'git merge-base --is-ancestor {q} HEAD || {{ echo "{q} is not an '
+            f'ancestor of HEAD -- refusing to unwind"; exit 1; }}\n'
+            f"git log --oneline {q}..HEAD\n"
+            f"git reset --hard {q} && git clean -fd\n")
+
+
 def note_wait(t: Ticket, held: tuple[str, str] | None) -> None:
     """Record why `files_conflict` is holding `t`, so `ls` can say so.
 

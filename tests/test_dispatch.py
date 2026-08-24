@@ -1069,3 +1069,43 @@ def test_a_ticket_held_at_merging_is_rebased_before_the_merge_is_attempted():
     supervisor.finish(d, rec)
     shutil.rmtree(d, ignore_errors=True)
     shutil.rmtree(d, ignore_errors=True)
+
+
+def test_the_unwind_refuses_a_sha_that_is_not_on_the_branch():
+    """`unwind_cmd()` resets a branch to a recorded tip -- but only if that tip
+    is really on the branch. A stale or hand-edited sha must refuse rather than
+    reset onto whatever it happens to name."""
+    d, sh = git_project()
+    wt = supervisor.ensure_worktree(
+        d, {"id": "TICKET-001", "branch": "ticket/001"}, {"base": "main"})
+    (wt / "test_thing.py").write_text("")
+    _commit(wt, "'triage: the failing test'")
+    triage_sha = subprocess.run("git rev-parse HEAD", shell=True, cwd=wt,
+                                capture_output=True, text=True).stdout.strip()
+    (wt / "f.py").write_text("fixed\n")
+    _commit(wt, "'implementing: the fix'")
+    (wt / "scratch.py").write_text("untracked leftover\n")
+    (d / "g.py").write_text("base moved\n")
+    sh("git add -A && git commit -qm 'base moved'")
+    main_sha = sh("git rev-parse HEAD").stdout.strip()
+
+    head_before = subprocess.run("git rev-parse HEAD", shell=True, cwd=wt,
+                                 capture_output=True, text=True).stdout.strip()
+    bad = subprocess.run(supervisor.unwind_cmd(main_sha), shell=True, cwd=wt,
+                         capture_output=True, text=True)
+    assert bad.returncode != 0, "a sha not on the branch must not reset it"
+    assert "is not an ancestor of HEAD" in bad.stdout + bad.stderr
+    head_after = subprocess.run("git rev-parse HEAD", shell=True, cwd=wt,
+                                capture_output=True, text=True).stdout.strip()
+    assert head_after == head_before, "a refused unwind must not move HEAD"
+
+    good = subprocess.run(supervisor.unwind_cmd(triage_sha), shell=True, cwd=wt,
+                          capture_output=True, text=True)
+    assert good.returncode == 0, good.stdout + good.stderr
+    head_final = subprocess.run("git rev-parse HEAD", shell=True, cwd=wt,
+                                capture_output=True, text=True).stdout.strip()
+    assert head_final == triage_sha
+    assert (wt / "test_thing.py").is_file(), "triage's test commit was discarded"
+    assert (wt / "f.py").read_text() == "base\n", "the fix's edit to f.py survived"
+    assert not (wt / "scratch.py").exists(), "an untracked leftover survived the unwind"
+    shutil.rmtree(d, ignore_errors=True)
