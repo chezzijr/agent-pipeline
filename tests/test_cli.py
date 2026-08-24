@@ -101,6 +101,23 @@ def test_resume_grant_refuses_a_counter_the_ticket_does_not_have():
     shutil.rmtree(d)
 
 
+def test_resume_grant_refuses_a_repeated_key_that_would_sum_past_have():
+    d = Path(tempfile.mkdtemp())
+    cli(d, "new", "t")
+    cli(d, "resume", "TICKET-001", "--stage", "planning")
+    t = Ticket.load(d / ".project/tickets/TICKET-001.md")
+    t.counters["plan_validation_attempts"] = 1
+    t.save()
+
+    r = cli(d, "resume", "TICKET-001", "--stage", "planning",
+            "--grant", "plan_validation_attempts", "plan_validation_attempts")
+    assert r.returncode != 0, r.stdout
+    assert "cannot grant 2" in r.stderr, r.stderr
+    t = Ticket.load(d / ".project/tickets/TICKET-001.md")
+    assert t.counters["plan_validation_attempts"] == 1
+    shutil.rmtree(d)
+
+
 def test_resume_refuses_reset_and_grant_on_one_counter():
     d = Path(tempfile.mkdtemp())
     cli(d, "new", "t")

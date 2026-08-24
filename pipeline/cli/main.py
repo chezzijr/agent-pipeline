@@ -197,11 +197,13 @@ def cmd_resume(args) -> None:
     if args.stage not in KNOWN_STAGES:
         die(f"`{args.stage}` is not a stage: {', '.join(sorted(KNOWN_STAGES))}")
     t = Ticket.find(project, args.id)
-    grants = [parse_grant(s) for s in args.grant or []]
-    clash = {k for k, _ in grants} & set(args.reset or [])
+    grants: dict[str, int] = {}
+    for key, n in (parse_grant(s) for s in args.grant or []):
+        grants[key] = grants.get(key, 0) + n
+    clash = set(grants) & set(args.reset or [])
     if clash:
         die(f"`--reset` and `--grant` both name {', '.join(sorted(clash))}: pick one")
-    for key, n in grants:
+    for key, n in grants.items():
         have = t.counters.get(key)
         if have is None:
             die(f"{t.id} has no counter `{key}` "
@@ -214,7 +216,7 @@ def cmd_resume(args) -> None:
     for key in args.reset or []:
         t.counters[key] = 0
     granted = []
-    for key, n in grants:
+    for key, n in grants.items():
         have = t.counters[key]
         t.counters[key] = have - n
         granted.append(f"`{key}` {have} -> {have - n}")
