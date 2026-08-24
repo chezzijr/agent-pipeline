@@ -386,6 +386,11 @@ def spawn(project: Path, wt: Path, tid: str, stage: str, hcfg: dict,
                 key="interactive_cmd" if interactive else "cmd")
     fh = log.open("wb")
     fh.write(f"$ {cmd}\n\n".encode())
+    if interactive:
+        # the width `render_pty()` replays at; interactive-only, because an
+        # ESC in a batch log sends stream-json through pyte instead of
+        # rendering it (DEC-039)
+        fh.write(host.geom_marker(host.ROWS, host.COLS))
     fh.flush()
     env = project_env()
     env["PIPELINE_STAGE"] = stage

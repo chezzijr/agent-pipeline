@@ -633,6 +633,10 @@ class Server(Poller):
             raise PipelineError("another client holds the writer")
         host.set_winsize(rec["pipe"].fileno(), rows, cols)
         rec["screen"].resize(rows, cols)
+        # same point the live screen resizes, so a replay reproduces that
+        # screen instead of reflowing bytes the daemon fed after the resize
+        rec["fh"].write(host.geom_marker(rows, cols))
+        rec["fh"].flush()
         return {"rows": rows, "cols": cols}
 
     def _op_detach(self, conn, rid, req) -> dict:

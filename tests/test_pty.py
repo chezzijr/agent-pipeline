@@ -249,6 +249,25 @@ def test_resize_reaches_both_the_child_and_the_screen():
         server.close()
 
 
+def test_resize_records_the_width_in_the_log():
+    """`_op_resize` writes the new geometry into the log, so a later replay
+    knows the width the daemon actually resized to."""
+    tmp = Path(tempfile.mkdtemp())
+    st = Store(tmp / "events.db")
+    server = Server(st, tmp / "d.sock")
+    rec = child(tmp, server, cmd=r'read x')
+    server.states["/p"] = {"TICKET-001": rec}
+    a, _peer = client(server)
+    try:
+        ask(server, a, id=1, op="attach", ticket="TICKET-001")
+        assert ask(server, a, id=2, op="resize", rows=50, cols=160)["ok"]
+        assert host.geom_marker(50, 160) in (tmp / "stage.log").read_bytes()
+    finally:
+        rec["proc"].terminate()
+        supervisor.close_child(rec)
+        server.close()
+
+
 def test_input_after_the_session_is_replaced_does_not_reach_the_new_one():
     """`conn.attached` is a name plus a session. Matching on the name alone
     would rebind a stale client to whatever runs for that ticket next: it
@@ -401,6 +420,30 @@ def test_an_interactive_stage_runs_headless_when_nothing_can_attach():
                                harness("fake"), attachable)
         assert rec["mode"] == "interactive", "a daemon-hosted stage lost its PTY"
         assert rec["screen"] is not None
+    finally:
+        rec["proc"].terminate()
+        rec["proc"].wait()
+        supervisor.close_child(rec)
+        plain.close()
+        attachable.close()
+
+
+def test_an_interactive_log_opens_with_its_geometry():
+    """Only an interactive log gets the opening marker: an ESC in a batch
+    log would send stream-json through pyte instead of rendering it
+    (DEC-039)."""
+    tmp = Path(tempfile.mkdtemp())
+    plain, attachable = Poller(), Attachable()
+    try:
+        rec = supervisor.spawn(tmp, tmp, "TICKET-001", "planning",
+                               harness("fake"), plain)
+        rec["proc"].wait()
+        assert b"\x1b]9999;" not in rec["log"].read_bytes()
+        supervisor.close_child(rec)
+
+        rec = supervisor.spawn(tmp, tmp, "TICKET-001", "planning",
+                               harness("fake"), attachable)
+        assert host.geom_marker(host.ROWS, host.COLS) in rec["log"].read_bytes()
     finally:
         rec["proc"].terminate()
         rec["proc"].wait()
