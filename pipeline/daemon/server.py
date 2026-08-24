@@ -26,7 +26,9 @@ from pathlib import Path
 from pipeline import __version__
 from pipeline.core import PipelineError
 from pipeline.core.machine import HUMAN_GATES, TERMINAL
-from pipeline.core.ticket import Ticket, all_tickets, now
+from pipeline.core.ticket import Ticket, all_tickets, lease_expiry, now
+# `lease_expiry()` is reused as this codebase's one total ISO parser: a
+# hand-edited `waiting.since` must not raise inside `ls`.
 from pipeline.daemon import registry
 from pipeline.pty import host
 
@@ -47,7 +49,8 @@ PTY_INPUT = 4096  # one write into a pty's input buffer. Larger short-writes,
                   # and a silently truncated paste into an approval prompt is
                   # worse than an error the client can chunk around
 MAX_LINE = 1 << 20
-STALE_HOURS = 4  # overlap ordering is silent; surface anything sitting still
+STALE_HOURS = 4  # overlap ordering now reports itself in `waiting`; this bound
+                 # still surfaces a ticket sitting still for any other reason
 SENT = object()   # "this op already queued its own frames" -- see _op_subscribe
 
 # sizeof(sockaddr_un.sun_path): 108 on Linux, 104 on macOS and the BSDs.
@@ -83,6 +86,18 @@ def _dim(req: dict, key: str) -> int:
     return v
 
 
+def waiting_text(w) -> str:
+    """`ls`'s one-line rendering of a `waiting` reason, or `""` for none."""
+    if not (isinstance(w, dict) and w.get("on") and w.get("file")):
+        return ""
+    text = f"waiting on {w['on']} ({w['file']})"
+    since = lease_expiry(w.get("since"))
+    if since is None:
+        return text
+    m = int((now() - since).total_seconds() // 60)
+    return text + (f" {m}m" if m < 60 else f" {m // 60}h")
+
+
 def ticket_rows(project: Path, inflight: dict | None = None) -> list[dict]:
     """One row per ticket in one project.
 
@@ -112,6 +127,9 @@ def ticket_rows(project: Path, inflight: dict | None = None) -> list[dict]:
                                                              timezone.utc)
                           > timedelta(hours=STALE_HOURS)),
                 "last_session": t.extra.get("last_session"),
+                # the dispatcher's last observation, advisory display only --
+                # never read back as control flow
+                "waiting": w if isinstance(w := t.extra.get("waiting"), dict) else None,
                 "mode": (rec or {}).get("mode", "batch"),
                 "title": summary[0] if summary else ""})
         except Exception as e:

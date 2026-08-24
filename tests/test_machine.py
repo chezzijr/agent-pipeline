@@ -149,6 +149,19 @@ def test_overlapping_tickets_do_not_run_together():
     assert not M.files_conflict({"files_declared": []}, [{"files_declared": ["a.py"]}])
 
 
+def test_conflict_holder_names_the_first_holder_and_its_file():
+    mine = {"files_declared": ["a.py", "shared.py"]}
+    inflight = [{"id": "TICKET-002", "files_declared": ["b.py"]},
+                {"id": "TICKET-003", "files_declared": ["shared.py", "a.py"]}]
+    assert M.conflict_holder(mine, inflight) == ("TICKET-003", "a.py")
+    assert M.conflict_holder(mine, []) is None
+    assert M.conflict_holder(mine, [{"id": "TICKET-004", "files_declared": ["z.py"]}]) is None
+
+    assert M.files_conflict(mine, [{"files_declared": ["shared.py"]}])
+    assert not M.files_conflict(mine, [{"files_declared": ["b.py"]}])
+    assert not M.files_conflict(mine, []), "nothing in flight cannot conflict"
+
+
 def test_control_fields_are_the_dispatchers_alone():
     assert {"stage", "counters", "branch", "id", "lease"} <= M.CONTROL_FIELDS
     for field in ("test_file", "files_declared"):

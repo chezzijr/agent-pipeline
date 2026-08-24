@@ -23,10 +23,11 @@ from helpers import ROOT, project
 for var in ("XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_RUNTIME_DIR"):
     os.environ[var] = tempfile.mkdtemp()
 from pipeline.core import PipelineError
+from pipeline.core.config import harness
 from pipeline.core.ticket import Ticket
 from pipeline.daemon import registry
 from pipeline.daemon.server import (OUTBOX, Conn, Poller, Server,
-                                    ticket_rows)
+                                    ticket_rows, waiting_text)
 from pipeline.daemon.store import Store
 from pipeline.daemon import supervisor
 from pipeline.daemon.supervisor import holder_alive
@@ -447,9 +448,144 @@ def test_an_expired_lease_reads_as_stale_not_as_leased():
     assert row["lease"]["expires"], "the fixture must still carry a dead lease"
     assert row["leased"] is False and row["stale"] is True, row
 
+
+def test_a_recorded_wait_reason_reaches_the_ls_row():
+    d = project()
+    t = Ticket.find(d, "TICKET-001")
+    t.extra["waiting"] = {"on": "TICKET-002", "file": "thing.py",
+                          "since": "2026-08-24T08:00:00+00:00"}
+    t.save()
+
+    row = ticket_rows(d)[0]
+    assert row["waiting"] == t.extra["waiting"]
+    assert waiting_text(row["waiting"]).startswith("waiting on TICKET-002 (thing.py)")
+
+
+def test_an_unreadable_wait_reason_does_not_break_ls():
+    d = project()
+    t = Ticket.find(d, "TICKET-001")
+    t.extra["waiting"] = "nonsense"
+    t.save()
+
+    assert ticket_rows(d)[0]["waiting"] is None
+    assert waiting_text(None) == ""
+    assert waiting_text({"on": "TICKET-002", "file": "thing.py"}) == \
+        "waiting on TICKET-002 (thing.py)", "a missing `since` renders no age"
+
+
+def test_a_ticket_held_by_files_conflict_reads_the_same_as_an_idle_one():
+    """TICKET-048: `files_conflict()` makes `start()` return `(False, None)`
+    without touching the held ticket, so nothing records that it is waiting
+    rather than simply untouched. `ticket_rows()` is the single source for
+    `ls`, so if its row for a held ticket matches its row for an idle one,
+    ordering is indistinguishable from a hang."""
+    d = project()
+    t1 = Ticket.find(d, "TICKET-001")
+    t1.stage = "verifying"
+    t1.frontmatter()["files_declared"] = ["thing.py"]
+    t1.save()
+
+    idle_row = ticket_rows(d)[0]
+
+    t2 = Ticket.find(d, "TICKET-001")  # stand-in for an inflight TICKET-002
+    t2.id = "TICKET-002"
+    t2.frontmatter()["files_declared"] = ["thing.py"]
+    inflight = {"TICKET-002": {"meta": t2}}
+
+    did, rec = supervisor.start(d, d / ".project/tickets/TICKET-001.md",
+                                 harness("fake"), inflight)
+    assert (did, rec) == (False, None), "files_conflict must hold, not fail"
+
+    held_row = ticket_rows(d)[0]
+    assert held_row != idle_row, (
+        "a ticket held by files_conflict must say so -- naming the ticket "
+        "and the file that holds it -- instead of reading identical to an "
+        f"idle ticket's row: {held_row}")
+
+
+def test_a_ticket_held_by_files_conflict_names_its_holder():
+    """Recording a wait must not move the ticket."""
+    d = project()
+    t1 = Ticket.find(d, "TICKET-001")
+    t1.stage = "verifying"
+    t1.frontmatter()["files_declared"] = ["thing.py"]
+    t1.save()
+
+    t2 = Ticket.find(d, "TICKET-001")  # stand-in for an inflight TICKET-002
+    t2.id = "TICKET-002"
+    t2.frontmatter()["files_declared"] = ["thing.py"]
+    inflight = {"TICKET-002": {"meta": t2}}
+
+    did, rec = supervisor.start(d, d / ".project/tickets/TICKET-001.md",
+                                 harness("fake"), inflight)
+    assert (did, rec) == (False, None)
+
+    row = ticket_rows(d)[0]
+    assert row["waiting"]["on"] == "TICKET-002"
+    assert row["waiting"]["file"] == "thing.py"
+    assert Ticket.find(d, "TICKET-001").stage == "verifying"
+
+
+def test_a_repeated_wait_does_not_rewrite_the_ticket():
+    """`ticket_rows()` computes `stale` from the ticket file's mtime, so a
+    per-tick write would hide a stuck ticket forever."""
+    d = project()
+    t1 = Ticket.find(d, "TICKET-001")
+    t1.stage = "verifying"
+    t1.frontmatter()["files_declared"] = ["thing.py"]
+    t1.save()
+
+    t2 = Ticket.find(d, "TICKET-001")
+    t2.id = "TICKET-002"
+    t2.frontmatter()["files_declared"] = ["thing.py"]
+    inflight = {"TICKET-002": {"meta": t2}}
+
+    path = d / ".project/tickets/TICKET-001.md"
+    supervisor.start(d, path, harness("fake"), inflight)
+    mtime = path.stat().st_mtime_ns
+
+    supervisor.start(d, path, harness("fake"), inflight)
+    assert path.stat().st_mtime_ns == mtime
+
+
+def test_the_wait_reason_clears_when_the_conflict_clears():
+    """The second `start()` goes on to `bail("could not create a worktree")`
+    because `project()` is not a git repo. The assertion is on `waiting` alone."""
+    d = project()
+    t1 = Ticket.find(d, "TICKET-001")
+    t1.stage = "verifying"
+    t1.frontmatter()["files_declared"] = ["thing.py"]
+    t1.save()
+
+    t2 = Ticket.find(d, "TICKET-001")
+    t2.id = "TICKET-002"
+    t2.frontmatter()["files_declared"] = ["thing.py"]
+    inflight = {"TICKET-002": {"meta": t2}}
+
+    path = d / ".project/tickets/TICKET-001.md"
+    supervisor.start(d, path, harness("fake"), inflight)
+
+    supervisor.start(d, path, harness("fake"), {})
+    assert ticket_rows(d)[0]["waiting"] is None
+
+
+def test_ls_reports_the_wait_reason_with_no_daemon():
+    d = project()
+    t1 = Ticket.find(d, "TICKET-001")
+    t1.stage = "verifying"
+    t1.frontmatter()["files_declared"] = ["thing.py"]
+    t1.save()
+
+    t2 = Ticket.find(d, "TICKET-001")
+    t2.id = "TICKET-002"
+    t2.frontmatter()["files_declared"] = ["thing.py"]
+    inflight = {"TICKET-002": {"meta": t2}}
+    supervisor.start(d, d / ".project/tickets/TICKET-001.md", harness("fake"), inflight)
+
     r = subprocess.run([sys.executable, "-m", "pipeline", "--project", str(d), "ls"],
                        cwd=ROOT, capture_output=True, text=True)
-    assert "STALE" in r.stdout and "LEASED" not in r.stdout, r.stdout
+    assert r.returncode == 0, r.stderr
+    assert "waiting on TICKET-002 (thing.py)" in r.stdout, r.stdout
 
 
 def test_ls_with_no_project_covers_every_registered_project():

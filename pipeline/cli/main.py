@@ -18,7 +18,8 @@ from pipeline.core.machine import KNOWN_STAGES
 from pipeline.core.ticket import Ticket, now, tickets_dir
 from pipeline.core.worktree import exclude_project_dir, worktree
 from pipeline.daemon import registry
-from pipeline.daemon.server import STALE_HOURS, socket_path, ticket_rows
+from pipeline.daemon.server import (STALE_HOURS, socket_path, ticket_rows,
+                                    waiting_text)
 from pipeline.daemon.store import Store, state_dir
 from pipeline.daemon.supervisor import run
 from pipeline.stream import StreamReader
@@ -215,6 +216,7 @@ def cmd_ls(args) -> None:
     for r in rows:
         mark = ("LEASED" if r.get("running") or r.get("leased")
                 else f"STALE>{STALE_HOURS}h" if r.get("stale") else "")
+        mark = " ".join(x for x in (mark, waiting_text(r.get("waiting"))) if x)
         print(f"{r['id']:<12} {r.get('stage', '?'):<17} "
               f"{r.get('class', '?'):<9} {r.get('counters', {})} {mark}")
         last = r.get("last_session")

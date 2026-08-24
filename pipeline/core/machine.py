@@ -191,8 +191,22 @@ def apply_claims(meta: dict, stage: str, res: dict) -> None:
             meta[field] = res[field]
 
 
+def conflict_holder(meta: dict, inflight_meta: list[dict]) -> tuple[str, str] | None:
+    """The first inflight ticket that overlaps `meta`'s `files_declared`, and
+    one file it holds -- `sorted(...)[0]` so one holder always names the same
+    file. `None` when nothing overlaps."""
+    mine = set(meta.get("files_declared") or [])
+    for o in inflight_meta:
+        overlap = mine & set(o.get("files_declared") or [])
+        if overlap:
+            return (str(o.get("id") or "?"), sorted(overlap)[0])
+    return None
+
+
 def files_conflict(meta: dict, inflight_meta: list[dict]) -> bool:
     """Two tickets touching the same file are ordered, not run together --
-    otherwise their branches merge into a conflict nobody asked for."""
-    mine = set(meta.get("files_declared") or [])
-    return any(mine & set(o.get("files_declared") or []) for o in inflight_meta)
+    otherwise their branches merge into a conflict nobody asked for.
+
+    The bool is the ordering decision; `conflict_holder()`'s tuple is what
+    `ls` reports."""
+    return conflict_holder(meta, inflight_meta) is not None
