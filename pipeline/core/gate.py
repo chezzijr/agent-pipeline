@@ -345,7 +345,25 @@ def gate(project: Path, tid: str, workdir: Path | None = None) -> tuple[bool, li
                     f"plan step names no declared file: {s!r} -- {PLAN_FILE_RULE}")
 
     crit = secs.get("Acceptance criteria", "")
-    for line in [l for l in crit.splitlines() if CRIT_ITEM_RE.match(l)]:
+    crit_lines = crit.splitlines()
+    crits: list[str] = []
+    in_crit = False
+    for raw in crit_lines:
+        if not raw.strip():
+            continue
+        # The continuation arm runs BEFORE the marker arm, the opposite order
+        # to the `## Plan` scan above: `CRIT_ITEM_RE` matches a bare leading
+        # `-`, so an indented continuation beginning `--porcelain` would still
+        # read as a criterion of its own if the marker arm ran first. That
+        # exact shape escalated TICKET-036.
+        if in_crit and re.match(r"^\s+\S", raw):
+            crits[-1] += " " + raw.strip()
+        elif CRIT_ITEM_RE.match(raw):
+            crits.append(raw.strip())
+            in_crit = True
+        else:
+            in_crit = False
+    for c in crits:
         # a backticked token is not enough -- "`10ms`" is a metric, not a test.
         # `pytest` is named explicitly: `\btest` needs a word boundary before
         # `test`, and `py` is a word character, so "run `pytest -q`" -- the
@@ -354,8 +372,8 @@ def gate(project: Path, tid: str, workdir: Path | None = None) -> tuple[bool, li
         # no other complaint about. Not `\btest` without the boundary: that
         # matches `latest`, `greatest`, `contest`.
         if not re.search(r"\bpytest\b|\btest[_a-zA-Z0-9]*\b|::|\b\w+_test\b|\btests?/",
-                         line, re.I):
-            findings.append(f"acceptance criterion names no test: {line.strip()}")
+                         c, re.I):
+            findings.append(f"acceptance criterion names no test: {c}")
 
     seen: dict[str, str] = {}
     for e in t.thread():

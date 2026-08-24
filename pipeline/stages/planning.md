@@ -71,6 +71,8 @@ Fill in these sections:
   that says "investigate X" is a planning failure: do the investigation now.
   Prose paragraphs instead of numbered steps fail Tier A outright.
 - `## Acceptance criteria` -- each one falsifiable and mapped to a named test.
+  A criterion that wraps must indent its continuation lines; an unindented
+  line reads as a criterion of its own and is checked alone.
 - `## Rollback` -- what to revert if this ships and breaks.
 
 Report the full list of files the plan will modify in your result's

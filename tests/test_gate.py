@@ -189,6 +189,19 @@ def test_a_wrapped_criterion_is_checked_whole_not_first_line_only():
     shutil.rmtree(d)
 
 
+def test_a_wrapped_criterion_whose_continuation_starts_with_a_flag_passes():
+    """TICKET-036 escalated on this exact shape: `CRIT_ITEM_RE` matches the
+    leading `-` of `--porcelain`, so the continuation arm must run before the
+    marker arm or the flag line is still read as a criterion of its own."""
+    d = project(FIXTURE.replace(
+        "- `test_broken` passes",
+        "- `grep -rF probe tests/` prints nothing and `git status\n"
+        "  --porcelain` prints nothing"))
+    ok, failures = gate(d, "TICKET-001")
+    assert ok, failures
+    shutil.rmtree(d)
+
+
 def test_gate_blocks_a_failure_that_is_not_the_reported_one():
     """A red test proves nothing if it is red for the wrong reason."""
     d = project(FIXTURE.replace("expect: test_broken", "expect: KeyError: 'evict'"))
