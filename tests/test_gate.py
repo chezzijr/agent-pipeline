@@ -409,3 +409,25 @@ def test_a_whole_suite_criterion_naming_pytest_is_accepted():
     assert not any("pytest" in f for f in named), named
     assert any("latest build" in f for f in named), named
     shutil.rmtree(d)
+
+
+def test_a_regate_of_an_unchanged_ticket_does_not_duplicate_the_fenced_block():
+    """TICKET-046: `gate()` appends one `## Thread` entry per run, and each
+    entry quotes `out[-1200:]` in full. A re-gate on an unchanged ticket
+    re-runs the same test against the same code, so the branch fence and the
+    base fence it produces are byte-identical to the ones the first gate run
+    already wrote. Nothing dedupes them.
+
+    Fails today: two runs put two copies of the same fenced block in
+    `## Thread` instead of one."""
+    d = project()
+    ok1, _ = gate(d, "TICKET-001")
+    assert ok1
+    ok2, _ = gate(d, "TICKET-001")
+    assert ok2
+    thread = T.sections((d / ".project/tickets/TICKET-001.md").read_text())["Thread"]
+    fences = re.findall(r"```\n.*?\n```", thread, re.S)
+    assert len(fences) == len(set(fences)), \
+        f"expected every fenced block to be unique, got {len(fences)} blocks, " \
+        f"{len(set(fences))} unique"
+    shutil.rmtree(d)
