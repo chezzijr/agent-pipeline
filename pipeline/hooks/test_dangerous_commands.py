@@ -30,6 +30,8 @@ BLOCKED_ALWAYS = [
     "doas rm -rf /",
     "echo hi # note\nsudo rm -rf /etc",
     "echo x >\nrm -rf /",
+    "rm -rf \\\n/",
+    "git clean \\\n  -fd",
 ]
 ALLOWED_ALWAYS = [
     "pytest -x", "git push origin ticket/001", "rm -rf build/",
