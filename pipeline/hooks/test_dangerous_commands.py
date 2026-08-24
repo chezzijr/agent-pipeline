@@ -28,6 +28,8 @@ BLOCKED_ALWAYS = [
     "git push --force-with-lease origin main",
     "rm -rf $HOME",
     "doas rm -rf /",
+    "echo hi # note\nsudo rm -rf /etc",
+    "echo x >\nrm -rf /",
 ]
 ALLOWED_ALWAYS = [
     "pytest -x", "git push origin ticket/001", "rm -rf build/",
@@ -35,6 +37,7 @@ ALLOWED_ALWAYS = [
     "python3 -c 'print(1)'", "git commit -am wip", "echo hi > out.txt",
     "rm -rf ./node_modules", "git commit -m 'fix'", "python3 -m pytest",
     "grep -rn evict src/", "git diff main...HEAD", "cargo build --release",
+    'uv run python -c "\nfrom pipeline.core.machine import BOUNDS\nprint(BOUNDS)\n"',
 ]
 BLOCKED_READONLY = [
     "sed -i s/a/b/ x.py", "echo hi > file.txt", "git commit -am wip",
@@ -52,6 +55,13 @@ BLOCKED_READONLY = [
     "cargo run",
     "npm install",
     "echo $(whoami)",
+    "sed -ni 's/a/b/p' x.py",
+    "sed --in-place s/a/b/ x.py",
+    "sed -i.bak s/a/b/ x.py",
+    "cat a.py\ncd /tmp",
+    'python3 -c "\nimport os\n"',
+    "python3 - <<PY\nimport os\nPY",
+    "cat a >\nfile",
 ]
 ALLOWED_READONLY = [
     "pytest -x", "git diff main...HEAD", "grep -rn foo .", "git log --oneline",
@@ -62,6 +72,10 @@ ALLOWED_READONLY = [
     "git diff main...HEAD | head -50",
     "sed 's/a/b/' thing.py",
     "pytest -x \\\ntests/test_x.py",
+    "sed -n '10,20p' README.md",
+    "sed -E 's/a+/b/' thing.py",
+    'grep -rn "a\nb" .',
+    "cat a.py\ncat b.py",
 ]
 
 def check(cmds, readonly, expect_block, label):
