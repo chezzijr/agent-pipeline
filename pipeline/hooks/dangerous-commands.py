@@ -33,7 +33,8 @@ import re
 import shlex
 import sys
 
-OPERATORS = {";", "&&", "||", "|", "&", "\n"}
+PUNCTUATION = "();<>|&\n"            # what shlex emits as punctuation tokens
+SEPARATORS = {"&", "|", ";", "\n"}   # a run of these separates two commands
 SHELLS = {"sh", "bash", "zsh", "fish", "dash", "ksh", "csh", "tcsh", "shell"}
 HOME_ISH = re.compile(r"^(/|~|~/|\$HOME/?|\$\{HOME\}/?|/\*)$")
 
@@ -61,20 +62,22 @@ PY_MODULES_OK = {"pytest", "unittest", "tox", "nox"}
 
 def segments(command: str) -> list[list[str]] | None:
     """Split a shell command into argv lists, one per segment. None if the
-    string will not lex -- which is itself a reason to refuse."""
-    if "\n" in command:
-        # shlex treats a newline as plain whitespace, which would weld two
-        # separate commands into one argv and hide the second from every rule
-        out = []
-        for line in command.split("\n"):
-            if not line.strip():
-                continue
-            part = segments(line)
-            if part is None:
-                return None
-            out.extend(part)
-        return out
-    lex = shlex.shlex(command, posix=True, punctuation_chars=True)
+    string will not lex -- which is itself a reason to refuse.
+
+    A newline separates two commands only where a shell would separate
+    them. It is a punctuation char here rather than whitespace, so shlex
+    emits it as its own token outside quotes and keeps it in the token
+    inside a quoted string or after a backslash. Splitting the raw string
+    on newlines before lexing -- what this did until TICKET-057 -- refused
+    every quoted multi-line command as "does not parse".
+
+    `commenters` is off deliberately. shlex eats the newline that ends a
+    comment, so with comments on, `echo hi # note<newline>sudo rm -rf
+    /etc` lexes as one argv and the `sudo` rule never sees it.
+    """
+    lex = shlex.shlex(command, posix=True, punctuation_chars=PUNCTUATION)
+    lex.whitespace = " \t\r"
+    lex.commenters = ""
     lex.whitespace_split = True
     try:
         tokens = list(lex)
@@ -82,7 +85,11 @@ def segments(command: str) -> list[list[str]] | None:
         return None
     out, current = [], []
     for tok in tokens:
-        if tok in OPERATORS or set(tok) <= {"&", "|", ";"} and tok:
+        # a punctuation run carrying a newline separates too: shlex welds
+        # `>` to the newline after it, and `echo x ><newline>rm -rf /`
+        # must not hide the `rm` inside echo's argv
+        if tok and (set(tok) <= SEPARATORS
+                    or "\n" in tok and set(tok) <= set(PUNCTUATION)):
             if current:
                 out.append(current)
             current = []
