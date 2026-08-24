@@ -34,6 +34,9 @@ PLAN_STEP_RULE = (
 PLAN_FILE_RULE = (
     "spell the path out in the step (e.g. `pipeline/core/machine.py`) and "
     "declare that same path in `files_declared`")
+# The one regex `gate()` and `plan_steps()` both use for "what is a step" --
+# PLAN_STEP_RULE in prose, this in code.
+PLAN_STEP_RE = re.compile(r"^\s*\d+[.)]")
 
 # A criterion is a criterion in any list form -- `-`, `*`, `1.` or `1)`. The
 # numbered markers are the same `\d+[.)]` the `## Plan` scan below accepts.
@@ -58,6 +61,16 @@ def _entry_ref(raw: str) -> str:
 
 def _ref(where: str) -> str:
     return f"*-- identical output, already quoted in {where} --*"
+
+
+def plan_steps(plan: str) -> int:
+    """The counting half of `PLAN_STEP_RULE`: how many numbered steps `plan`
+    has, ignoring anything inside a fenced block. This is the source of
+    `counters["plan_steps"]`."""
+    raws = plan.splitlines()
+    fenced = _fenced(raws)
+    return sum(1 for i, line in enumerate(raws)
+               if not fenced[i] and PLAN_STEP_RE.match(line))
 
 
 def _blocks(text: str) -> list[tuple[int, int, str]]:
@@ -306,7 +319,7 @@ def gate(project: Path, tid: str, workdir: Path | None = None) -> tuple[bool, li
             i += 1
             if not line.strip():
                 continue
-            if re.match(r"^\s*\d+[.)]", line):
+            if PLAN_STEP_RE.match(line):
                 steps.append(line.strip())
                 in_step = True
             elif in_step and re.match(r"^\s+\S", line):

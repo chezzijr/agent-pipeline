@@ -7,7 +7,7 @@ from pathlib import Path
 
 from helpers import FIXTURE, project
 from pipeline.core import ticket as T
-from pipeline.core.gate import _dedupe, gate
+from pipeline.core.gate import _dedupe, gate, plan_steps
 
 
 def _set_digest(body: str) -> str:
@@ -482,3 +482,16 @@ def test_a_failed_gate_returns_a_reference_not_a_second_copy_of_the_output():
     thread = T.sections((d / ".project/tickets/TICKET-001.md").read_text())["Thread"]
     assert thread.count("nope") == 1, thread
     shutil.rmtree(d, ignore_errors=True)
+
+
+def test_plan_steps_counts_only_unfenced_numbered_steps():
+    plan = (
+        "1. fix thing.py\n"
+        "   continue the fix\n"
+        "2. fix other.py\n"
+        "   ```\n"
+        "   2. not a step\n"
+        "   ```\n"
+        "3. fix third.py\n"
+    )
+    assert plan_steps(plan) == 3
