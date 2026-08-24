@@ -183,6 +183,15 @@ def cmd_answer(args) -> None:
     print(f"{args.id}: -> planning")
 
 
+def parse_grant(spec: str) -> tuple[str, int]:
+    """`<counter>` or `<counter>=<n>`: which counter, and how many spent
+    attempts to hand back. Bare means one."""
+    key, eq, raw = spec.partition("=")
+    if not key or (eq and not (raw.isdigit() and int(raw) >= 1)):
+        die(f"`--grant {spec}`: want `<counter>` or `<counter>=<n>` with n >= 1")
+    return key, int(raw) if eq else 1
+
+
 def cmd_resume(args) -> None:
     project = proj(args)
     if args.stage not in KNOWN_STAGES:
@@ -191,11 +200,20 @@ def cmd_resume(args) -> None:
     t.stage = args.stage
     for key in args.reset or []:
         t.counters[key] = 0
+    granted = []
+    for key, n in [parse_grant(s) for s in args.grant or []]:
+        have = t.counters.get(key, 0)
+        t.counters[key] = have - n
+        granted.append(f"`{key}` {have} -> {have - n}")
     t.release_lease()
-    t.append("human", "note",
-             f"**resumed** by human -> `{args.stage}`, reset {args.reset or []}")
+    who = os.environ.get("USER", "human")
+    note = f"**resumed** by {who} -> `{args.stage}`, reset {args.reset or []}"
+    if granted:
+        note += f", granted {', '.join(granted)}"
+    t.append("human", "note", note, by=who)
     t.save()
-    print(f"{args.id}: -> {args.stage}")
+    print(f"{args.id}: -> {args.stage}" +
+          (f" ({', '.join(granted)})" if granted else ""))
 
 
 def cmd_ls(args) -> None:
@@ -496,7 +514,7 @@ def main() -> None:
     p = sub.add_parser("approve"); p.add_argument("id"); p.add_argument("--by"); p.set_defaults(fn=cmd_approve)
     p = sub.add_parser("reject"); p.add_argument("id"); p.add_argument("reason"); p.set_defaults(fn=cmd_reject)
     p = sub.add_parser("answer"); p.add_argument("id"); p.add_argument("text"); p.set_defaults(fn=cmd_answer)
-    p = sub.add_parser("resume"); p.add_argument("id"); p.add_argument("--stage", required=True); p.add_argument("--reset", nargs="*"); p.set_defaults(fn=cmd_resume)
+    p = sub.add_parser("resume"); p.add_argument("id"); p.add_argument("--stage", required=True); p.add_argument("--grant", nargs="*", metavar="COUNTER[=N]", help="hand back N spent attempts (default 1) on a counter; a grant only subtracts"); p.add_argument("--reset", nargs="*"); p.set_defaults(fn=cmd_resume)
     p = sub.add_parser("logs"); p.add_argument("id"); p.add_argument("-f", "--follow", action="store_true"); p.set_defaults(fn=cmd_logs)
     p = sub.add_parser("ls", help="tickets (via the daemon if one is running)"); p.add_argument("-v", "--verbose", action="store_true"); p.set_defaults(fn=cmd_ls)
     p = sub.add_parser("status", help="is the daemon running"); p.set_defaults(fn=cmd_daemon_status)

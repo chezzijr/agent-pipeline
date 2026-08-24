@@ -37,8 +37,8 @@ def test_resume_refuses_a_stage_that_does_not_exist():
 
 
 def test_resume_reset_only_zeroes_it_cannot_grant_back_one():
-    """--reset always sets a counter to 0, even when a human wants to hand
-    back only the one attempt that was wasted, not the whole budget."""
+    """--grant hands back exactly what was spent (2 -> 1); --reset still
+    zeroes the whole counter."""
     d = Path(tempfile.mkdtemp())
     cli(d, "new", "t")
     cli(d, "resume", "TICKET-001", "--stage", "planning")
@@ -46,15 +46,27 @@ def test_resume_reset_only_zeroes_it_cannot_grant_back_one():
     t.counters["plan_validation_attempts"] = 2
     t.save()
 
-    cli(d, "resume", "TICKET-001", "--stage", "planning",
-        "--reset", "plan_validation_attempts")
-
+    r = cli(d, "resume", "TICKET-001", "--stage", "planning",
+            "--grant", "plan_validation_attempts")
+    assert r.returncode == 0, r.stderr
     t = Ticket.load(d / ".project/tickets/TICKET-001.md")
     assert t.counters["plan_validation_attempts"] == 1, (
-        f"expected --reset to hand back exactly one wasted attempt "
-        f"(2 -> 1), got {t.counters['plan_validation_attempts']} "
-        f"(--reset always zeroes the counter)"
+        f"expected --grant to hand back exactly one spent attempt "
+        f"(2 -> 1), got {t.counters['plan_validation_attempts']}"
     )
+
+    r = cli(d, "resume", "TICKET-001", "--stage", "planning",
+            "--reset", "plan_validation_attempts")
+    assert r.returncode == 0, r.stderr
+    t = Ticket.load(d / ".project/tickets/TICKET-001.md")
+    assert t.counters["plan_validation_attempts"] == 0, (
+        f"expected --reset to zero the counter, got "
+        f"{t.counters['plan_validation_attempts']}"
+    )
+
+    body = (d / ".project/tickets/TICKET-001.md").read_text()
+    assert "granted `plan_validation_attempts` 2 -> 1" in body, body
+    assert f"by={os.environ.get('USER', 'human')}" in body, body
     shutil.rmtree(d)
 
 
