@@ -71,6 +71,8 @@ pipeline --project ~/code/myproject approve TICKET-001   # -> revalidating, or -
 pipeline --project ~/code/myproject reject  TICKET-001 "ignores cache invalidation"
 pipeline --project ~/code/myproject resume  TICKET-001 \
     --stage planning --reset plan_validation_attempts
+pipeline --project ~/code/myproject resume  TICKET-001 \
+    --stage planning --grant plan_validation_attempts   # hand back one spent attempt, not the whole budget
 ```
 
 Once `.project/` is committed, `pipeline.toml` is read from git `HEAD`, so an

@@ -197,12 +197,25 @@ def cmd_resume(args) -> None:
     if args.stage not in KNOWN_STAGES:
         die(f"`{args.stage}` is not a stage: {', '.join(sorted(KNOWN_STAGES))}")
     t = Ticket.find(project, args.id)
+    grants = [parse_grant(s) for s in args.grant or []]
+    clash = {k for k, _ in grants} & set(args.reset or [])
+    if clash:
+        die(f"`--reset` and `--grant` both name {', '.join(sorted(clash))}: pick one")
+    for key, n in grants:
+        have = t.counters.get(key)
+        if have is None:
+            die(f"{t.id} has no counter `{key}` "
+                f"(it has: {', '.join(sorted(t.counters)) or 'none'})")
+        if n > have:
+            die(f"{t.id}: cannot grant {n} back to `{key}`, which is {have} -- "
+                f"a grant only returns attempts already spent; "
+                f"`--reset {key}` zeroes it if that is what you want")
     t.stage = args.stage
     for key in args.reset or []:
         t.counters[key] = 0
     granted = []
-    for key, n in [parse_grant(s) for s in args.grant or []]:
-        have = t.counters.get(key, 0)
+    for key, n in grants:
+        have = t.counters[key]
         t.counters[key] = have - n
         granted.append(f"`{key}` {have} -> {have - n}")
     t.release_lease()

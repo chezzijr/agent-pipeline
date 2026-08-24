@@ -70,6 +70,56 @@ def test_resume_reset_only_zeroes_it_cannot_grant_back_one():
     shutil.rmtree(d)
 
 
+def test_resume_grant_refuses_to_hand_back_more_than_was_spent():
+    d = Path(tempfile.mkdtemp())
+    cli(d, "new", "t")
+    cli(d, "resume", "TICKET-001", "--stage", "planning")
+    t = Ticket.load(d / ".project/tickets/TICKET-001.md")
+    t.counters["plan_validation_attempts"] = 2
+    t.save()
+
+    r = cli(d, "resume", "TICKET-001", "--stage", "planning",
+            "--grant", "plan_validation_attempts=3")
+    assert r.returncode != 0, r.stdout
+    assert "cannot grant 3" in r.stderr, r.stderr
+    t = Ticket.load(d / ".project/tickets/TICKET-001.md")
+    assert t.counters["plan_validation_attempts"] == 2
+    shutil.rmtree(d)
+
+
+def test_resume_grant_refuses_a_counter_the_ticket_does_not_have():
+    d = Path(tempfile.mkdtemp())
+    cli(d, "new", "t")
+    cli(d, "resume", "TICKET-001", "--stage", "planning")
+
+    r = cli(d, "resume", "TICKET-001", "--stage", "planning",
+            "--grant", "plan_validaton_attempts")   # typo, spelled exactly so
+    assert r.returncode != 0, r.stdout
+    assert "has no counter" in r.stderr, r.stderr
+    t = Ticket.load(d / ".project/tickets/TICKET-001.md")
+    assert "plan_validaton_attempts" not in t.counters
+    shutil.rmtree(d)
+
+
+def test_resume_refuses_reset_and_grant_on_one_counter():
+    d = Path(tempfile.mkdtemp())
+    cli(d, "new", "t")
+    cli(d, "resume", "TICKET-001", "--stage", "planning")
+    t = Ticket.load(d / ".project/tickets/TICKET-001.md")
+    t.counters["plan_validation_attempts"] = 2
+    t.save()
+
+    r = cli(d, "resume", "TICKET-001", "--stage", "triage",
+            "--reset", "plan_validation_attempts",
+            "--grant", "plan_validation_attempts")
+    assert r.returncode != 0, r.stdout
+    assert "pick one" in r.stderr, r.stderr
+    t = Ticket.load(d / ".project/tickets/TICKET-001.md")
+    assert t.counters["plan_validation_attempts"] == 2
+    assert t.stage == "planning"
+    shutil.rmtree(d)
+
+
 def test_start_and_run_help_explain_the_interactive_stage_difference():
     """A `mode: interactive` stage waits for a human under `start` (attach via
     `pipeline tui`) but runs headless under `run` (nothing can attach). Neither
