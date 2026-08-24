@@ -100,13 +100,19 @@ def harness(name: str = "claude-code") -> dict:
 def stage_extra(project: Path | None, stage: str) -> str:
     """A project's own prose for this stage, or `""` when it has none.
 
-    Read straight off disk, unlike `project_config()`: prose cannot grant a
-    stage any privilege it doesn't already have, so there is no unattended-
-    merge hole in reading it before it is committed.
+    Read the way `project_config()` reads `.project/pipeline.toml`: from
+    HEAD, falling back to disk only when git has no copy at all. A read-only
+    stage can write this file with no commit, no diff, no snapshot and no
+    gate, so reading it off disk let uncommitted prose reach the next
+    spawn's composed prompt unreviewed.
     """
     if project is None:
         return ""
-    f = project / ".project" / "stages" / f"{stage}.extra.md"
+    rel = f".project/stages/{stage}.extra.md"
+    text = head_file(project, rel)
+    if text is not None:
+        return text
+    f = project / rel
     return f.read_text() if f.is_file() else ""
 
 
