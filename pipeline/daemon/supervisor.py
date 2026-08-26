@@ -479,6 +479,18 @@ def gate_cmd(project: Path, tid: str, findings: Path) -> str:
             f"--findings {shlex.quote(str(findings))}")
 
 
+REBASE_FAILED = 3
+
+
+def regate_cmd(project: Path, tid: str, base: str, findings: Path) -> str:
+    """Rebase onto base, then gate -- one child for two steps, because the
+    gate has to judge the tree the rebase produced. `REBASE_FAILED` (3) marks
+    a rebase conflict distinctly from `pipeline gate`'s own 0/1, so
+    `finish_regate()` can tell DEC-029's repair path from a gate failure."""
+    return (f"git rebase {shlex.quote(base)} || exit {REBASE_FAILED}\n"
+            f"{gate_cmd(project, tid, findings)}")
+
+
 def spawn_command(project: Path, wt: Path, tid: str, stage: str, cmd: str,
                   kind: str = "command", emit=noop, env: dict | None = None) -> dict:
     """Start a dispatcher-owned command as a tracked child, shaped like
@@ -722,9 +734,11 @@ def start(project: Path, path: Path, hcfg: dict, inflight: dict,
         # the Tier A facts were recorded before the ticket sat at the human
         # gate; base has moved since. Rebase first, re-gate in finish().
         base = base_ref(cfg)
-        ok, rec = child(f"git rebase {shlex.quote(base)}", "regate")
+        out = project / ".project" / "logs" / f"{tid}-gate-{uuid.uuid4().hex[:8]}.json"
+        ok, rec = child(regate_cmd(project, tid, base, out), "regate", env=dict(os.environ))
         if rec is not None:
             rec["base"] = base
+            rec["findings"] = out
         return ok, rec
 
     if stage == "unwinding":
@@ -892,11 +906,13 @@ def finish_gate(project: Path, rec: dict, emit=noop) -> str:
 
 def finish_regate(project: Path, rec: dict, emit=noop) -> str:
     """A rebase onto current base, then the Tier A gate again -- an approval is
-    only as good as the tree it was given against."""
+    only as good as the tree it was given against. `REBASE_FAILED` (exit 3)
+    means the rebase conflicted; any other exit is the gate's own verdict,
+    decided by `finish_gate()` so one function judges every gate."""
     close_child(rec)
     code = rec["proc"].returncode
     t = Ticket.load(rec["path"])
-    if code != 0:
+    if code == REBASE_FAILED:
         # a conflicting rebase is repaired by discarding the branch's
         # commits, not by resolving them: abort the rebase, then reset the
         # branch onto base. Safe only because `revalidating` runs before
@@ -908,6 +924,7 @@ def finish_regate(project: Path, rec: dict, emit=noop) -> str:
         if rc == 0:
             rc, reset_out = run_cmd(f"git reset --hard {base}", rec["wt"])
             repair += reset_out
+        Path(rec["findings"]).unlink(missing_ok=True)
         if rc != 0:
             escalate(t, f"rebase onto base conflicted (exit {code}) and the "
                         f"recut back onto base failed too\n```\n"
@@ -917,15 +934,7 @@ def finish_regate(project: Path, rec: dict, emit=noop) -> str:
                 f"rebase onto base conflicted; branch recut from base:\n```\n"
                 f"{log_tail(rec)}\n{repair}\n```", emit, agent=False)
         return "conflict"
-    ok, failures = gate(project, rec["tid"], rec["wt"])
-    emit("gate", ticket=rec["tid"], stage=rec["stage"],
-         verdict="pass" if ok else "fail", findings=failures)
-    t = Ticket.load(rec["path"])  # the gate wrote its findings to the thread
-    advance(project, t, "ok" if ok else "fail",
-            "re-gated after rebasing onto base:\n"
-            + ("- clean" if ok else "\n".join(f"- {f}" for f in failures)), emit,
-            agent=False)
-    return "ok" if ok else "fail"
+    return finish_gate(project, rec, emit)
 
 
 def finish(project: Path, rec: dict, emit=noop) -> None:
