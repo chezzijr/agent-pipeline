@@ -452,7 +452,9 @@ def test_the_registry_skips_junk_lines_and_can_drop_a_vanished_project():
 def test_ls_answers_the_same_with_and_without_a_daemon():
     """One `ticket_rows()` behind both, because a command that reports
     different columns depending on whether a daemon happens to be up is a
-    dependency wearing an accelerator's clothes."""
+    dependency wearing an accelerator's clothes. The two daemon-only fields
+    are `None` on the file path because no daemon answered, not because
+    nothing is running."""
     d = project()
     tmp = Path(tempfile.mkdtemp())
     s = store(tmp)
@@ -461,7 +463,12 @@ def test_ls_answers_the_same_with_and_without_a_daemon():
         registry.register(d)
         served = talk(srv, {"id": 1, "op": "ls", "project": str(d)})[0]["data"]
         local = ticket_rows(d)
-        assert served == local, (served, local)
+        assert ([{k: v for k, v in r.items() if k not in ("running", "mode")}
+                 for r in served] ==
+                [{k: v for k, v in r.items() if k not in ("running", "mode")}
+                 for r in local]), (served, local)
+        assert served[0]["running"] is False and served[0]["mode"] == "batch"
+        assert local[0]["running"] is None and local[0]["mode"] is None
         assert {"stale", "leased", "last_session"} <= set(local[0])
     finally:
         srv.close()
@@ -480,6 +487,16 @@ def test_the_file_fallback_does_not_report_an_inflight_interactive_stage_as_batc
     d = project(FIXTURE.replace("stage: plan-validation", "stage: planning"))
     row = ticket_rows(d)[0]
     assert row["mode"] != "batch", row
+
+
+def test_the_file_fallback_reports_running_as_unknown_not_false():
+    """The file path cannot know `running`/`mode` at all -- it must say so,
+    not guess `False`/`"batch"`."""
+    from helpers import FIXTURE
+    d = project(FIXTURE.replace("stage: plan-validation", "stage: planning"))
+    row = ticket_rows(d)[0]
+    assert row["running"] is None, row
+    assert row["mode"] is None, row
 
 
 def test_an_expired_lease_reads_as_stale_not_as_leased():
