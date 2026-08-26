@@ -84,6 +84,8 @@ def marker(row: dict) -> str:
         return "*"
     if row.get("stage") in HUMAN_GATES:
         return "!"
+    if row.get("running", False) is None:
+        return "~"
     return "?" if row.get("stale") else ""
 
 
@@ -319,13 +321,15 @@ class PipelineApp(App):
     def _status(self) -> None:
         rows = list(self.rows.values())
         running = sum(1 for r in rows if r.get("running"))
+        unknown = sum(1 for r in rows if r.get("running", False) is None)
         hidden = len(rows) - len(self._visible(rows))
         finished = f" - {hidden} finished hidden (f)" if hidden else ""
         drops = f" - {self.dropped} events dropped" if self.dropped else ""
         mode = "RAW (esc esc to exit) - " if self.raw else ""
+        unk = f" - {unknown} unknown (no daemon)" if unknown else ""
         # the sketch's `$2.14 today` lives behind `m`: cost is TICKET-014's
         self.query_one("#status", Static).update(
-            f"{mode}{len(rows)} tickets - {running} running{finished}{drops}")
+            f"{mode}{len(rows)} tickets - {running} running{unk}{finished}{drops}")
 
     # -- the event stream ---------------------------------------------------
     @work(thread=True, exclusive=True)

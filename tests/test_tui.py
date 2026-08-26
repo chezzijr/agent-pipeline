@@ -308,6 +308,13 @@ def test_marker_is_one_glyph():
     assert marker({"stage": "planning"}) == ""
 
 
+def test_marker_and_status_say_unknown_when_no_daemon_answered():
+    assert marker({"running": None, "stage": "planning"}) == "~"
+    assert marker({"running": None, "stage": "needs-input"}) == "!"
+    assert marker({"stage": "unreadable"}) == ""
+    assert marker({"running": True, "stage": "planning"}) == "*"
+
+
 class FakeStream:
     """The subscription connection. `send` records and hands back the id the
     daemon will tag its frames with; frames come back through `on_frame`
