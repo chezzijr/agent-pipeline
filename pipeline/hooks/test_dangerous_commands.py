@@ -152,13 +152,24 @@ def test_unparseable_commands_are_refused_not_ignored():
 def test_the_reason_strings_the_criteria_name():
     """The tables assert blocked-or-allowed. These reasons are named in
     TICKET-057's acceptance criteria, so pin the strings themselves."""
-    for cmd in ("sed -i s/a/b/ x.py", "sed -i.bak s/a/b/ x.py",
-                "sed -ni 's/a/b/p' x.py", "sed --in-place s/a/b/ x.py"):
-        assert guard.verdict(cmd, True) == "sed -i is an in-place edit", cmd
-    assert guard.verdict("sed -n '10,20p' README.md", True) is None
+    sed_reason = ("sed is not read-only: a sed script writes with `w`, "
+                  "`s///w` and GNU `e` -- use head, tail or grep to read")
+    for cmd in ("sed -n '10,20p' README.md", "sed -i s/a/b/ x.py",
+                "sed --in s/a/Z/ f.txt", "sed -n 's/a/Z/w /tmp/out.txt' f.txt",
+                "sed -f /tmp/script.sed f.txt"):
+        assert guard.verdict(cmd, True) == sed_reason, cmd
+    assert guard.verdict("sed -i s/a/b/ thing.py", False) is None
     assert "backslash" in guard.verdict("pytest -x \\\ntests/test_x.py", True)
     assert guard.verdict("echo hi \\\\\nsudo rm -rf /etc", False) == \
         "sudo: agents do not get root"
+
+
+def test_sed_is_off_the_read_only_allowlist_by_name():
+    """The refusal above is the behaviour; these two are the shape
+    TICKET-057 requires -- no option grammar left, and no allowlist member
+    to fall back on. An edit that puts either back fails here."""
+    assert not hasattr(guard, "SED_IN_PLACE"), "the sed option regex is back"
+    assert "sed" not in guard.READ_TOOLS
 
 
 def test_end_to_end_exit_code():
