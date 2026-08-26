@@ -4,3 +4,13 @@ test_one               = "uv run --group dev pytest -x {test}"
 test_suite             = "uv run --group dev pytest && ./pipeline/hooks/test_dangerous_commands.py"
 test_suite_without_new = "uv run --group dev pytest --deselect {test}"
 base                   = "main"
+
+# Every entry below is an argv prefix. `approve`, `reject`, `resume`, `answer`,
+# `init`, `new`, `start`, `stop` and `run` mutate state a review must not
+# change, so they are left out. `gate` is left out because it runs the
+# project's test command. `tui` is left out because it needs a terminal.
+# `logs` is left out because `-f` blocks -- read `.project/logs/` with `cat`
+# instead.
+[readonly]
+allow = ["pipeline ls", "pipeline status", "pipeline plan", "pipeline projects",
+          "pipeline metrics", "./pipeline/hooks/test_dangerous_commands.py"]

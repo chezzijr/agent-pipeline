@@ -27,3 +27,11 @@ base                    = "main"
 # command = "npx"
 # args = ["-y", "@upstash/context7-mcp"]
 # readonly = true
+
+# [readonly]
+# allow = ["mytool status", "mytool show"]
+#
+# Entries are argv prefixes, matched per shell segment. They never override
+# the always-blocked commands or the redirection and command-substitution
+# rules. This file is read from git HEAD, so a stage cannot widen its own
+# allowlist.
