@@ -246,11 +246,15 @@ gap. `i` types a line into it -- chunked at 4096 bytes an op, with a short
 write's remainder re-sent, so a long answer cannot be half-swallowed.
 
 `a` approve, `r` reject, `A` answer, `e` edit, `l` logs, `m` metrics, `k` kill,
-`i` type, `q` quit. Only `k` and `i` are daemon ops -- approve, reject and answer rewrite the
+`i` type, `f` finished, `q` quit. Only `k` and `i` are daemon ops -- approve, reject and answer rewrite the
 ticket file, which is the source of truth, and the daemon's next tick notices;
 `e`/`l`/`m` suspend the app and hand you the real terminal. `e` interrupts the
 running stage before opening `$EDITOR`, so your edit cannot trip the
 dispatcher's tamper detection.
+
+The tree hides `done` and `rejected` tickets and opens the cursor on the first
+ticket that is not terminal; `f` brings the hidden ones back, and `escalated`
+is never hidden.
 
 ## Concurrency
 

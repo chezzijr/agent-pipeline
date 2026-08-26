@@ -1,7 +1,9 @@
 """`pipeline tui` -- the pane that makes the pipeline watchable.
 
 Left: a tree of the registered projects and their tickets. Right: the rendered
-event stream for whatever the cursor is on. Eight keys along the bottom.
+event stream for whatever the cursor is on. Ten keys along the bottom. `f`
+shows the `done` and `rejected` tickets the tree hides by default; `escalated`
+is never hidden.
 
 Only one of those eight needs a daemon op. `a`/`r`/`A` mutate the ticket file,
 which is the source of truth, and the daemon's next tick notices -- so they
