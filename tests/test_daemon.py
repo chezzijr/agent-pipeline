@@ -468,6 +468,20 @@ def test_ls_answers_the_same_with_and_without_a_daemon():
         registry.unregister(d)
 
 
+def test_the_file_fallback_does_not_report_an_inflight_interactive_stage_as_batch():
+    """TICKET-062: `ticket_rows()` with no `inflight` (the file-fallback path,
+    used by the TUI and `pipeline ls` whenever the daemon does not answer)
+    must not claim a stage is a finished batch one when it cannot know that.
+    A live `planning` stage (`mode: interactive`) read this way must not come
+    back `mode: "batch"`, because the TUI's `_pty()` refuses to attach to
+    anything but `mode: "interactive"` and the operator is left unable to
+    answer a permission prompt already on screen."""
+    from helpers import FIXTURE
+    d = project(FIXTURE.replace("stage: plan-validation", "stage: planning"))
+    row = ticket_rows(d)[0]
+    assert row["mode"] != "batch", row
+
+
 def test_an_expired_lease_reads_as_stale_not_as_leased():
     """`release_lease()` nulls `expires`; an expiry does not. So a dead lease
     still HAS an `expires`, and anything testing that key instead of
