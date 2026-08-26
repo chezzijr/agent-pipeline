@@ -133,18 +133,22 @@ def render_pty(data: bytes, rows: int = ROWS, cols: int = COLS) -> list[str]:
     return lines or ["(blank screen)"]
 
 
-def tail_log(project: str, tid: str) -> list[str]:
+def tail_log(project: str, tid: str) -> tuple[list[str], int]:
     """The tail of the ticket's most recent stage log, rendered.
 
     A subscription only carries what happens after you subscribe; this is what
     happened before. Same `StreamReader` and same `render` as `pipeline logs`.
     A log carrying a raw ESC is a PTY dump instead, and goes through render_pty().
+
+    Returns the lines and the width they were drawn at: 0 for stream-json,
+    which is prose and wraps, and the dump's last recorded width for a PTY
+    dump, which is a screen and must not be re-flowed.
     """
     try:
         logs = sorted((Path(project) / ".project" / "logs").glob(f"{tid}-*.log"),
                       key=lambda p: p.stat().st_mtime)
         if not logs:
-            return ["(no log yet)"]
+            return ["(no log yet)"], 0
         raw = logs[-1].read_bytes()
         # drop the first line when we cut into the middle of one; keep the
         # head (spawn()'s marker can sit before the cut) to recover the
@@ -160,10 +164,11 @@ def tail_log(project: str, tid: str) -> list[str]:
         # The stage's name is not: `planning` runs headless whenever nothing
         # can attach to it, and then its log IS stream-json.
         if b"\x1b" in data:
-            return render_pty(data, *last_geometry(head))
-        return [ln for ev in StreamReader().feed(data) if (ln := render(ev))]
+            start = last_geometry(head)
+            return render_pty(data, *start), last_geometry(data, *start)[1]
+        return [ln for ev in StreamReader().feed(data) if (ln := render(ev))], 0
     except OSError as e:
-        return [f"(log unreadable: {e})"]
+        return [f"(log unreadable: {e})"], 0
 
 
 class PtyPane(Static):
@@ -446,7 +451,8 @@ class PipelineApp(App):
         self._detach()
         self.query_one("#pty", PtyPane).display = False
         log.display = True
-        for line in tail_log(key[0], key[1]):
+        lines, cols = tail_log(key[0], key[1])
+        for line in lines:
             log.write(line)
 
     # -- the PTY pane -------------------------------------------------------

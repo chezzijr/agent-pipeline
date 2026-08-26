@@ -723,7 +723,7 @@ def test_tail_log_never_returns_a_raw_escape_byte_for_a_pty_dump():
     (logs / "TICKET-001-planning.log").write_bytes(
         b"\x1b[2C\x1b[3A\x1b[?25h\x1b[?25l\x1b[2D\x1b[3B hello\x1b[7A\x1b[38;5;174m*\x1b[39m\n")
 
-    lines = tail_log(str(d), "TICKET-001")
+    lines, _ = tail_log(str(d), "TICKET-001")
 
     for line in lines:
         assert "\x1b" not in line, f"raw escape byte reached the log line: {line!r}"
@@ -739,7 +739,8 @@ def test_tail_log_renders_a_pty_dump_as_the_final_screen():
     (logs / "TICKET-001-planning.log").write_bytes(
         b"\x1b[H\x1b[2Jfirst frame\x1b[H\x1b[2Jsecond frame\x1b[K\n")
 
-    assert tail_log(str(d), "TICKET-001") == ["second frame"]
+    lines, _ = tail_log(str(d), "TICKET-001")
+    assert lines == ["second frame"]
 
 
 def test_tail_log_renders_a_pty_dump_at_its_own_width_not_120():
@@ -759,7 +760,7 @@ def test_tail_log_renders_a_pty_dump_at_its_own_width_not_120():
     redraw = b"\x1b[1A\r\x1b[KSHORT\n"
     (logs / "TICKET-001-planning.log").write_bytes(geom + frame1 + redraw)
 
-    lines = tail_log(str(d), "TICKET-001")
+    lines, _ = tail_log(str(d), "TICKET-001")
 
     assert lines == ["SHORT"], (
         f"replaying at the log's own width (150) should be clean, got {lines!r}"
@@ -820,9 +821,24 @@ def test_tail_log_keeps_a_width_marker_the_tail_cut_dropped():
     frames = b"\x1b[H\x1b[2J" + b"B" * 140 + b"\x1b[1A\r\x1b[KSHORT\n"
     (logs / "TICKET-001-planning.log").write_bytes(geom + pad + frames)
 
-    lines = tail_log(str(d), "TICKET-001")
+    lines, _ = tail_log(str(d), "TICKET-001")
 
     assert lines == ["SHORT"]
+
+
+def test_tail_log_reports_the_width_the_dump_ends_at():
+    """`_show()` writes each line at the width `tail_log()` reports, so the
+    width must be the dump's last recorded marker, not its first."""
+    d = make_project()
+    logs = d / ".project" / "logs"
+    logs.mkdir(parents=True)
+    (logs / "TICKET-001-planning.log").write_bytes(
+        b"\x1b]9999;40;150\x07" + b"A" * 140 +
+        b"\x1b]9999;33;124\x07" + b"B" * 100 + b"\n")
+
+    lines, cols = tail_log(str(d), "TICKET-001")
+
+    assert cols == 124, cols
 
 
 def test_a_pty_dump_wider_than_the_log_pane_is_not_re_wrapped():
@@ -870,4 +886,5 @@ def test_tail_log_still_renders_a_stream_json_log():
         b'{"type":"assistant","message":{"content":'
         b'[{"type":"text","text":"planning done"}]}}\n')
 
-    assert tail_log(str(d), "TICKET-001") == ["planning done"]
+    lines, _ = tail_log(str(d), "TICKET-001")
+    assert lines == ["planning done"]
