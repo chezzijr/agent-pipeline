@@ -452,8 +452,9 @@ class PipelineApp(App):
         self.query_one("#pty", PtyPane).display = False
         log.display = True
         lines, cols = tail_log(key[0], key[1])
+        # a PTY dump renders at the width it was drawn at, so a narrower pane clips and scrolls; stream-json is prose (cols 0) and wraps
         for line in lines:
-            log.write(line)
+            log.write(line, width=cols or None)
 
     # -- the PTY pane -------------------------------------------------------
     def _pty(self, row: dict) -> bool:
