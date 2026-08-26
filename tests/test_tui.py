@@ -129,6 +129,92 @@ def test_finished_tickets_do_not_bury_live_ones():
     asyncio.run(go())
 
 
+def test_the_cursor_opens_on_a_live_ticket():
+    """The tree hides finished tickets by default, so the cursor must open on
+    the first ticket that is not terminal, not on the root."""
+    async def go():
+        d = "/tmp/alpha"
+        rows = [row(d, "TICKET-001", "done"), row(d, "TICKET-002", "done"),
+                row(d, "TICKET-003", "awaiting-approval")]
+        app = PipelineApp(client=FakeClient(rows))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            assert app.selected == (d, "TICKET-003")
+
+    asyncio.run(go())
+
+
+def test_the_f_key_toggles_finished_tickets_back_into_the_tree():
+    """`done` and `rejected` hide by default; `escalated` never hides. `f`
+    brings them all back, and the status line says how many are hidden."""
+    async def go():
+        d = "/tmp/alpha"
+        rows = [row(d, "TICKET-001", "done"), row(d, "TICKET-002", "rejected"),
+                row(d, "TICKET-003", "escalated"),
+                row(d, "TICKET-004", "implementing", running=True)]
+        app = PipelineApp(client=FakeClient(rows))
+        async with app.run_test() as pilot:
+            assert labels(app)["alpha"] == ["TICKET-003 escalated",
+                                            "TICKET-004 implementing *"]
+            assert "2 finished hidden (f)" in status(app), status(app)
+
+            await pilot.press("f")
+            await pilot.pause()
+            assert labels(app)["alpha"] == ["TICKET-001 done",
+                                            "TICKET-002 rejected",
+                                            "TICKET-003 escalated",
+                                            "TICKET-004 implementing *"]
+            assert "hidden" not in status(app), status(app)
+
+            await pilot.press("f")
+            await pilot.pause()
+            assert labels(app)["alpha"] == ["TICKET-003 escalated",
+                                            "TICKET-004 implementing *"]
+
+    asyncio.run(go())
+
+
+def test_the_down_key_moves_the_cursor_off_the_opening_row():
+    """One `down` press still moves the cursor, over two live rows instead of
+    a walk up from the root."""
+    async def go():
+        d = "/tmp/alpha"
+        rows = [row(d, "TICKET-001", "implementing", running=True),
+                row(d, "TICKET-002", "awaiting-approval")]
+        app = PipelineApp(client=FakeClient(rows))
+        async with app.run_test() as pilot:
+            app.query_one(Tree).focus()
+            await pilot.pause()
+            assert app.selected == (d, "TICKET-001")
+
+            await pilot.press("down")
+            await pilot.pause()
+            assert app.selected == (d, "TICKET-002")
+
+    asyncio.run(go())
+
+
+def test_a_selected_ticket_stays_in_the_tree_when_it_finishes():
+    """The row under the cursor stays painted after it turns terminal, so the
+    detail pane you are reading does not lose its row out from under you."""
+    async def go():
+        d = "/tmp/alpha"
+        fake = FakeClient([row(d, "TICKET-001", "implementing", running=True)])
+        app = PipelineApp(client=fake)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            assert app.selected == (d, "TICKET-001")
+
+            fake.rows = [row(d, "TICKET-001", "done")]
+            app.on_frame({"sub": 1, "event": {"project": d, "ticket": "TICKET-001",
+                                              "kind": "transition", "data": {}}})
+            await pilot.pause()
+            assert labels(app)["alpha"] == ["TICKET-001 done"]
+            assert app.selected == (d, "TICKET-001")
+
+    asyncio.run(go())
+
+
 def test_an_event_reseeds_the_tree_and_a_dropped_marker_says_so():
     """The two ways the tree stays in sync: a structural event refreshes it,
     and a `dropped` marker -- the daemon admitting it binned part of our
