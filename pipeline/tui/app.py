@@ -296,14 +296,22 @@ class PipelineApp(App):
             return
         self.sig = sig
         tree = self.query_one(Tree)
-        keep = self.selected
+        keep, restored, first = self.selected, False, None
         tree.root.remove_children()
         for p, labels in sig:
             node = tree.root.add(Path(p).name or p, data=p, expand=True)
             for text in labels:
                 leaf = node.add_leaf(text, data=(p, text.split()[0]))
                 if leaf.data == keep:
-                    tree.move_cursor(leaf)
+                    restored, first = True, leaf
+                elif (not restored and first is None
+                      and self.rows.get(leaf.data, {}).get("stage") not in TERMINAL):
+                    first = leaf
+        if first is not None:
+            # a leaf added this tick has `_line == -1`, and `move_cursor` would
+            # clamp that to the root; reading `last_line` forces the line build
+            tree.last_line
+            tree.move_cursor(first)
 
     def _status(self) -> None:
         rows = list(self.rows.values())
