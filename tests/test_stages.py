@@ -312,7 +312,8 @@ def test_the_rule_file_counts_the_guard_cases():
     mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
     cases = sum(len(t) for t in (mod.BLOCKED_ALWAYS, mod.ALLOWED_ALWAYS,
                                  mod.BLOCKED_READONLY, mod.ALLOWED_READONLY,
-                                 mod.MCP_BLOCKED, mod.MCP_ALLOWED))
+                                 mod.MCP_BLOCKED, mod.MCP_ALLOWED,
+                                 mod.ALLOWED_PROJECT, mod.BLOCKED_PROJECT))
     text = (C.PKG.parent / "CLAUDE.md").read_text()
     claimed = re.findall(r"# (\d+) guard cases \(table-driven\)", text)
     assert claimed == [str(cases)], f"CLAUDE.md says {claimed}, tables hold {cases}"

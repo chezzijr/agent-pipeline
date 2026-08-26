@@ -48,6 +48,9 @@ ALLOWED_ALWAYS = [
 BLOCKED_READONLY = [
     "sed -i s/a/b/ x.py", "echo hi > file.txt", "git commit -am wip",
     "cp a b", "pip install requests", "mv a b",
+    # this repo's own [readonly] allow names it, but default deny still wins
+    # here because tables() pops PIPELINE_READONLY_ALLOW before this runs
+    "pipeline status",
     # bypasses the blocklist version let through
     'python3 -c "open(\'/tmp/x\',\'a\').write(1)"',
     "git -C . commit -am wip",
@@ -91,6 +94,17 @@ ALLOWED_READONLY = [
     "cat a.py\ncat b.py",
     "grep -rn 'a\\.b' src/",
 ]
+PROJECT_PREFIXES = [["pipeline", "ls"], ["pipeline", "status"],
+                     ["./pipeline/hooks/test_dangerous_commands.py"]]
+ALLOWED_PROJECT = [
+    "pipeline ls", "pipeline ls -v", "pipeline status",
+    "./pipeline/hooks/test_dangerous_commands.py", "pipeline ls | head -5",
+]
+BLOCKED_PROJECT = [
+    "pipeline approve TICKET-058", "pipeline resume TICKET-058 --stage planning",
+    "pipeline", "pipelines ls", "pipeline ls > out.txt",
+    "pipeline ls && git commit -am wip", "sudo pipeline ls",
+]
 
 def check(cmds, readonly, expect_block, label):
     for c in cmds:
@@ -127,17 +141,39 @@ def check_mcp(cases, expect_block, label):
         os.environ.clear()
         os.environ.update(saved)
 
+def check_readonly_allow(cmds, expect_block, label, prefixes=PROJECT_PREFIXES):
+    saved = os.environ.get("PIPELINE_READONLY_ALLOW")
+    os.environ["PIPELINE_READONLY_ALLOW"] = json.dumps(prefixes)
+    try:
+        check(cmds, True, expect_block, label)
+    finally:
+        if saved is None:
+            os.environ.pop("PIPELINE_READONLY_ALLOW", None)
+        else:
+            os.environ["PIPELINE_READONLY_ALLOW"] = saved
+
 def tables():
     """Every allow/block table, in one call, so `__main__` and pytest run the
     same cases. Until TICKET-057 only `__main__` ran them: pytest collected the
     `test_*` functions below and missed all 80 table cases, so the pipeline's
-    `test_one` -- pytest -- reported a red guard as green."""
-    check(BLOCKED_ALWAYS, False, True, "always")
-    check(ALLOWED_ALWAYS, False, False, "always")
-    check(BLOCKED_READONLY, True, True, "readonly")
-    check(ALLOWED_READONLY, True, False, "readonly")
-    check_mcp(MCP_BLOCKED, True, "mcp")
-    check_mcp(MCP_ALLOWED, False, "mcp")
+    `test_one` -- pytest -- reported a red guard as green.
+
+    Pops PIPELINE_READONLY_ALLOW first and restores it in the finally: the
+    stage running this suite may already export this repo's own allowlist, and
+    without the pop BLOCKED_READONLY's `pipeline status` would read as allowed."""
+    saved = os.environ.pop("PIPELINE_READONLY_ALLOW", None)
+    try:
+        check(BLOCKED_ALWAYS, False, True, "always")
+        check(ALLOWED_ALWAYS, False, False, "always")
+        check(BLOCKED_READONLY, True, True, "readonly")
+        check(ALLOWED_READONLY, True, False, "readonly")
+        check_mcp(MCP_BLOCKED, True, "mcp")
+        check_mcp(MCP_ALLOWED, False, "mcp")
+        check_readonly_allow(ALLOWED_PROJECT, False, "project-allow")
+        check_readonly_allow(BLOCKED_PROJECT, True, "project-allow")
+    finally:
+        if saved is not None:
+            os.environ["PIPELINE_READONLY_ALLOW"] = saved
 
 
 def test_a_read_only_stage_runs_the_commands_its_project_allows():
@@ -156,6 +192,21 @@ def test_a_read_only_stage_runs_the_commands_its_project_allows():
         for c in ("pipeline ls", "pipeline status"):
             got = guard.verdict(c, True)
             assert got is None, f"project-allow: {c!r} -> {got!r} (expected allow)"
+    finally:
+        if saved is None:
+            os.environ.pop("PIPELINE_READONLY_ALLOW", None)
+        else:
+            os.environ["PIPELINE_READONLY_ALLOW"] = saved
+
+
+def test_a_malformed_readonly_allowlist_fails_closed():
+    saved = os.environ.get("PIPELINE_READONLY_ALLOW")
+    try:
+        for bad in ("{not json", '"pipeline ls"', '[["pipeline", 1]]',
+                    "[[]]", '[["", "ls"]]'):
+            os.environ["PIPELINE_READONLY_ALLOW"] = bad
+            assert guard.readonly_prefixes() == [], bad
+            assert guard.verdict("pipeline ls", True), bad
     finally:
         if saved is None:
             os.environ.pop("PIPELINE_READONLY_ALLOW", None)
@@ -215,6 +266,23 @@ def test_end_to_end_exit_code():
     assert p.returncode == 2, p
     assert "is not declared for this stage" in p.stderr, p.stderr
     print("ok  end-to-end exit codes")
+
+
+def test_the_project_allowlist_reaches_the_real_hook():
+    env = dict(os.environ, PIPELINE_READONLY="1", PIPELINE_STAGE="review",
+               PIPELINE_READONLY_ALLOW=json.dumps([["pipeline", "ls"]]))
+    event = json.dumps({"tool_name": "Bash", "tool_input": {"command": "pipeline ls"}})
+    p = subprocess.run([sys.executable, str(GUARD)], input=event,
+                       capture_output=True, text=True, env=env)
+    assert p.returncode == 0, p
+    event = json.dumps({"tool_name": "Bash",
+                        "tool_input": {"command": "pipeline approve TICKET-058"}})
+    p = subprocess.run([sys.executable, str(GUARD)], input=event,
+                       capture_output=True, text=True, env=env)
+    assert p.returncode == 2, p
+    assert ("Blocked by the pipeline guard (review): `pipeline` is not on "
+            "the read-only allowlist") in p.stderr, p.stderr
+    print("ok  project allowlist reaches the real hook")
 
 def test_write_outside_worktree_is_not_blocked():
     event = json.dumps({"tool_name": "Write", "tool_input": {"file_path": "/home/chezzijr/proj/agent-pipeline/tests/_probe.txt", "content": "probe123\n"}})
@@ -307,6 +375,8 @@ def test_the_guard_sees_every_file_tool_not_just_bash():
 if __name__ == "__main__":
     tables()
     test_end_to_end_exit_code()
+    test_a_malformed_readonly_allowlist_fails_closed()
+    test_the_project_allowlist_reaches_the_real_hook()
     test_write_outside_worktree_is_not_blocked()
     test_paths_outside_the_worktree_are_blocked()
     test_the_guard_sees_every_file_tool_not_just_bash()
