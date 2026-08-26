@@ -6,7 +6,7 @@ async thing in the repo and it is not worth a dependency.
 import asyncio
 import base64
 
-from textual.widgets import Tree
+from textual.widgets import RichLog, Tree
 
 from helpers import project as make_project
 from pipeline.core import PipelineError
@@ -823,6 +823,40 @@ def test_tail_log_keeps_a_width_marker_the_tail_cut_dropped():
     lines = tail_log(str(d), "TICKET-001")
 
     assert lines == ["SHORT"]
+
+
+def test_a_pty_dump_wider_than_the_log_pane_is_not_re_wrapped():
+    """TICKET-063: a screen dump is position-significant. `#log` is a
+    `RichLog(wrap=True)`, so a line wider than the pane -- `#tree` alone
+    takes 34 columns -- gets soft-wrapped onto continuation rows, which
+    breaks the recorded alignment instead of just narrowing the view."""
+    d = make_project()
+    logs = d / ".project" / "logs"
+    logs.mkdir(parents=True)
+    rule = b"=" * 120
+    (logs / "TICKET-001-planning.log").write_bytes(
+        b"\x1b]9999;40;120\x07" + rule + b"\n")
+
+    async def go():
+        fake = FakeClient([row(d, "TICKET-001", "planning")])
+        app = PipelineApp(client=fake)
+        async with app.run_test(size=(80, 24)) as pilot:
+            app.query_one(Tree).focus()
+            await pilot.press("down", "down")
+            await pilot.pause()
+
+            log = app.query_one("#log", RichLog)
+
+            def text(strip):
+                return "".join(seg.text for seg in strip)
+
+            strips = [s for s in log.lines if set(text(s).strip()) == {"="}]
+            assert len(strips) == 1, (
+                f"the 120-column rule split across {len(strips)} rows "
+                f"instead of staying one row: {[text(s) for s in strips]}"
+            )
+
+    asyncio.run(go())
 
 
 def test_tail_log_still_renders_a_stream_json_log():
