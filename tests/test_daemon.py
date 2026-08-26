@@ -178,6 +178,43 @@ def test_subscribe_replays_from_the_cursor_then_goes_live():
         srv.close()
 
 
+def test_watchers_counts_a_subscribed_client_not_a_one_shot_request():
+    """TICKET-059: `attachable` says a socket exists, `watchers()` says a
+    client is on it. `pipeline ls` connects, is answered and goes away
+    without subscribing, so it must not read as a human watching a PTY."""
+    tmp = Path(tempfile.mkdtemp())
+    a, b = Path(tempfile.mkdtemp()).resolve(), Path(tempfile.mkdtemp()).resolve()
+    (a / ".project").mkdir()
+    (b / ".project").mkdir()
+    registry.register(a)
+    registry.register(b)
+    srv = server_on(tmp, store(tmp))
+    socks = [socket.socketpair(), socket.socketpair()]
+    try:
+        assert srv.watchers() == 0
+        one_shot = Conn(socks[0][0])
+        srv.conns[one_shot.sock.fileno()] = one_shot
+        srv._handle_line(one_shot, json.dumps({"id": 1, "op": "ping"}) + "\n")
+        assert srv.watchers() == 0, "a request with no subscription is not a watcher"
+        tui = Conn(socks[1][0])
+        srv.conns[tui.sock.fileno()] = tui
+        srv._handle_line(tui, json.dumps({"id": 2, "op": "subscribe",
+                                          "project": str(a)}) + "\n")
+        assert srv.watchers(str(a)) == 1
+        assert srv.watchers(str(b)) == 0, "a filtered subscription watches one project"
+        assert srv.watchers() == 1, "unfiltered means every project"
+        srv._drop(tui.sock.fileno())
+        assert srv.watchers(str(a)) == 0, "a client that went away is not a watcher"
+    finally:
+        srv.conns.clear()
+        srv.close()
+        registry.unregister(a)
+        registry.unregister(b)
+        for pair in socks:
+            for s in pair:
+                s.close()
+
+
 def test_a_wedged_client_is_dropped_from_not_the_supervisor():
     """Backpressure is a liveness boundary: a viewer that stops reading must
     lose its own oldest events, never stall the loop that emits them."""

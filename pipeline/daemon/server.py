@@ -155,6 +155,13 @@ class Poller:
     # steer. `poller is not None` was the wrong test: `run()` passes one.
     attachable = False
 
+    def watchers(self, project: str | None = None) -> int:
+        """How many clients could attach to a PTY hosted here right now.
+        `attachable` says a socket exists; this says somebody is on it, which
+        is the question `spawn()` actually has to answer. A bare `Poller` has
+        neither, so this is 0 and stays 0."""
+        return 0
+
     def __init__(self) -> None:
         self.sel = selectors.DefaultSelector()
 
@@ -229,6 +236,17 @@ class Conn:
 
 class Server(Poller):
     attachable = True   # there is a socket: `attach`/`input` can reach a PTY
+
+    def watchers(self, project: str | None = None) -> int:
+        """Connections holding a subscription for `project` (a resolved path
+        string) or for every project. A one-shot `request` -- `ls`, `kill` --
+        connects, is answered and goes away without subscribing, so only a
+        subscription counts as a human watching: otherwise a `pipeline ls`
+        landing in the same tick as a spawn would read as an attached TUI."""
+        return sum(any(s.get("project") is None or project is None
+                       or s.get("project") == project
+                       for s in c.subs.values())
+                   for c in self.conns.values())
 
     def __init__(self, store, path: Path | None = None) -> None:
         super().__init__()
