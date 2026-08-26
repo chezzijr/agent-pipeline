@@ -358,11 +358,21 @@ def spawn(project: Path, wt: Path, tid: str, stage: str, hcfg: dict,
     # accelerator. Headless is what the stage did before it grew a PTY, and
     # its prompt already carries the escape hatch: `result: needs-input`
     # parks the ticket at a human gate instead of asking on a terminal.
-    interactive = cfg.get("mode") == "interactive" and getattr(
-        poller, "attachable", False)
+    # A daemon is not a human: attachable only says a socket exists, so
+    # pipeline start with nobody on it spawned the REPL anyway and parked it
+    # at a permission prompt nobody could see (TICKET-059). watchers() is the
+    # second question -- a client subscribed right now. A TUI that attaches
+    # after the spawn gets a headless stage, deliberately: the alternative is
+    # holding a ticket for a human who may never arrive.
+    attached = (poller.watchers(str(project.resolve()))
+                if getattr(poller, "attachable", False) else 0)
+    interactive = cfg.get("mode") == "interactive" and attached > 0
     if cfg.get("mode") == "interactive" and not interactive:
-        print(f"  {tid}: `{stage}` is interactive, but nothing can attach to it "
-              f"here -- running headless (start the daemon and `pipeline tui` "
+        why = ("nothing can attach to it here"
+               if not getattr(poller, "attachable", False)
+               else "no client is attached")
+        print(f"  {tid}: `{stage}` is interactive, but {why} -- running "
+              f"headless (leave `pipeline tui` open before the stage starts "
               f"to steer it)")
     session = str(uuid.uuid4())
     logs = project / ".project" / "logs"
@@ -1186,9 +1196,10 @@ def run(project: Path, once: bool, interval: int, harness_name: str,
     loop is exactly what it was before the daemon existed.
 
     Every stage runs here, interactive ones included: the bare `Poller` is not
-    `attachable`, so `spawn()` runs those headless rather than parking a REPL
-    nobody could reach (see `spawn()` and the README). What you lose without
-    the daemon is steering, never progress.
+    `attachable` and reports no `watchers()`, so `spawn()` runs those headless
+    rather than parking a REPL nobody could reach. Under `serve()` the same
+    happens whenever no client is subscribed (see `spawn()` and the README).
+    What you lose without the daemon is steering, never progress.
     """
     reload = _harness_reloader(harness_name)
     emit = store.emitter(project) if store is not None else noop

@@ -393,8 +393,12 @@ def test_planning_is_interactive_and_never_rendered_under_print_mode():
 
 
 class Attachable(Poller):
-    """A poller a client could reach -- what `Server` is, without the socket."""
+    """A poller a client could reach, with one on it -- what `Server` is with
+    a `pipeline tui` subscribed, minus the socket."""
     attachable = True
+
+    def watchers(self, project: str | None = None) -> int:
+        return 1
 
 
 def test_an_interactive_stage_runs_headless_when_nothing_can_attach():
