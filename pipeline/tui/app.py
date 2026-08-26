@@ -304,6 +304,7 @@ class PipelineApp(App):
         """Rebuild the tree -- but only when a label actually changed. The 5s
         refresh would otherwise yank the cursor back to the root twice a
         keystroke, which is the difference between a dashboard and a toy."""
+        old = self.rows
         self.rows = {(r["project"], r["id"]): r for r in rows}
         grouped: dict[str, list[dict]] = {r["project"]: [] for r in rows}
         for r in self._visible(rows):
@@ -311,6 +312,16 @@ class PipelineApp(App):
         sig = [(p, [label(r) for r in sorted(rs, key=lambda r: r["id"])])
                for p, rs in sorted(grouped.items())]
         self._status()
+        sel = self.selected
+        # `_pty()` runs from `_show()`, which fires on a selection CHANGE. A
+        # row already selected when the daemon went quiet would keep its
+        # stale mode until the operator moved the cursor away and back.
+        # Gated on the transition so a stream that refuses to attach does not
+        # re-clear the pane every tick.
+        if (sel is not None and self.rows.get(sel, {}).get("mode") == "interactive"
+                and old.get(sel, {}).get("mode") != "interactive"
+                and self.attached != sel):
+            self._show(sel)
         if sig == self.sig:
             return
         self.sig = sig

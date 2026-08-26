@@ -416,6 +416,30 @@ def test_an_interactive_stage_attaches_and_a_dropped_frame_reattaches():
     asyncio.run(go())
 
 
+def test_a_row_that_becomes_interactive_attaches_without_moving_the_cursor():
+    """The pane must re-attach the moment the selected row turns interactive,
+    not only on the next cursor move."""
+    async def go():
+        d = "/tmp/alpha"
+        fake = FakeClient([row(d, "TICKET-001", "planning")])
+        app = PipelineApp(client=fake)
+        async with app.run_test() as pilot:
+            app.stream = FakeStream()
+            app.query_one(Tree).focus()
+            await select(app, pilot, d, "TICKET-001")
+            await pilot.pause()
+            assert app.attached is None
+
+            fake.rows = [row(d, "TICKET-001", "planning",
+                             running=True, mode="interactive")]
+            app.refresh_tree()
+            await pilot.pause()
+            assert app.attached == (d, "TICKET-001"), \
+                "the pane never re-attached: the operator had to move the cursor away and back"
+
+    asyncio.run(go())
+
+
 def test_keystrokes_are_chunked_and_a_short_write_is_resent():
     """`input` is capped at 4096 bytes per op and reports what actually landed
     in the pty's buffer. A client that ignores either loses keystrokes in the
