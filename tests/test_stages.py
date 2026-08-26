@@ -302,6 +302,22 @@ def test_the_rule_file_documents_the_pty_log_geometry_marker():
         assert claim in hits[0], claim
 
 
+def test_the_rule_file_counts_the_guard_cases():
+    """`CLAUDE.md`'s Commands block names how many cases the guard's tables
+    hold. TICKET-057 moved that number twice, so count them instead of
+    trusting a hand count."""
+    import importlib.util
+    path = C.PKG / "hooks" / "test_dangerous_commands.py"
+    spec = importlib.util.spec_from_file_location("guard_tables", path)
+    mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+    cases = sum(len(t) for t in (mod.BLOCKED_ALWAYS, mod.ALLOWED_ALWAYS,
+                                 mod.BLOCKED_READONLY, mod.ALLOWED_READONLY,
+                                 mod.MCP_BLOCKED, mod.MCP_ALLOWED))
+    text = (C.PKG.parent / "CLAUDE.md").read_text()
+    claimed = re.findall(r"# (\d+) guard cases \(table-driven\)", text)
+    assert claimed == [str(cases)], f"CLAUDE.md says {claimed}, tables hold {cases}"
+
+
 def test_stage_config_can_take_a_per_project_override(tmp_path):
     """TICKET-038: `stage_config()` resolves against the packaged stage only,
     with no way for a project to add a model, tool or skill of its own. A
