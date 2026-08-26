@@ -227,6 +227,12 @@ still worth it: it prints one line per case, and the failure names the case.
   resize; `render_pty()` replays the dump at that geometry instead of a fixed
   40x120. A batch log must never get one -- `tail_log()` sniffs a PTY dump by
   the raw ESC (DEC-039), so a marker there sends stream-json through pyte.
+- **The Tier A gate runs as a spawned child (`gate_cmd()`), not inline.** A
+  PASS at `plan-validation` is a phase of the stage, carried in
+  `counters["gate_ok"]` and consumed by the next `start()`, which spawns the
+  Tier B agent -- it emits no `stage_end`, or one run would put two rows in
+  view 1's denominator. Moving the gate back inline stalls the select loop
+  for the length of the project's suite, exactly the bug TICKET-061 fixed.
 
 ## Conventions
 

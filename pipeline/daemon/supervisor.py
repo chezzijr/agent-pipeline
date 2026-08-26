@@ -172,10 +172,10 @@ PIPE_SZ = 1 << 20   # the usual /proc/sys/fs/pipe-max-size for an unprivileged u
 def _widen(fd: int) -> None:
     """Grow the child's stdout buffer from 64K to 1M, best-effort.
 
-    Headroom, not a fix. The loop makes blocking calls -- `gate()` runs the
-    project's `test_one`, `ensure_worktree` runs git and `worktree_setup` --
-    and for their duration NOTHING drains any pipe. At 64K a chatty agent
-    fills up in seconds and blocks in `write()` holding its lease.
+    Headroom, not a fix. The loop makes blocking calls -- `ensure_worktree`
+    runs git and `worktree_setup` -- and for their duration NOTHING drains
+    any pipe. At 64K a chatty agent fills up in seconds and blocks in
+    `write()` holding its lease.
     """
     try:
         fcntl.fcntl(fd, getattr(fcntl, "F_SETPIPE_SZ", 1031), PIPE_SZ)
@@ -642,8 +642,9 @@ def start(project: Path, path: Path, hcfg: dict, inflight: dict,
         and these four paths emitted only the numerator, so one completed
         `implementing` run plus two lease-expiry escalations rendered `200%`.
         An attempt that ended before it could spawn is still an attempt at
-        this stage -- the same reasoning (and the same emit) as a failed Tier
-        A gate, which spawns nothing either.
+        this stage -- the same reasoning that makes `finish()` emit
+        `stage_end` for a failed Tier A gate, even though it spawns a gate
+        child rather than an agent.
         """
         escalate(t, reason, emit)
         emit("stage_end", ticket=tid, stage=stage, result="escalated",
@@ -1094,7 +1095,7 @@ def reap(project: Path, inflight: dict, emit=noop) -> bool:
     done = [tid for tid, rec in inflight.items() if rec["proc"].poll() is not None]
     for tid in done:
         rec = inflight.pop(tid)
-        drain_all(inflight)   # a `regate` finish runs the gate, which blocks
+        drain_all(inflight)   # `finish()` may run git for a repair (finish_regate)
         try:
             finish(project, rec, emit)
         except Exception as e:
