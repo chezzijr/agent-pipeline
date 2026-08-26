@@ -16,7 +16,7 @@ import time
 import types
 from pathlib import Path
 
-from helpers import ROOT, project
+from helpers import FIXTURE, ROOT, git_project, project
 
 # Before anything imports a path out of the environment: these tests must never
 # touch the developer's real registry, event log or runtime socket.
@@ -968,3 +968,59 @@ def test_pipeline_run_log_is_readable_while_it_runs():
         proc.terminate()            # it holds a flock on the project
         proc.wait(10)
         fh.close()
+
+
+def test_the_daemon_answers_a_client_while_the_gate_runs_the_project_s_test():
+    """`gate()` runs the project's `test_one` synchronously inside the
+    supervisor's own select loop (`pipeline/daemon/supervisor.py`, the
+    `plan-validation` branch of `dispatch`). While it runs, `server.poll()`
+    never gets called, so a concurrent client request cannot be served and
+    hits its own socket timeout -- the `daemon: cannot read from timed out
+    object` toast the TUI shows. Fixed, the daemon must still answer."""
+    from pipeline.cli.client import Client
+
+    d, sh = git_project()
+    (d / "test_thing.py").write_text("")
+    sh("git add test_thing.py && git commit -qm 'add test file'")
+    # written to disk only, never committed: `project_config()` reads HEAD
+    # first, so a version committed by `git add -A` would shadow this one
+    (d / ".project" / "pipeline.toml").write_text(
+        'test_one = "sleep 3; echo test_broken; exit 1"\n'
+        'test_suite = "true"\n'
+        'test_suite_without_new = "true"\n'
+        'base = "main"\n')
+    (d / ".project" / "tickets" / "TICKET-001.md").write_text(FIXTURE)
+
+    tmp = Path(tempfile.mkdtemp())
+    for var in ("XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_RUNTIME_DIR"):
+        os.environ[var] = str(tmp)
+    registry.register(d)
+
+    sock = tmp / "daemon.sock"
+    env = dict(os.environ, PYTHONPATH=str(ROOT))
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "pipeline.daemon.main", "--socket", str(sock),
+         "--db", str(tmp / "events.db"), "--interval", "1"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT,
+        stdin=subprocess.DEVNULL, env=env, cwd=ROOT)
+    try:
+        for _ in range(100):        # wait on the socket, not on a sleep
+            if sock.exists():
+                break
+            time.sleep(0.05)
+        assert sock.exists(), "daemon never came up"
+
+        # give the loop time to claim the ticket and enter the gate's sleep
+        time.sleep(1.0)
+
+        c = Client(sock, timeout=1.0)
+        try:
+            c.request("ls", project=str(d))     # must not raise
+        except PipelineError as e:
+            assert False, f"daemon did not answer while the gate ran: {e}"
+        finally:
+            c.sock.close()
+    finally:
+        proc.terminate()
+        proc.wait(10)
+        registry.unregister(d)
