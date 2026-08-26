@@ -223,6 +223,11 @@ still worth it: it prints one line per case, and the failure names the case.
   resize; `render_pty()` replays the dump at that geometry instead of a fixed
   40x120. A batch log must never get one -- `tail_log()` sniffs a PTY dump by
   the raw ESC (DEC-039), so a marker there sends stream-json through pyte.
+- **The read-only allowlist has a per-project extension.** `[readonly] allow`
+  in `.project/pipeline.toml` is exported as `PIPELINE_READONLY_ALLOW`, an
+  argv-prefix list matched per shell segment. It never overrides
+  `always_rules()` or the redirection rule, and `tables()` in the guard's own
+  test file pops the variable so `BLOCKED_READONLY` still means default deny.
 
 ## Conventions
 

@@ -512,6 +512,21 @@ the interruption in the ticket, and cleans up temp files. Without that the
 orphaned agent keeps writing while its lease expires, and the dispatcher spawns a
 second agent onto the same stage in the same worktree.
 
+## Read-only stage commands
+
+A project extends the built-in read-only allowlist in `[readonly]` in
+`.project/pipeline.toml`:
+
+```toml
+[readonly]
+allow = ["mytool status", "mytool show"]
+```
+
+Entries are argv prefixes, matched per shell segment. The always-blocked set
+and the redirection rule still win over any entry here. The list is read from
+HEAD, and `.project/pipeline.toml` is fenced, so widening it is a human's
+commit.
+
 ## MCP servers
 
 A project declares one in `[mcp.<name>]` in `.project/pipeline.toml`:
