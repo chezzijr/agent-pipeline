@@ -32,7 +32,7 @@ from textual.widgets import Footer, RichLog, Static, Tree
 
 from pipeline.cli.main import cmd_answer, cmd_approve, cmd_reject, render
 from pipeline.core import PipelineError
-from pipeline.core.machine import HUMAN_GATES
+from pipeline.core.machine import HUMAN_GATES, TERMINAL
 from pipeline.core.ticket import ticket_path
 from pipeline.daemon import registry
 from pipeline.daemon.server import PTY_INPUT, ticket_rows
@@ -45,6 +45,8 @@ MAX_TAIL = 256 << 10   # of a stage log, before the live stream takes over
 # The event kinds that can change a row. Everything else is stream chatter and
 # belongs in the detail pane, not in a tree rebuild.
 TREE_KINDS = {"stage_start", "stage_end", "transition", "escalated", "gate"}
+# `escalated` is terminal, but it is the one terminal stage a human must open.
+FINISHED = TERMINAL - {"escalated"}
 # TICKET-012's passthrough kinds: `data` is the shape `cli.main.render` reads.
 STREAM_KINDS = {"init", "assistant", "tool_result", "hook_started",
                 "hook_response", "rate_limit", "result"}
@@ -199,6 +201,7 @@ class PipelineApp(App):
         self.selected: tuple[str, str] | None = None
         self.dropped = 0
         self.sig = None               # last painted tree, to skip no-op repaints
+        self.show_finished = False    # `f` toggles `done`/`rejected` back in
         self.attached = None          # (project, ticket) the PTY pane is showing
         self.pty_id = None            # the request id its `attach` frames carry
         self.pty_screen = None        # our own emulator, fed by those frames
@@ -269,14 +272,23 @@ class PipelineApp(App):
     def refresh_tree(self) -> None:
         self._paint(self._rows())
 
+    def _visible(self, rows: list[dict]) -> list[dict]:
+        """Which rows the tree paints. `done` and `rejected` hide by default;
+        the selected row stays painted whatever its stage, so a ticket that
+        finishes while its pane is open does not take its own row away."""
+        if self.show_finished:
+            return rows
+        return [r for r in rows if r.get("stage") not in FINISHED
+                or (r["project"], r["id"]) == self.selected]
+
     def _paint(self, rows: list[dict]) -> None:
         """Rebuild the tree -- but only when a label actually changed. The 5s
         refresh would otherwise yank the cursor back to the root twice a
         keystroke, which is the difference between a dashboard and a toy."""
         self.rows = {(r["project"], r["id"]): r for r in rows}
-        grouped: dict[str, list[dict]] = {}
-        for r in rows:
-            grouped.setdefault(r["project"], []).append(r)
+        grouped: dict[str, list[dict]] = {r["project"]: [] for r in rows}
+        for r in self._visible(rows):
+            grouped[r["project"]].append(r)
         sig = [(p, [label(r) for r in sorted(rs, key=lambda r: r["id"])])
                for p, rs in sorted(grouped.items())]
         self._status()
