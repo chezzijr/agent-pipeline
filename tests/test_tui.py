@@ -76,6 +76,21 @@ def labels(app):
     return {str(n.label): [str(c.label) for c in n.children] for n in root.children}
 
 
+async def select(app, pilot, project, tid):
+    """Move the cursor straight to a ticket's node, by identity.
+
+    `press("down", "down")` cannot select a row the cursor already sits on --
+    re-selecting it must still fire a highlight, which a repeated key press
+    cannot do once the tree opens on the first live ticket.
+    """
+    tree = app.query_one(Tree)
+    node = next(c for n in tree.root.children for c in n.children
+                if c.data == (str(project), tid))
+    tree.move_cursor(None)
+    tree.move_cursor(node)
+    await pilot.pause()
+
+
 def test_tui_renders_tree_from_ls():
     async def go():
         app = PipelineApp(client=FakeClient([
@@ -158,7 +173,7 @@ def test_approve_rewrites_the_ticket_file_with_no_daemon_op():
         app = PipelineApp(client=fake)
         async with app.run_test() as pilot:
             app.query_one(Tree).focus()
-            await pilot.press("down", "down")     # root -> project -> the ticket
+            await select(app, pilot, d, "TICKET-001")
             assert app.selected == (str(d), "TICKET-001")
             fake.sent.clear()
             await pilot.press("a")
@@ -178,7 +193,7 @@ def test_a_wrong_stage_refuses_without_taking_the_app_down():
                                                  "plan-validation")]))
         async with app.run_test() as pilot:
             app.query_one(Tree).focus()
-            await pilot.press("down", "down")
+            await select(app, pilot, d, "TICKET-001")
             await pilot.press("a")
             await pilot.pause()
             assert app.is_running
@@ -245,7 +260,7 @@ def test_an_interactive_stage_attaches_and_a_dropped_frame_reattaches():
         async with app.run_test() as pilot:
             app.stream = FakeStream()          # the worker thread's socket
             app.query_one(Tree).focus()
-            await pilot.press("down", "down")
+            await select(app, pilot, d, "TICKET-001")
             await pilot.pause()
 
             assert app.attached == (d, "TICKET-001"), app.attached
@@ -321,7 +336,7 @@ def test_the_pane_stops_claiming_to_be_live_when_the_stage_ends():
         async with app.run_test() as pilot:
             app.stream = FakeStream()
             app.query_one(Tree).focus()
-            await pilot.press("down", "down")
+            await select(app, pilot, d, "TICKET-001")
             await pilot.pause()
             assert app.attached == (d, "TICKET-001")
 
@@ -372,7 +387,7 @@ def test_edit_waits_for_the_stage_to_actually_stop():
         app._sh = lambda cmd: opened.append(cmd)
         async with app.run_test() as pilot:
             app.query_one(Tree).focus()
-            await pilot.press("down", "down")
+            await select(app, pilot, d, "TICKET-001")
             assert app.selected == (str(d), "TICKET-001")
 
             app._stopped = lambda key, tries=20: False   # never reaped
@@ -404,7 +419,7 @@ def test_attaching_sends_the_pane_size():
         async with app.run_test(size=(200, 50)) as pilot:
             app.stream = FakeStream()
             app.query_one(Tree).focus()
-            await pilot.press("down", "down")
+            await select(app, pilot, d, "TICKET-001")
             await pilot.pause()
             app.on_frame({"id": app.pty_id, "ok": True,
                           "data": {"screen": ["Allow Bash?"], "rows": 40,
@@ -430,7 +445,7 @@ def test_resizing_the_terminal_resizes_the_child():
         async with app.run_test(size=(200, 50)) as pilot:
             app.stream = FakeStream()
             app.query_one(Tree).focus()
-            await pilot.press("down", "down")
+            await select(app, pilot, d, "TICKET-001")
             await pilot.pause()
             app.on_frame({"id": app.pty_id, "ok": True,
                           "data": {"screen": ["Allow Bash?"], "rows": 40,
@@ -469,7 +484,7 @@ def test_a_read_only_viewer_never_sends_a_resize():
         async with app.run_test(size=(200, 50)) as pilot:
             app.stream = FakeStream()
             app.query_one(Tree).focus()
-            await pilot.press("down", "down")
+            await select(app, pilot, d, "TICKET-001")
             await pilot.pause()
             app.on_frame({"id": app.pty_id, "ok": True,
                           "data": {"screen": ["Allow Bash?"], "rows": 40,
