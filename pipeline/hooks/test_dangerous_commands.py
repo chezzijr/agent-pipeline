@@ -140,6 +140,29 @@ def tables():
     check_mcp(MCP_ALLOWED, False, "mcp")
 
 
+def test_a_read_only_stage_runs_the_commands_its_project_allows():
+    """A project can extend the built-in read-only allowlist with its own
+    argv prefixes, via PIPELINE_READONLY_ALLOW. Not yet implemented:
+    `readonly_rules()` has no entry for `pipeline`, so this fails until it
+    does not defeat the redirection rule.
+
+    This is the pytest-collected reproduction: `test_one` runs this file
+    through pytest, which never reaches the tables under `__main__`.
+    """
+    saved = os.environ.get("PIPELINE_READONLY_ALLOW")
+    os.environ["PIPELINE_READONLY_ALLOW"] = json.dumps(
+        [["pipeline", "ls"], ["pipeline", "status"]])
+    try:
+        for c in ("pipeline ls", "pipeline status"):
+            got = guard.verdict(c, True)
+            assert got is None, f"project-allow: {c!r} -> {got!r} (expected allow)"
+    finally:
+        if saved is None:
+            os.environ.pop("PIPELINE_READONLY_ALLOW", None)
+        else:
+            os.environ["PIPELINE_READONLY_ALLOW"] = saved
+
+
 def test_the_allow_and_block_tables():
     tables()
 
