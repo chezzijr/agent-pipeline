@@ -189,6 +189,7 @@ class PipelineApp(App):
         ("m", "metrics", "metrics"),
         ("k", "kill", "kill"),
         ("i", "raw", "type"),
+        ("f", "finished", "finished"),
     ]
 
     def __init__(self, client=None, project: str | None = None) -> None:
@@ -316,11 +317,13 @@ class PipelineApp(App):
     def _status(self) -> None:
         rows = list(self.rows.values())
         running = sum(1 for r in rows if r.get("running"))
+        hidden = len(rows) - len(self._visible(rows))
+        finished = f" - {hidden} finished hidden (f)" if hidden else ""
         drops = f" - {self.dropped} events dropped" if self.dropped else ""
         mode = "RAW (esc esc to exit) - " if self.raw else ""
         # the sketch's `$2.14 today` lives behind `m`: cost is TICKET-014's
         self.query_one("#status", Static).update(
-            f"{mode}{len(rows)} tickets - {running} running{drops}")
+            f"{mode}{len(rows)} tickets - {running} running{finished}{drops}")
 
     # -- the event stream ---------------------------------------------------
     @work(thread=True, exclusive=True)
@@ -722,3 +725,11 @@ class PipelineApp(App):
         if key:
             self._kill(key)
             self.refresh_tree()
+
+    def action_finished(self) -> None:
+        """`f` toggles `done`/`rejected` in and out of the tree. Hidden is the
+        default; `self.sig = None` forces the rebuild even when the visible
+        labels did not change."""
+        self.show_finished = not self.show_finished
+        self.sig = None
+        self.refresh_tree()
