@@ -315,6 +315,40 @@ def test_marker_and_status_say_unknown_when_no_daemon_answered():
     assert marker({"running": True, "stage": "planning"}) == "*"
 
 
+def test_a_failed_ls_keeps_the_last_daemon_answer_for_a_live_interactive_stage():
+    """One timed-out ls must not make a live interactive stage look like a
+    finished batch one."""
+    async def go():
+        d = make_project()
+
+        class Flaky(FakeClient):
+            def __init__(self, rows):
+                super().__init__(rows)
+                self.fail = False
+
+            def request(self, op, **kw):
+                if op == "ls" and self.fail:
+                    raise PipelineError("timed out")
+                return super().request(op, **kw)
+
+        flaky = Flaky([row(d, "TICKET-001", "planning",
+                            running=True, mode="interactive")])
+        app = PipelineApp(client=flaky, project=str(d))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            assert app.rows[(str(d), "TICKET-001")]["mode"] == "interactive"
+            flaky.fail = True
+            app.refresh_tree()
+            await pilot.pause()
+            assert app.rows[(str(d), "TICKET-001")]["mode"] == "interactive", \
+                "one timed-out ls made a live interactive stage look like a finished batch one"
+            assert app.rows[(str(d), "TICKET-001")]["running"] is True
+            await pilot.press("q")
+        assert app.return_code == 0
+
+    asyncio.run(go())
+
+
 class FakeStream:
     """The subscription connection. `send` records and hands back the id the
     daemon will tag its frames with; frames come back through `on_frame`

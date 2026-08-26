@@ -272,7 +272,21 @@ class PipelineApp(App):
                 self.notify(f"daemon: {e}")
         targets = self.projects or ([self.project] if self.project
                                     else [str(p) for p in registry.projects()])
-        return [r for p in targets for r in ticket_rows(Path(p))]
+        return [self._carry(r) for p in targets for r in ticket_rows(Path(p))]
+
+    def _carry(self, row: dict) -> dict:
+        """A file row cannot know `running`/`mode` and says `None`. The last
+        daemon answer is a better guess than `not running`: a live
+        interactive stage stays attachable across one timed-out `ls`. It can
+        be stale for as long as the daemon is silent, and the next answered
+        `ls` corrects it -- erring toward reachable, because the failure this
+        fixes is a human locked out of a prompt already on screen."""
+        for k in ("running", "mode"):
+            if row.get(k, False) is None:
+                last = self.rows.get((row.get("project"), row.get("id")))
+                if last and last.get(k) is not None:
+                    row[k] = last[k]
+        return row
 
     def refresh_tree(self) -> None:
         self._paint(self._rows())
