@@ -4,6 +4,7 @@ import json
 import shutil
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 
 from helpers import FIXTURE, git_project, project
@@ -461,7 +462,8 @@ def test_a_bound_escalation_emits_an_escalated_event():
     while a crashed harness was loud.
 
     The gate's own `stage_end` is the other half of the same number -- with no
-    agent spawned, nothing else records that the stage ran at all.
+    agent spawned, `finish()` on the gate child is what records that the
+    stage ran at all.
     """
     d, _ = git_project()
     path = d / ".project/tickets/TICKET-001.md"
@@ -470,7 +472,9 @@ def test_a_bound_escalation_emits_an_escalated_event():
                                     "counters: {plan_validation_attempts: 1}"))
     s = Store(Path(tempfile.mkdtemp()) / "events.db")
     # the gate fails: FIXTURE's `test_file` does not exist in this checkout
-    supervisor.start(d, path, harness("fake"), {}, None, s.emitter(str(d)))
+    did, rec = supervisor.start(d, path, harness("fake"), {}, None, s.emitter(str(d)))
+    rec["proc"].wait()
+    supervisor.finish(d, rec, s.emitter(str(d)))
 
     assert Ticket.load(path).stage == "escalated"
     esc = [e for e in s.since(0) if e["kind"] == "escalated"]
@@ -1193,4 +1197,37 @@ def test_an_unwind_with_no_recorded_head_escalates_instead_of_guessing():
     did, rec = supervisor.start(d, path, harness("fake"), {})
     assert did is True and rec is None
     assert Ticket.load(path).stage == "escalated"
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_the_tier_a_gate_runs_as_a_spawned_child():
+    """The daemon must answer other tickets and drain other children's pipes
+    while a project's `test_one` runs -- so the Tier A gate must not block the
+    loop the way an inline `gate()` call did."""
+    d, sh = git_project()
+    (d / "test_thing.py").write_text("")
+    sh("git add test_thing.py && git commit -qm 'the test file'")
+    (d / ".project/pipeline.toml").write_text(
+        'test_one = "sleep 5; echo test_broken; exit 1"\n'
+        'test_suite = "true"\n'
+        'test_suite_without_new = "true"\n'
+        'base = "main"\n')
+    path = d / ".project/tickets/TICKET-001.md"
+    path.write_text(FIXTURE)
+
+    t0 = time.monotonic()
+    did, rec = supervisor.start(d, path, harness("fake"), {})
+    elapsed = time.monotonic() - t0
+
+    assert did and rec
+    assert rec["kind"] == "gate"
+    assert elapsed < 2, f"start() blocked for {elapsed}s waiting on the gate"
+    assert rec["proc"].poll() is None, "the gate child already finished"
+    t = Ticket.load(path)
+    assert t.stage == "plan-validation"
+    assert t.lease_active()
+
+    rec["proc"].kill()
+    rec["proc"].wait()
+    supervisor.close_child(rec)
     shutil.rmtree(d, ignore_errors=True)

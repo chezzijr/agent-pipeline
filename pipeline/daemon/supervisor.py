@@ -457,8 +457,30 @@ def spawn(project: Path, wt: Path, tid: str, stage: str, hcfg: dict,
     return rec
 
 
+GATE_PASS = "gate-pass"
+
+
+def gate_cmd(project: Path, tid: str, findings: Path) -> str:
+    """The Tier A gate as a spawned child, instead of an inline `gate()` call
+    that stalled the loop for the length of the project's `test_one`.
+
+    Runs the DISPATCHER's own interpreter, not `project_env()`'s -- this is
+    the dispatcher's own code (`pipeline gate`), and the project commands it
+    runs re-apply `project_env()` inside `run_cmd()` already.
+
+    `-P` is load-bearing: `spawn_command()` runs its child with `cwd=wt`
+    (`pipeline/daemon/supervisor.py:463`), and a bare `-m` prepends that cwd
+    to `sys.path`, so it would import the TICKET WORKTREE's own copy of
+    `pipeline` -- the code under review judging itself. `-P` drops the cwd
+    entry and keeps `PYTHONPATH`, so the dispatcher's own copy judges the gate.
+    """
+    return (f"{shlex.quote(sys.executable)} -P -m pipeline "
+            f"--project {shlex.quote(str(project))} gate {shlex.quote(tid)} "
+            f"--findings {shlex.quote(str(findings))}")
+
+
 def spawn_command(project: Path, wt: Path, tid: str, stage: str, cmd: str,
-                  kind: str = "command", emit=noop) -> dict:
+                  kind: str = "command", emit=noop, env: dict | None = None) -> dict:
     """Start a dispatcher-owned command as a tracked child, shaped like
     `spawn()`'s record so `reap()` collects it with everything else. Run inline
     the suite stalled the loop: no other ticket advanced and no finished agent
@@ -471,7 +493,7 @@ def spawn_command(project: Path, wt: Path, tid: str, stage: str, cmd: str,
     fh.write(f"$ {cmd}\n\n")
     fh.flush()
     proc = subprocess.Popen(cmd, shell=True, cwd=wt, stdout=fh,
-                            stderr=subprocess.STDOUT, env=project_env())
+                            stderr=subprocess.STDOUT, env=env or project_env())
     print(f"  start {tid}: {stage} (script) pid {proc.pid} -> {log.name}")
     emit("stage_start", ticket=tid, stage=stage, model=None, mode=kind,
          pid=proc.pid, log=str(log), wt=str(wt))
@@ -668,12 +690,12 @@ def start(project: Path, path: Path, hcfg: dict, inflight: dict,
     if wt is None:
         return bail("could not create a worktree")
 
-    def child(cmd: str, kind: str) -> tuple[bool, dict]:
+    def child(cmd: str, kind: str, env: dict | None = None) -> tuple[bool, dict]:
         # a child that outlives the tick must lease exactly like an agent, or a
         # crash mid-command leaves nothing for the expiry path to recover
         t.take_lease(f"{stage}-{os.getpid()}")
         t.save()
-        rec = spawn_command(project, wt, tid, stage, cmd, kind, emit)
+        rec = spawn_command(project, wt, tid, stage, cmd, kind, emit, env=env)
         # `meta` is not optional: start()'s own overlap check reads it off every
         # in-flight record
         rec["path"], rec["tid"], rec["meta"], rec["before"] = path, tid, t, None
@@ -713,26 +735,18 @@ def start(project: Path, path: Path, hcfg: dict, inflight: dict,
         return child(unwind_cmd(head), "unwind")
 
     if stage == "plan-validation":
-        # ponytail: `gate()` runs the project's `test_one` synchronously, and
-        # for its duration no pipe is drained -- a very chatty agent can still
-        # fill 1M and block. Upgrade = run the gate as a spawned child like
-        # `verifying` does, which is a `DISPATCHER_STAGES` change, not a
-        # daemon one.
-        drain_all(inflight)
-        ok, failures = gate(project, tid, wt)
-        emit("gate", ticket=tid, stage=stage,
-             verdict="pass" if ok else "fail", findings=failures)
-        t = Ticket.load(path)  # the gate wrote its findings to the thread
-        if not ok:
-            advance(project, t, "fail",
-                    "Tier A gate failed:\n" + "\n".join(f"- {f}" for f in failures),
-                    emit, agent=False)
-            # a failed gate IS this stage's run: no agent is spawned, so
-            # `finish()` never fires and view 1 would divide an escalation by
-            # zero runs and report no rate for the stage that escalated
-            emit("stage_end", ticket=tid, stage=stage, result="fail",
-                 next_stage=t.stage, exit_code=None)
-            return True, None
+        if not t.counters.get("gate_ok"):
+            # the Tier A gate runs as a spawned child: run inline, `gate()`'s
+            # `test_one` stalled the loop for its whole duration, so the
+            # daemon answered no client request and drained no child's pipe.
+            out = project / ".project" / "logs" / f"{tid}-gate-{uuid.uuid4().hex[:8]}.json"
+            ok, rec = child(gate_cmd(project, tid, out), "gate", env=dict(os.environ))
+            if rec is not None:
+                rec["findings"] = out
+            return ok, rec
+        # a Tier A PASS is a phase of this stage, not an ended attempt --
+        # consume it and fall through to the Tier B agent spawn below
+        t.counters.pop("gate_ok", None)
 
     if stage == "implementing" and t.counters.get("cheap_route") and not t.extra.get("cheap_route_head"):
         # the last moment `counters["cheap_route"]` is still set -- it is
@@ -831,6 +845,51 @@ def finish_suite(project: Path, rec: dict, emit=noop) -> str:
     return "ok"
 
 
+def read_findings(rec: dict, code: int) -> tuple[bool, list[str]]:
+    """The gate child's verdict, read back from the `--findings` file its
+    `pipeline gate` wrote. Fails closed, like `finish_suite()`: a child that
+    exited without a readable, consistent file did not run the gate, and
+    reporting that as a pass would send an ungated plan to a human."""
+    path = Path(rec["findings"])
+    try:
+        try:
+            data = json.loads(path.read_text())
+        finally:
+            path.unlink(missing_ok=True)
+        ok, failures = data["ok"], data["findings"]
+    except Exception as e:
+        return False, [f"gate child exit {code} left no readable findings "
+                        f"({e.__class__.__name__}: {e})\n```\n{log_tail(rec)}\n```"]
+    if ok != (code == 0):
+        return False, [f"gate child exit {code} disagrees with its findings "
+                        f"file (ok={ok})\n```\n{log_tail(rec)}\n```"]
+    return ok, failures
+
+
+def finish_gate(project: Path, rec: dict, emit=noop) -> str:
+    """Apply the Tier A gate child's verdict. A PASS at `plan-validation` is a
+    phase of the stage, not an ended attempt: it is recorded in
+    `counters["gate_ok"]` and consumed by the next `start()`, which spawns the
+    Tier B agent. `finish()` skips `stage_end` for that case (see `GATE_PASS`),
+    or one `plan-validation` run would put two rows in view 1's denominator."""
+    close_child(rec)
+    code = rec["proc"].returncode
+    ok, failures = read_findings(rec, code)
+    emit("gate", ticket=rec["tid"], stage=rec["stage"],
+         verdict="pass" if ok else "fail", findings=failures)
+    t = Ticket.load(rec["path"])
+    prefix = "re-gated after rebasing onto base" if rec.get("base") else "Tier A gate"
+    note = f"{prefix}: passed" if ok else (
+        f"{prefix} failed:\n" + "\n".join(f"- {f}" for f in failures))
+    if ok and t.stage == "plan-validation":
+        t.counters["gate_ok"] = 1
+        t.release_lease()
+        t.save()
+        return GATE_PASS
+    advance(project, t, "ok" if ok else "fail", note, emit, agent=False)
+    return "ok" if ok else "fail"
+
+
 def finish_regate(project: Path, rec: dict, emit=noop) -> str:
     """A rebase onto current base, then the Tier A gate again -- an approval is
     only as good as the tree it was given against."""
@@ -878,6 +937,11 @@ def finish(project: Path, rec: dict, emit=noop) -> None:
     finally:
         # whatever _finish did or raised, this child's fd leaves the poller
         close_child(rec)
+    if result == GATE_PASS:
+        # a Tier A pass is a phase of `plan-validation`, not an ended attempt
+        # -- a `stage_end` here would put two rows in view 1's denominator
+        # for one run
+        return
     try:
         nxt = Ticket.load(rec["path"]).stage
     except Exception:
@@ -916,6 +980,9 @@ def _finish(project: Path, rec: dict, emit=noop) -> str:
     # rebase only has to succeed for the gate to have a tree worth judging
     if rec.get("kind") == "regate":
         return finish_regate(project, rec, emit)
+    # a Tier A gate, spawned instead of run inline -- see `gate_cmd()`
+    if rec.get("kind") == "gate":
+        return finish_gate(project, rec, emit)
     # the reset's exit code is the whole verdict, like the merge
     if rec.get("kind") == "unwind":
         return finish_child(project, rec, "unwind", emit)
