@@ -89,6 +89,11 @@ def cmd_gate(args) -> None:
     # the ticket's test lives on its branch; running in the main checkout would
     # report a bogus "test file does not exist" straight into the thread
     ok, failures = gate(project, args.id, wt if wt.is_dir() else None)
+    if args.findings:
+        # the dispatcher's gate child sends its stdout to a log file it never
+        # reads back; this is how the verdict and findings reach it instead --
+        # the exit code alone can't carry the findings for the thread note.
+        Path(args.findings).write_text(json.dumps({"ok": ok, "findings": failures}))
     for f in failures:
         print(f"FAIL: {f}")
     print("gate: PASS" if ok else "gate: FAIL")
@@ -532,7 +537,7 @@ def main() -> None:
 
     p = sub.add_parser("init"); p.add_argument("dir", nargs="?", default=None); p.add_argument("--private", action="store_true", help="hide .project/ from git in this clone only (.git/info/exclude)"); p.set_defaults(fn=cmd_init)
     p = sub.add_parser("new"); p.add_argument("title"); p.add_argument("--class", dest="cls", default="bugfix"); p.set_defaults(fn=cmd_new)
-    p = sub.add_parser("gate"); p.add_argument("id"); p.set_defaults(fn=cmd_gate)
+    p = sub.add_parser("gate"); p.add_argument("id"); p.add_argument("--findings", help="write {ok, findings} JSON here; the dispatcher's gate child reads it back"); p.set_defaults(fn=cmd_gate)
     p = sub.add_parser("plan"); p.add_argument("id"); p.set_defaults(fn=cmd_plan)
     p = sub.add_parser("approve"); p.add_argument("id"); p.add_argument("--by"); p.set_defaults(fn=cmd_approve)
     p = sub.add_parser("reject"); p.add_argument("id"); p.add_argument("reason"); p.set_defaults(fn=cmd_reject)

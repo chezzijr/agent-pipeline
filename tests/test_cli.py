@@ -8,7 +8,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from helpers import ROOT
+from helpers import ROOT, project
 from pipeline.core.ticket import Ticket
 
 
@@ -438,4 +438,18 @@ def test_plan_errors_on_an_unknown_ticket():
     assert r.returncode == 1, r.stderr
     assert "TICKET-999.md" in r.stderr
     assert "Traceback" not in r.stderr
+    shutil.rmtree(d)
+
+
+def test_gate_writes_its_findings_where_the_dispatcher_asked():
+    """`--findings PATH` is how the dispatcher's spawned gate child hands its
+    verdict back, since its stdout goes straight to a log file it never reads."""
+    d = project(test_passes=True)
+    out = Path(tempfile.mkdtemp()) / "findings.json"
+    r = cli(d, "gate", "TICKET-001", "--findings", str(out))
+    assert r.returncode == 1, r.stdout + r.stderr
+    data = json.loads(out.read_text())
+    assert data["ok"] is False
+    assert len(data["findings"]) == 1
+    assert not any("```" in f for f in data["findings"])
     shutil.rmtree(d)
