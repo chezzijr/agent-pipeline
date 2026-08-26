@@ -122,6 +122,33 @@ def test_a_stage_only_gets_the_mcp_servers_it_declares():
     assert C.mcp_config({}) is None
 
 
+def test_a_project_names_the_commands_a_read_only_stage_may_run():
+    d = Path(tempfile.mkdtemp())
+    (d / ".project").mkdir(parents=True)
+    cfg = d / ".project" / "pipeline.toml"
+    cfg.write_text('[readonly]\nallow = ["pipeline ls", "./run tests"]\n')
+    assert C.readonly_allow(d) == [["pipeline", "ls"], ["./run", "tests"]]
+
+    cfg.write_text('test_one = "pytest"\n')
+    assert C.readonly_allow(d) == []
+
+    assert C.readonly_allow(Path(tempfile.mkdtemp())) == []
+
+    for bad in ('allow = "pipeline ls"\n', 'allow = [""]\n', 'allow = [3]\n'):
+        cfg.write_text("[readonly]\n" + bad)
+        try:
+            C.readonly_allow(d)
+            assert False, f"{bad!r} must raise"
+        except PipelineError:
+            pass
+    cfg.write_text("readonly = 3\n")
+    try:
+        C.readonly_allow(d)
+        assert False, "readonly = 3 must raise"
+    except PipelineError:
+        pass
+
+
 def test_an_mcp_server_a_stage_did_not_declare_is_refused():
     d = Path(tempfile.mkdtemp())
     (d / ".project").mkdir(parents=True)

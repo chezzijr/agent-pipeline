@@ -128,6 +128,38 @@ def mcp_servers(project: Path, cfg: dict) -> dict:
     return out
 
 
+def readonly_allow(project: Path) -> list[list[str]]:
+    """A project's own read-only argv prefixes: `[readonly] allow` in
+    `.project/pipeline.toml`, each entry lexed once with `shlex.split`.
+
+    Read through `project_config()`, so the list comes from HEAD of the main
+    checkout and a stage cannot widen its own allowlist (DEC-037). A project
+    with no config yields `[]` -- `spawn()` calls this for every stage, and
+    `tests/test_pty.py` spawns into a bare temp directory with none.  The
+    prefixes never override `always_rules()` or the redirection and
+    command-substitution rules in the guard.
+    """
+    try:
+        cfg = project_config(project)
+    except PipelineError:
+        return []
+    table = cfg.get("readonly") or {}
+    if not isinstance(table, dict):
+        raise PipelineError(f"{project}: [readonly] must be a table")
+    allow = table.get("allow") or []
+    if not isinstance(allow, list):
+        raise PipelineError(f"{project}: [readonly] allow must be a list")
+    out = []
+    for entry in allow:
+        if not isinstance(entry, str):
+            raise PipelineError(f"{project}: [readonly] allow entry {entry!r} must be a string")
+        tokens = shlex.split(entry)
+        if not tokens:
+            raise PipelineError(f"{project}: [readonly] allow entry {entry!r} is empty")
+        out.append(tokens)
+    return out
+
+
 def mcp_config(servers: dict) -> Path | None:
     """The `--mcp-config` file Claude Code wants: `mcpServers` keyed by name,
     with `readonly` stripped -- that key is the pipeline's own, read by
