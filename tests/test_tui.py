@@ -875,6 +875,68 @@ def test_a_pty_dump_wider_than_the_log_pane_is_not_re_wrapped():
     asyncio.run(go())
 
 
+def test_a_clipped_pty_dump_keeps_the_whole_line_for_horizontal_scrolling():
+    """A dump written wider than the pane must clip, not truncate: the full
+    line stays in the strip and the pane's `virtual_size` grows to it, so
+    the clipped remainder is reachable by scrolling instead of discarded."""
+    d = make_project()
+    logs = d / ".project" / "logs"
+    logs.mkdir(parents=True)
+    rule = b"=" * 120
+    (logs / "TICKET-001-planning.log").write_bytes(
+        b"\x1b]9999;40;120\x07" + rule + b"\n")
+
+    async def go():
+        fake = FakeClient([row(d, "TICKET-001", "planning")])
+        app = PipelineApp(client=fake)
+        async with app.run_test(size=(80, 24)) as pilot:
+            app.query_one(Tree).focus()
+            await pilot.press("down", "down")
+            await pilot.pause()
+
+            log = app.query_one("#log", RichLog)
+
+            def text(strip):
+                return "".join(seg.text for seg in strip)
+
+            strips = [s for s in log.lines if set(text(s).strip()) == {"="}]
+            assert len(strips) == 1
+            assert strips[0].cell_length == 120, strips[0].cell_length
+            assert log.virtual_size.width >= 120, log.virtual_size.width
+
+    asyncio.run(go())
+
+
+def test_a_stream_json_log_still_wraps_in_the_log_pane():
+    """The width fix must not turn wrapping off for prose: a stream-json
+    line still soft-wraps across more than one `RichLog` strip."""
+    d = make_project()
+    logs = d / ".project" / "logs"
+    logs.mkdir(parents=True)
+    text_body = "word " * 40
+    (logs / "TICKET-001-planning.log").write_bytes(
+        ('{"type":"assistant","message":{"content":[{"type":"text","text":"'
+         + text_body + '"}]}}\n').encode())
+
+    async def go():
+        fake = FakeClient([row(d, "TICKET-001", "planning")])
+        app = PipelineApp(client=fake)
+        async with app.run_test(size=(80, 24)) as pilot:
+            app.query_one(Tree).focus()
+            await pilot.press("down", "down")
+            await pilot.pause()
+
+            log = app.query_one("#log", RichLog)
+
+            def text(strip):
+                return "".join(seg.text for seg in strip)
+
+            matches = [s for s in log.lines if "word" in text(s)]
+            assert len(matches) > 1, matches
+
+    asyncio.run(go())
+
+
 def test_tail_log_still_renders_a_stream_json_log():
     """The sniff must not divert a headless stage's log into pyte: 35
     of the 43 `planning` logs in this repo are stream-json, from runs
