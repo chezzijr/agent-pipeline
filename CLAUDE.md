@@ -128,10 +128,14 @@ still worth it: it prints one line per case, and the failure names the case.
   *controlling* terminal, and a TUI without one draws nothing. The winsize is
   set in the child before `exec` for the same reason: a child that reads 0x0
   renders an empty screen.
-- **An interactive stage is only interactive if something can attach.**
-  `spawn()` asks `poller.attachable` -- `Server` sets it, the bare `Poller`
-  `pipeline run` builds does not. Gating on `poller is not None` was wrong:
-  `run()` passes one, and the stage parked at a REPL nobody could reach.
+- **An interactive stage is only interactive while a client is attached.**
+  `spawn()` asks two questions: `poller.attachable` (is there a socket --
+  `Server` sets it, the bare `Poller` `pipeline run` builds does not) and
+  `poller.watchers(project)` (is a client subscribed right now). Gating on
+  `attachable` alone was wrong: a daemon with nobody on it still spawned a
+  REPL, and it parked at a prompt nobody could see until the lease expired
+  twice (TICKET-059). A TUI that attaches after the spawn gets a headless
+  stage; that race is accepted.
 - **A REPL does not exit when the agent writes `.result`.** `finish()` fires on
   `proc.poll()`, so `end_interactive()` SIGTERMs an interactive child once its
   sidecar appears. Without it the lease expires twice and the ticket escalates

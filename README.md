@@ -124,7 +124,7 @@ database under your state directory (see *Where it keeps things*).
 
 ```sh
 pipeline register ~/code/myproject   # one path per line in the registry file
-pipeline start                       # spawns pipelined, detached; interactive stages wait for `pipeline tui`
+pipeline start                       # spawns pipelined, detached; interactive stages need `pipeline tui` attached
 pipeline status                      # is it running, and how many projects
 pipeline ls                          # every registered project's tickets
 pipeline ls --project ~/code/myproject     # --project is a FILTER here
@@ -188,14 +188,13 @@ This is not a nicer view of a headless stage. Under `-p` the harness *ignores*
 prompt and an option picker simply do not exist there. A PTY is the only mode in
 which a human can steer a stage.
 
-`mode: interactive` means "interactive when a human can reach it". `pipeline
-run` has no socket, so nothing could ever `attach`, and a REPL nobody attaches
-to would sit at its prompt until its lease expired twice -- which would make
-the daemon a dependency for every ticket that reaches `planning`. Without an
-attachable supervisor the stage runs **headless** instead, and says so on
-stdout. Nothing is lost but the steering: `planning`'s own escape hatch is
-`result: needs-input`, which parks the ticket at a human gate for
-`pipeline answer`. `pipeline start --help` and `pipeline run --help` each say
+`mode: interactive` means "interactive while a human is attached". `pipeline
+run` has no socket, and `pipeline start` with no client subscribed is the same
+case: both run the stage **headless** instead, and say so on stdout. A TUI
+that attaches after the spawn gets a headless stage. Nothing is lost but the
+steering: `planning`'s own escape hatch is `result: needs-input`, which parks
+the ticket at a human gate for `pipeline answer`. `pipeline start --help` and
+`pipeline run --help` each say
 which side they are on, and `tests/test_cli.py::test_the_help_text_matches_the_code_it_describes`
 fails if either stops saying it.
 
