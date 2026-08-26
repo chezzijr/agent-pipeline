@@ -18,6 +18,12 @@ command until you split it:
                  the `.result` sidecar. Bash is deliberately NOT covered:
                  `echo x > /abs/path` still writes anywhere.
 
+The read-only allowlist has one per-project extension: PIPELINE_READONLY_ALLOW,
+an argv-prefix list the dispatcher exports from `[readonly] allow` in
+`.project/pipeline.toml`. It is applied per segment inside `readonly_rules()`
+only, and it can never re-enable anything `always_rules()` or the redirection
+and command-substitution checks above refuse.
+
 Registered per stage via `hooks:` in that stage's frontmatter.
 
 This file is registered through `--settings`, which Claude Code merges
@@ -228,6 +234,27 @@ def always_rules(segs: list[list[str]], raw: str) -> str | None:
     return None
 
 
+READONLY_ALLOW_ENV = "PIPELINE_READONLY_ALLOW"
+
+
+def readonly_prefixes() -> list[list[str]]:
+    """A project's own read-only argv prefixes, from PIPELINE_READONLY_ALLOW.
+
+    Fails closed to `[]`: unparseable JSON, a non-list, or an entry that is
+    not a non-empty list of non-empty strings is dropped. An empty entry
+    would match every argv (`argv[:0] == []` for any argv), so it is never
+    kept rather than treated as a wildcard.
+    """
+    try:
+        raw = json.loads(os.environ.get(READONLY_ALLOW_ENV, "[]"))
+    except ValueError:
+        return []
+    if not isinstance(raw, list):
+        return []
+    return [p for p in raw if isinstance(p, list) and p
+            and all(isinstance(a, str) and a for a in p)]
+
+
 def readonly_rules(segs: list[list[str]], raw: str) -> str | None:
     # any redirection that lands in a file; `2>&1` and `>&2` are not writes
     if re.search(r"(?<![0-9&>])>{1,2}(?!\s*&)", raw) or re.search(r"\d>{1,2}(?!\s*&)", raw):
@@ -235,8 +262,13 @@ def readonly_rules(segs: list[list[str]], raw: str) -> str | None:
     if "$(" in raw or "`" in raw:
         return "command substitution the guard cannot inspect"
 
+    allow = readonly_prefixes()
     for argv in segs:
         if not argv:
+            continue
+        # argv[0] is compared verbatim, not by basename, so a project entry
+        # like "./pipeline/hooks/test_dangerous_commands.py" matches as written
+        if any(argv[:len(p)] == p for p in allow):
             continue
         name = os.path.basename(argv[0])
         args = argv[1:]
