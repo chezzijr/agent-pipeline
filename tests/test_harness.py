@@ -389,6 +389,35 @@ def test_a_spawned_stage_carries_its_mcp_allowlist_in_the_environment():
         shutil.rmtree(d, ignore_errors=True)
 
 
+def test_a_spawned_stage_carries_its_readonly_allowlist_in_the_environment():
+    import shutil
+
+    from helpers import project
+    d = project()
+    stage_file = config.STAGES_DIR / "_roprobe.md"
+    stage_file.write_text(
+        "---\nmodel: sonnet\nwrite: false\nhooks: [dangerous-commands]\n"
+        "---\n\n## Your stage: _roprobe\n")
+    (d / ".project" / "pipeline.toml").write_text(
+        (d / ".project" / "pipeline.toml").read_text() +
+        '\n[readonly]\nallow = ["pipeline ls"]\n')
+    rec = None
+    try:
+        rec = supervisor.spawn(d, d, "TICKET-001", "_roprobe", {
+            "cmd": "env > env.txt", "supports_hooks": True,
+            "readonly_tools": "", "write_tools": "", "settings_flag": ""})
+        rec["proc"].wait()
+        env_text = (d / "env.txt").read_text()
+        assert 'PIPELINE_READONLY_ALLOW=[["pipeline", "ls"]]' in env_text
+    finally:
+        stage_file.unlink(missing_ok=True)
+        if rec:
+            rec["prompt"].unlink(missing_ok=True)
+            if rec.get("settings"):
+                rec["settings"].unlink(missing_ok=True)
+        shutil.rmtree(d, ignore_errors=True)
+
+
 def test_a_harness_edit_mid_run_reaches_the_next_spawn():
     """TICKET-028: `run()` reads the harness once, before its loop, so every
     spawn for the life of the process reuses that dict. A stage prompt is

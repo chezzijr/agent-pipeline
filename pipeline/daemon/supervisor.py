@@ -16,7 +16,8 @@ from pipeline import __version__
 from pipeline.core import PipelineError
 from pipeline.core.config import (compose_prompt, harness, is_readonly,
                                   mcp_config, mcp_servers, project_config,
-                                  render, stage_config, stage_settings)
+                                  readonly_allow, render, stage_config,
+                                  stage_settings)
 from pipeline.core.fence import fenced_touches
 from pipeline.core.gate import gate, plan_steps
 from pipeline.core.machine import (CLEANUP_STAGES, CONTROL_FIELDS,
@@ -379,6 +380,7 @@ def spawn(project: Path, wt: Path, tid: str, stage: str, hcfg: dict,
     settings = stage_settings(stage, cfg)
     servers = mcp_servers(project, cfg)
     mcp = mcp_config(servers)
+    allow = readonly_allow(project)
     cmd = render(hcfg, cfg, tid=tid, project=project,
                 ticket=ticket_path(project, tid),
                 result_file=tickets_dir(project) / f"{tid}.result",
@@ -404,6 +406,9 @@ def spawn(project: Path, wt: Path, tid: str, stage: str, hcfg: dict,
     env["PIPELINE_MCP_ALLOW"] = ",".join(servers)
     env["PIPELINE_MCP_READONLY"] = ",".join(n for n, s in servers.items()
                                             if s.get("readonly"))
+    # A broken [readonly] table surfaces here exactly as a broken [mcp.<name>]
+    # one does; a project with no config at all yields [] and spawns as before.
+    env["PIPELINE_READONLY_ALLOW"] = json.dumps(allow)
     if interactive:
         # ponytail: the master fd dies with the daemon, so the child gets
         # SIGHUP and an interactive stage does NOT survive a daemon restart --
