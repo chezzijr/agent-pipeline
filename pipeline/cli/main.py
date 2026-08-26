@@ -509,16 +509,17 @@ def cmd_tui(args) -> None:
 START_DESC = (
     "Start the one daemon for every registered project. A stage whose "
     "frontmatter says `mode: interactive` -- `planning` -- runs on a PTY the "
-    "daemon owns and blocks on its first permission prompt until a human "
-    "attaches with `pipeline tui`. `pipeline run` executes that same stage "
-    "headless instead."
+    "daemon owns only while a client is attached: leave `pipeline tui` open "
+    "and it waits there at its first permission prompt. With no client "
+    "subscribed it runs headless, exactly as `pipeline run` does."
 )
 RUN_DESC = (
     "Run one project's dispatcher loop, with no daemon and no socket. Nothing "
     "can attach, so a stage whose frontmatter says `mode: interactive` -- "
     "`planning` -- runs headless here and never waits for a human; its escape "
     "hatch is `result: needs-input`, which parks the ticket for `pipeline "
-    "answer`. Under `pipeline start` that same stage waits at `pipeline tui`."
+    "answer`. Under `pipeline start` that same stage waits at `pipeline tui`, "
+    "and only if a tui is attached when it spawns."
 )
 
 

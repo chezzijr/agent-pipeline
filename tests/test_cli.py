@@ -160,6 +160,7 @@ def test_the_help_text_matches_the_code_it_describes():
     from pipeline.daemon.server import Poller, Server
 
     assert Server.attachable is True and Poller.attachable is False
+    assert Poller().watchers() == 0, "a supervisor with no socket has no watchers"
 
     interactive = [s for s in C.agent_stages()
                    if C.stage_config(s).get("mode") == "interactive"]
@@ -172,6 +173,7 @@ def test_the_help_text_matches_the_code_it_describes():
         return " ".join(r.stdout.split()).lower()   # argparse wraps at $COLUMNS
 
     start, run = help_of("start"), help_of("run")
+    assert "attached" in start and "attached" in run, (start, run)
     for stage in interactive:
         assert stage in start and stage in run, f"{stage} is unnamed: {start} {run}"
     assert "pipeline tui" in start and "headless" in start, start
