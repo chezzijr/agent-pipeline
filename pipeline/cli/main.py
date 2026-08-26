@@ -266,6 +266,11 @@ def cmd_ls(args) -> None:
     if rows is None:
         targets = [proj(args)] if args.project else registry.projects()
         rows = [r for p in targets for r in ticket_rows(p)]
+    if any(r.get("running", False) is None for r in rows):
+        # one line, not one token per row: with no daemon EVERY row is
+        # unknown, and the per-row marks below are all file facts
+        # (`leased`, `stale`) which are still true
+        print("-- no daemon: running/mode unknown for these rows")
     for r in rows:
         mark = ("LEASED" if r.get("running") or r.get("leased")
                 else f"STALE>{STALE_HOURS}h" if r.get("stale") else "")

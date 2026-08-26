@@ -200,6 +200,17 @@ def test_cli_new_then_ls():
     shutil.rmtree(d)
 
 
+def test_ls_says_running_is_unknown_when_no_daemon_answers():
+    """No daemon means every row's `running`/`mode` is unknown, not idle --
+    `ls` must say so once, not per row."""
+    d = Path(tempfile.mkdtemp())
+    cli(d, "new", "cache leaks", "--class", "bugfix")
+    r = cli(d, "ls")
+    assert "-- no daemon: running/mode unknown for these rows" in r.stdout, r.stdout
+    assert "TICKET-001" in r.stdout
+    shutil.rmtree(d)
+
+
 def test_reject_returns_a_plan_with_its_reason():
     d = Path(tempfile.mkdtemp())
     cli(d, "new", "t")
