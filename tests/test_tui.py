@@ -95,6 +95,25 @@ def test_tui_renders_tree_from_ls():
     asyncio.run(go())
 
 
+def test_finished_tickets_do_not_bury_live_ones():
+    """A project with many finished tickets and one live ticket should show
+    the live ticket first, not last -- sorting by id alone buries it behind
+    every earlier, finished ticket and forces a scroll to reach it."""
+    async def go():
+        rows = [row("/tmp/alpha", f"TICKET-{n:03d}", "done")
+                for n in range(1, 51)]
+        rows.append(row("/tmp/alpha", "TICKET-060", "implementing",
+                        running=True))
+        app = PipelineApp(client=FakeClient(rows))
+        async with app.run_test() as pilot:
+            got = labels(app)["alpha"]
+            assert got[0].startswith("TICKET-060"), got[:3]
+            await pilot.press("q")
+        assert app.return_code == 0
+
+    asyncio.run(go())
+
+
 def test_an_event_reseeds_the_tree_and_a_dropped_marker_says_so():
     """The two ways the tree stays in sync: a structural event refreshes it,
     and a `dropped` marker -- the daemon admitting it binned part of our
