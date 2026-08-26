@@ -232,10 +232,15 @@ pipeline --project ~/code/myproject tui   # the same filter `ls` takes
 ```
 
 Left pane a tree of projects and their tickets (`*` running, `!` waiting on
-you, `?` untouched for hours), right pane the ticket's stage log rendered the
-way `pipeline logs` renders it, then live events as they arrive. It seeds from
-`ls` and stays current from a `subscribe` on its own connection; with no daemon
-running it reads the ticket files instead and simply does not update itself.
+you, `~` running unknown -- no daemon answered, `?` untouched for hours),
+right pane the ticket's stage log rendered the way `pipeline logs` renders it,
+then live events as they arrive. It seeds from `ls` and stays current from a
+`subscribe` on its own connection; with no daemon running it reads the ticket
+files instead and simply does not update itself. A ticket file cannot say
+whether a stage is running, so those rows report `running`/`mode` as unknown
+rather than idle, and the pane keeps the last answer the daemon gave for
+them; `pipeline ls` prints `-- no daemon: running/mode unknown for these
+rows` once above such a listing.
 
 Select a ticket running an **interactive** stage and the right pane becomes
 that stage's live terminal instead: it `attach`es on the subscription's
