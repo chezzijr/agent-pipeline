@@ -37,7 +37,6 @@ PUNCTUATION = "();<>|&\n"            # what shlex emits as punctuation tokens
 SEPARATORS = {"&", "|", ";", "\n"}   # a run of these separates two commands
 SHELLS = {"sh", "bash", "zsh", "fish", "dash", "ksh", "csh", "tcsh", "shell"}
 HOME_ISH = re.compile(r"^(/|~|~/|\$HOME/?|\$\{HOME\}/?|/\*)$")
-SED_IN_PLACE = re.compile(r"-[nrsuEz]*i.*|--in-place(=.*)?")
 
 # read-only allowlist -----------------------------------------------------
 GIT_READ = {"status", "log", "diff", "show", "blame", "grep", "ls-files",
@@ -47,8 +46,7 @@ GIT_WORKTREE_READ = {"list"}
 READ_TOOLS = {"ls", "cat", "head", "tail", "wc", "grep", "rg", "ag", "find",
               "file", "stat", "du", "tree", "echo", "true", "false", "pwd",
               "which", "basename", "dirname", "sort", "uniq", "cut", "awk",
-              "diff", "column", "jq", "yq", "date", "printf", "test", "[",
-              "sed"}
+              "diff", "column", "jq", "yq", "date", "printf", "test", "["}
 TEST_RUNNERS = {"pytest", "py.test", "tox", "nox", "unittest"}
 # programs allowed only with a vetted first argument
 GUARDED = {
@@ -252,9 +250,13 @@ def readonly_rules(segs: list[list[str]], raw: str) -> str | None:
                 return "git worktree: only `list` is read-only"
             continue
 
+        # sed is off the allowlist on purpose -- TICKET-057. Its script
+        # writes by routes no option regex covers; the reason is spelled
+        # out because the generic one sends an agent to refile the ticket.
+        if name == "sed":
+            return ("sed is not read-only: a sed script writes with `w`, "
+                    "`s///w` and GNU `e` -- use head, tail or grep to read")
         if name in READ_TOOLS or name in TEST_RUNNERS:
-            if name == "sed" and any(SED_IN_PLACE.fullmatch(a) for a in args):
-                return "sed -i is an in-place edit"
             continue
 
         if name in GUARDED:
