@@ -227,6 +227,9 @@ still worth it: it prints one line per case, and the failure names the case.
   resize; `render_pty()` replays the dump at that geometry instead of a fixed
   40x120. A batch log must never get one -- `tail_log()` sniffs a PTY dump by
   the raw ESC (DEC-039), so a marker there sends stream-json through pyte.
+  `#log` writes those lines with `RichLog.write(line, width=cols)`, so a pane
+  narrower than the dump clips and scrolls horizontally instead of re-flowing
+  a screen; stream-json lines pass `width=None` and still wrap.
 - **The Tier A gate runs as a spawned child (`gate_cmd()`), not inline.** A
   PASS at `plan-validation` is a phase of the stage, carried in
   `counters["gate_ok"]` and consumed by the next `start()`, which spawns the
