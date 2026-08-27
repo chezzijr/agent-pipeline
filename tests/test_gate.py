@@ -94,6 +94,22 @@ def test_gate_passes_a_complete_ticket():
     shutil.rmtree(d)
 
 
+def test_test_file_cannot_hold_a_second_reproduction_test():
+    """A bug needing two failing tests -- one per code path -- has nowhere
+    to record the second: `test_file` is one string. `test_suite_without_new`
+    can only exclude the one it knows, so a second, equally-legitimate new
+    test stays red and the gate reports it as pre-existing breakage instead
+    of recognising it as an expected new-test failure (TICKET-066).
+
+    `validate_meta` should accept a list of tests here; it instead
+    stringifies the list and rejects it as containing shell metacharacters."""
+    meta = {"id": "TICKET-001", "branch": "ticket/001",
+            "test_file": ["test_thing.py::test_broken",
+                           "test_thing2.py::test_broken2"]}
+    bad = T.validate_meta(meta)
+    assert not any("shell metacharacters" in b for b in bad), bad
+
+
 def test_gate_blocks_an_empty_digest():
     d = project(_set_digest(""))
     ok, failures = gate(d, "TICKET-001")
