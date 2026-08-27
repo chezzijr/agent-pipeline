@@ -1338,6 +1338,27 @@ def test_structural_only_classifies_a_gate_finding():
         ["gate child exit 2 left no readable findings (JSONDecodeError: x)"]) is False
 
 
+def test_suite_ran_tells_a_red_suite_from_a_command_that_never_ran():
+    from pipeline.core.gate import suite_ran
+    ran = [(1, ""),
+           (1, "1 failed, 84 passed in 3.21s"),
+           (101, "test result: FAILED. 3 passed; 1 failed"),
+           (3, "  3 failing"),
+           (2, "Ran 7 tests in 0.4s"),
+           (2, "--- FAIL: TestAdd (0.00s)")]
+    never = [(2, "sh: -c: line 1: syntax error near unexpected token"),
+             (127, "sh: line 1: pytest: command not found"),
+             (4, "no tests ran in 0.00s"),
+             (126, ""),
+             # `1 error` matches the count regex; NO_TESTS_RE vetoes it
+             (2, "collected 0 items / 1 error\nERROR tests/test_x.py"),
+             (5, "no tests ran in 0.01s")]
+    for code, out in ran:
+        assert suite_ran(code, out), (code, out)
+    for code, out in never:
+        assert not suite_ran(code, out), (code, out)
+
+
 def test_unmatchable_names_only_tokens_that_cannot_recur():
     """The detector fires on a temp path, a pid inside one, an object address
     and a trailing ellipsis; it stays silent on an exit status, a hex
