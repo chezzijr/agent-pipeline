@@ -31,7 +31,20 @@ Twice on 2026-08-27, in two different projects:
     got: /tmp/chz_w8_39_2424171: Permission denied (os error 13)'
 
 `tmpn7w0imby` is a fresh `mkdtemp` suffix; `2424171` is a pid. Neither can
-recur. The test is red, it is red for exactly the reported reason, and the
+recur.
+
+A second cause, same effect: an `expect:` copied from output that was already
+TRUNCATED carries the truncation marker as literal text.
+
+    `src/checker/tests.rs::method_typo_suggests_near_miss` fails, but its
+    output does not mention the expected string 'expected an error containing
+    "did you mean", got: [CheckError { message: "type List[int] has no method
+    \'lenght\'", ...'
+
+The trailing `, ...` is an ellipsis the reporter printed, not text any run
+emits. The fix is the same shape -- trim to the invariant prefix -- so both
+belong in one ticket, but a volatile-token detector alone would not catch this
+one: there is no path and no pid in it. The test is red, it is red for exactly the reported reason, and the
 gate rejects it anyway -- then charges `plan_validation_attempts`, because an
 `expect` mismatch is substantive by `structural_only()` and not in
 `STRUCTURAL_MARKS` (correctly: a mismatch usually means the test is red for
