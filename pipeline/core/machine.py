@@ -116,7 +116,15 @@ def transition(stage: str, result: str, counters: dict, klass: str = "bugfix"):
         case ("plan-validation", "ok"):
             return "awaiting-approval", c
         case ("plan-validation", "fail"):
-            return charge("plan_validation_attempts", "planning")
+            # every finding is structural: the gate stopped on formatting --
+            # a missing section, a plan line that is not a numbered step --
+            # before it ever judged the plan's content. Charging
+            # `plan_validation_attempts` would spend a budget meant for bad
+            # plans on a typo, so this counter stays out of BOUNDS (formatting
+            # is not a property of the ticket's class) and out of SIZE_SCALED
+            # (a longer plan does not earn more tries at the same typo) --
+            # the same shape as `stale_regate`.
+            return charge("structural_gate_failures", "planning")
         case ("plan-validation", "bad-plan"):
             # the gate judged the plan's content, not its formatting -- the
             # test passes already, the suite is red, base is already fixed, or

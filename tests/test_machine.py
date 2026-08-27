@@ -38,7 +38,7 @@ def test_happy_path():
 
 def test_bounds_escalate_on_the_second_failure():
     for stage, result, key in [
-        ("plan-validation", "fail", "plan_validation_attempts"),
+        ("plan-validation", "fail", "structural_gate_failures"),
         ("plan-validation", "bad-plan", "plan_validation_attempts"),
         ("review", "fail", "review_loops"),
         ("holistic-review", "fail", "review_loops"),
@@ -247,6 +247,27 @@ def test_plan_validation_budget_ignores_the_plans_size():
         huge_next, huge = M.transition("plan-validation", "bad-plan", huge, "bugfix")
     assert huge_next == "escalated"
     assert huge["plan_validation_attempts"] == 5
+
+
+def test_a_structural_gate_failure_charges_its_own_counter():
+    """A purely structural Tier A failure charges `structural_gate_failures`,
+    never `plan_validation_attempts`: the budget for bad plans stays untouched
+    by a typo the gate stopped on before reading the plan."""
+    nxt, c = t("plan-validation", "fail")
+    assert nxt == "planning"
+    assert c["structural_gate_failures"] == 1
+    assert "plan_validation_attempts" not in c
+    nxt, c = t("plan-validation", "fail", c)
+    assert nxt == "escalated"
+
+    nxt, c = t("plan-validation", "bad-plan")
+    assert nxt == "planning"
+    assert c["plan_validation_attempts"] == 1
+    assert "structural_gate_failures" not in c
+
+    assert "structural_gate_failures" not in M.SIZE_SCALED
+    assert all("structural_gate_failures" not in bounds
+               for bounds in M.BOUNDS.values())
 
 
 def test_the_size_scaled_bound_has_a_ceiling_and_spares_the_dispatchers_counters():

@@ -754,7 +754,7 @@ def test_advance_seeds_the_plan_size_from_the_ticket():
     path = d / ".project/tickets/TICKET-001.md"
     t = Ticket.load(path)
     t.stage = "plan-validation"
-    supervisor.advance(d, t, "fail", "n", agent=False)
+    supervisor.advance(d, t, "bad-plan", "n", agent=False)
     t = Ticket.load(path)
     shutil.rmtree(d, ignore_errors=True)
     assert t.stage == "planning"
