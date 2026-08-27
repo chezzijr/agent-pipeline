@@ -108,7 +108,10 @@ still worth it: it prints one line per case, and the failure names the case.
   `project_env()` strips it; use `run_cmd`, never bare `subprocess`.
 - **A test that *errors* exits non-zero exactly like one that fails.** The gate
   requires the test's name in the output, or a missing dependency reads as a
-  successful reproduction.
+  successful reproduction. The same trap hits `test_suite_without_new`: a shell
+  syntax error also exits non-zero with no test ever run, so `suite_ran()` in
+  `pipeline/core/gate.py` gates the pre-existing-breakage verdict on evidence
+  of a run, not just the exit code (TICKET-074).
 - **`git worktree add -B` resets the branch.** Never use `-B`: recreating a
   worktree after a resume would silently discard the ticket's commits.
 - **`.project/` is excluded from the read-only tree snapshot**, because writing
