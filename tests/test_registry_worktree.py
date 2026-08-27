@@ -41,3 +41,18 @@ def test_register_refuses_a_worktree_of_a_registered_project():
         f"register() accepted a worktree of a registered project: {wt} is "
         f"in {registry.projects()}"
     )
+
+
+def test_projects_skips_a_worktree_line_already_in_the_registry():
+    d, sh = git_project()
+    r = sh("git add -A .project && git commit -qm 'add .project'")
+    assert r.returncode == 0, r.stderr
+
+    wt = d / ".worktrees" / "TICKET-068"
+    r = sh(f"git worktree add -b ticket/068 {wt} main")
+    assert r.returncode == 0, r.stderr
+
+    registry.registry_path().parent.mkdir(parents=True, exist_ok=True)
+    registry.registry_path().write_text(f"{d}\n{wt}\n")
+
+    assert registry.projects() == [d], registry.projects()

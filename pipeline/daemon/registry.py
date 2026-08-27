@@ -45,6 +45,10 @@ def projects() -> list[Path]:
     absolute path to an existing `.project/` is returned. Without that,
     `lock()`'s `mkdir(parents=True)` would happily scaffold a `.project/` at
     whatever a typo named, and `serve()` would then tick it.
+
+    A worktree line written before `register()` refused one -- as this
+    project's own registry once held -- goes inert here without an
+    unregister.
     """
     out: list[Path] = []
     for line in _raw():
@@ -52,7 +56,7 @@ def projects() -> list[Path]:
         if not line:
             continue
         q = Path(line)
-        if q.is_absolute() and (q / ".project").is_dir() and q not in out:
+        if q.is_absolute() and (q / ".project").is_dir() and not is_worktree(q) and q not in out:
             out.append(q)
     return out
 
