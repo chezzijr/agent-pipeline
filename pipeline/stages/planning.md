@@ -77,6 +77,12 @@ Fill in these sections:
   least one argument.
   A criterion that wraps must indent its continuation lines; an unindented
   line reads as a criterion of its own and is checked alone.
+  A total any other ticket can move, such as the pass count of a suite or a
+  number of open rows, is not a property of this change, so state it as a
+  relation to a baseline you measured or have the criterion re-measure at
+  check time; the gate rejects a criterion that copies an absolute count out
+  of `## Digest`, and one `count-pinned: <why it cannot move>` line in the
+  section waives that check.
 - `## Rollback` -- what to revert if this ships and breaks.
 
 Report the full list of files the plan will modify in your result's
