@@ -502,3 +502,59 @@ def test_register_refuses_a_project_whose_test_suite_cannot_run():
     assert r.returncode != 0, r.stdout + r.stderr
     assert "pipeline-068-nonexistent-command-xyz" in r.stdout + r.stderr
     shutil.rmtree(d, ignore_errors=True)
+
+
+def register_project(test_one="false", test_suite="true", config=True):
+    """A throwaway project for `pipeline register`. Not named `test_*`:
+    pytest would collect it."""
+    d = Path(tempfile.mkdtemp()).resolve()
+    (d / ".project").mkdir()
+    if config:
+        (d / ".project" / "pipeline.toml").write_text(
+            'test_one = "%s"\ntest_suite = "%s"\n'
+            'test_suite_without_new = "true"\n' % (test_one, test_suite))
+    return d
+
+
+def test_register_accepts_a_project_whose_test_suite_runs_and_fails():
+    """A red suite is the normal state of a project with an open bug."""
+    d = register_project(test_suite="echo 1 failed; exit 1")
+    r = cli(d, "register", str(d), env={"XDG_CONFIG_HOME": str(tempfile.mkdtemp())})
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert f"registered {d}" in r.stdout
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_register_refuses_a_test_one_that_exits_0_on_a_selector_matching_nothing():
+    """`gate()` would read that exit 0 as `the reproduction PASSES`."""
+    d = register_project(test_one="true")
+    r = cli(d, "register", str(d), env={"XDG_CONFIG_HOME": str(tempfile.mkdtemp())})
+    assert r.returncode != 0, r.stdout + r.stderr
+    assert "test_one" in r.stdout + r.stderr
+    assert "pipeline_register_probe_no_such_test" in r.stdout + r.stderr
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_register_refuses_a_project_directory_with_no_pipeline_toml():
+    """`register` accepted a bare `.project/` before this ticket. Both
+    checks read the config, so it refuses one now -- intended, pinned here,
+    and `--force` still registers it."""
+    d = register_project(config=False)
+    r = cli(d, "register", str(d), env={"XDG_CONFIG_HOME": str(tempfile.mkdtemp())})
+    assert r.returncode != 0, r.stdout + r.stderr
+    assert "pipeline init" in r.stdout + r.stderr
+    forced = cli(d, "register", "--force", str(d),
+                 env={"XDG_CONFIG_HOME": str(tempfile.mkdtemp())})
+    assert forced.returncode == 0, forced.stdout + forced.stderr
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_register_force_skips_both_test_command_checks():
+    """`--force` is what a slow suite wants: register without running it."""
+    d = register_project(test_one="true",
+                         test_suite="pipeline-068-nonexistent-command-xyz")
+    r = cli(d, "register", "--force", str(d),
+            env={"XDG_CONFIG_HOME": str(tempfile.mkdtemp())})
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert f"registered {d}" in r.stdout
+    shutil.rmtree(d, ignore_errors=True)
