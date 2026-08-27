@@ -102,6 +102,12 @@ def cap_for(base, counters: dict):
                base * USD_CEILING_FACTOR)
 
 
+def cleared_key(key: str) -> str:
+    """The credit counter `charge()` subtracts from `key` before comparing
+    against the bound, so the bound counts consecutive failures."""
+    return f"{key}_cleared"
+
+
 def transition(stage: str, result: str, counters: dict, klass: str = "bugfix"):
     """(next_stage, new_counters). Pure: never mutates `counters`.
 
@@ -113,7 +119,16 @@ def transition(stage: str, result: str, counters: dict, klass: str = "bugfix"):
     def charge(key: str, target: str) -> tuple[str, dict]:
         c[key] = c.get(key, 0) + 1
         bound = bound_for(klass, key, c)
-        return ("escalated" if c[key] >= bound else target), c
+        spent = c[key] - _size(c, cleared_key(key))
+        return ("escalated" if spent >= bound else target), c
+
+    def forgive(key: str, target: str) -> tuple[str, dict]:
+        # a pass proves the failures charged before it did not reproduce; the
+        # credit never exceeds them, so it cannot hand back an attempt nobody
+        # spent.
+        if _size(c, key):
+            c[cleared_key(key)] = _size(c, key)
+        return target, c
 
     match (stage, result):
         case ("new", _):
@@ -156,7 +171,7 @@ def transition(stage: str, result: str, counters: dict, klass: str = "bugfix"):
             # `plan_validation_attempts` bounds bad plans against.
             return charge("plan_validation_attempts", "planning")
         case ("revalidating", "ok"):
-            return "implementing", c
+            return forgive("stale_regate", "implementing")
         case ("revalidating", "fail"):
             # the plan went stale while it waited for a human -- base moved
             # under it. That is not a bad plan, so it never charges

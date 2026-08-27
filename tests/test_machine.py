@@ -207,6 +207,27 @@ def test_a_non_reproducing_regate_failure_still_exhausts_the_budget():
     )
 
 
+def test_a_forgiveness_credit_is_bounded_and_never_invented():
+    """A pass with no prior failure writes no credit key, and a corrupt
+    credit can never exceed the raw fail count -- two consecutive failures
+    still escalate, and a forged credit of 5 still escalates at a raw count
+    of 7."""
+    assert "stale_regate_cleared" not in t("revalidating", "ok")[1]
+    _, c = t("revalidating", "fail")
+    _, c = t("revalidating", "ok", c)
+    assert c["stale_regate_cleared"] == 1
+    _, c = t("revalidating", "ok", c)
+    assert c["stale_regate_cleared"] == 1
+    _, c2 = t("revalidating", "fail", c)
+    assert t("revalidating", "fail", c2)[0] == "escalated"
+    c3 = {"stale_regate": 1, "stale_regate_cleared": 5}
+    nxt, c3 = t("revalidating", "fail", c3)
+    assert nxt == "planning"
+    while nxt != "escalated" and c3["stale_regate"] < 20:
+        nxt, c3 = t("revalidating", "fail", c3)
+    assert nxt == "escalated" and c3["stale_regate"] == 7, c3
+
+
 def test_a_rebase_conflict_returns_to_triage_and_is_bounded():
     """A conflicting rebase discards the branch's commits, so only `triage`
     can rebuild it. `planning` would replan without removing the conflicting
