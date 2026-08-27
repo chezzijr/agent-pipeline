@@ -99,3 +99,24 @@ def test_a_stage_cannot_register_or_unregister():
         del os.environ["PIPELINE_STAGE"]
 
     assert d in registry.projects()
+
+
+def test_check_refuses_before_the_caller_spawns_anything():
+    """`cmd_register()` calls `check()` before it runs the project's test
+    commands, so a stage's `pipeline register .` gets the DEC-072 error
+    instead of a suite run first."""
+    d, sh = git_project()
+    r = sh("git add -A .project && git commit -qm 'add .project'")
+    assert r.returncode == 0, r.stderr
+
+    os.environ["PIPELINE_STAGE"] = "implementing"
+    try:
+        registry.check(d)
+        assert False, "check() ran under PIPELINE_STAGE"
+    except PipelineError as e:
+        assert "operator state" in str(e), e
+    finally:
+        del os.environ["PIPELINE_STAGE"]
+
+    assert d not in registry.projects()
+    assert registry.check(d) == d
