@@ -160,6 +160,27 @@ def test_verifying_runs_as_a_tracked_child():
     shutil.rmtree(d, ignore_errors=True)
 
 
+def test_verifying_substitutes_the_name_placeholder_in_test_suite():
+    """`test_suite` was the one command the dispatcher never formatted, so a
+    project could not select by `{name}` there -- TICKET-067."""
+    d, _ = git_project()
+    (d / ".project/pipeline.toml").write_text(
+        'test_one = "true"\n'
+        'test_suite = "echo GOT:{name}"\n'
+        'test_suite_without_new = "true"\nbase = "main"\n')
+    path = d / ".project/tickets/TICKET-001.md"
+    path.write_text(FIXTURE.replace("stage: plan-validation", "stage: verifying"))
+
+    did, rec = supervisor.start(d, path, harness("fake"), {})
+    assert did and rec and rec["kind"] == "suite"
+    rec["proc"].wait()
+    supervisor.finish(d, rec)
+
+    assert "GOT:test_broken" in rec["log"].read_text()
+    assert Ticket.load(path).stage in ("awaiting-merge", "merging")
+    shutil.rmtree(d, ignore_errors=True)
+
+
 def test_ctrl_c_during_a_suite_does_not_crash_on_its_missing_prompt():
     """`shut_down` unlinked `rec["prompt"]` unconditionally; a suite record has
     none, so Ctrl-C during `verifying` raised and left every lease held."""
