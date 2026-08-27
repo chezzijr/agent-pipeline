@@ -484,3 +484,21 @@ def test_gate_writes_its_findings_where_the_dispatcher_asked():
     assert len(data["findings"]) == 1
     assert not any("```" in f for f in data["findings"])
     shutil.rmtree(d)
+
+
+def test_register_refuses_a_project_whose_test_suite_cannot_run():
+    """A project scaffolded with the packaged defaults (e.g. `test_suite =
+    "pytest"` against a repo pytest is not installed for) registers clean
+    today, and every ticket filed against it fails at the gate instead.
+    `register` must run `test_suite` once and refuse when the command itself
+    cannot run -- not when it runs and reports failures."""
+    d = Path(tempfile.mkdtemp())
+    (d / ".project").mkdir()
+    (d / ".project" / "pipeline.toml").write_text(
+        'test_one = "true"\n'
+        'test_suite = "pipeline-068-nonexistent-command-xyz"\n'
+        'test_suite_without_new = "true"\n')
+    r = cli(d, "register", str(d), env={"XDG_CONFIG_HOME": str(tempfile.mkdtemp())})
+    assert r.returncode != 0, r.stdout + r.stderr
+    assert "pipeline-068-nonexistent-command-xyz" in r.stdout + r.stderr
+    shutil.rmtree(d, ignore_errors=True)
