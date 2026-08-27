@@ -1,7 +1,9 @@
 """`pipeline tui` -- the pane that makes the pipeline watchable.
 
 Left: a tree of the registered projects and their tickets. Right: the rendered
-event stream for whatever the cursor is on. Eight keys along the bottom.
+event stream for whatever the cursor is on. Ten keys along the bottom. `f`
+shows the `done` and `rejected` tickets the tree hides by default; `escalated`
+is never hidden.
 
 Only one of those eight needs a daemon op. `a`/`r`/`A` mutate the ticket file,
 which is the source of truth, and the daemon's next tick notices -- so they
@@ -32,7 +34,7 @@ from textual.widgets import Footer, RichLog, Static, Tree
 
 from pipeline.cli.main import cmd_answer, cmd_approve, cmd_reject, render
 from pipeline.core import PipelineError
-from pipeline.core.machine import HUMAN_GATES
+from pipeline.core.machine import HUMAN_GATES, TERMINAL
 from pipeline.core.ticket import ticket_path
 from pipeline.daemon import registry
 from pipeline.daemon.server import PTY_INPUT, ticket_rows
@@ -45,6 +47,8 @@ MAX_TAIL = 256 << 10   # of a stage log, before the live stream takes over
 # The event kinds that can change a row. Everything else is stream chatter and
 # belongs in the detail pane, not in a tree rebuild.
 TREE_KINDS = {"stage_start", "stage_end", "transition", "escalated", "gate"}
+# `escalated` is terminal, but it is the one terminal stage a human must open.
+FINISHED = TERMINAL - {"escalated"}
 # TICKET-012's passthrough kinds: `data` is the shape `cli.main.render` reads.
 STREAM_KINDS = {"init", "assistant", "tool_result", "hook_started",
                 "hook_response", "rate_limit", "result"}
@@ -80,6 +84,8 @@ def marker(row: dict) -> str:
         return "*"
     if row.get("stage") in HUMAN_GATES:
         return "!"
+    if row.get("running", False) is None:
+        return "~"
     return "?" if row.get("stale") else ""
 
 
@@ -127,18 +133,22 @@ def render_pty(data: bytes, rows: int = ROWS, cols: int = COLS) -> list[str]:
     return lines or ["(blank screen)"]
 
 
-def tail_log(project: str, tid: str) -> list[str]:
+def tail_log(project: str, tid: str) -> tuple[list[str], int]:
     """The tail of the ticket's most recent stage log, rendered.
 
     A subscription only carries what happens after you subscribe; this is what
     happened before. Same `StreamReader` and same `render` as `pipeline logs`.
     A log carrying a raw ESC is a PTY dump instead, and goes through render_pty().
+
+    Returns the lines and the width they were drawn at: 0 for stream-json,
+    which is prose and wraps, and the dump's last recorded width for a PTY
+    dump, which is a screen and must not be re-flowed.
     """
     try:
         logs = sorted((Path(project) / ".project" / "logs").glob(f"{tid}-*.log"),
                       key=lambda p: p.stat().st_mtime)
         if not logs:
-            return ["(no log yet)"]
+            return ["(no log yet)"], 0
         raw = logs[-1].read_bytes()
         # drop the first line when we cut into the middle of one; keep the
         # head (spawn()'s marker can sit before the cut) to recover the
@@ -154,10 +164,11 @@ def tail_log(project: str, tid: str) -> list[str]:
         # The stage's name is not: `planning` runs headless whenever nothing
         # can attach to it, and then its log IS stream-json.
         if b"\x1b" in data:
-            return render_pty(data, *last_geometry(head))
-        return [ln for ev in StreamReader().feed(data) if (ln := render(ev))]
+            start = last_geometry(head)
+            return render_pty(data, *start), last_geometry(data, *start)[1]
+        return [ln for ev in StreamReader().feed(data) if (ln := render(ev))], 0
     except OSError as e:
-        return [f"(log unreadable: {e})"]
+        return [f"(log unreadable: {e})"], 0
 
 
 class PtyPane(Static):
@@ -187,6 +198,7 @@ class PipelineApp(App):
         ("m", "metrics", "metrics"),
         ("k", "kill", "kill"),
         ("i", "raw", "type"),
+        ("f", "finished", "finished"),
     ]
 
     def __init__(self, client=None, project: str | None = None) -> None:
@@ -199,6 +211,7 @@ class PipelineApp(App):
         self.selected: tuple[str, str] | None = None
         self.dropped = 0
         self.sig = None               # last painted tree, to skip no-op repaints
+        self.show_finished = False    # `f` toggles `done`/`rejected` back in
         self.attached = None          # (project, ticket) the PTY pane is showing
         self.pty_id = None            # the request id its `attach` frames carry
         self.pty_screen = None        # our own emulator, fed by those frames
@@ -264,43 +277,89 @@ class PipelineApp(App):
                 self.notify(f"daemon: {e}")
         targets = self.projects or ([self.project] if self.project
                                     else [str(p) for p in registry.projects()])
-        return [r for p in targets for r in ticket_rows(Path(p))]
+        return [self._carry(r) for p in targets for r in ticket_rows(Path(p))]
+
+    def _carry(self, row: dict) -> dict:
+        """A file row cannot know `running`/`mode` and says `None`. The last
+        daemon answer is a better guess than `not running`: a live
+        interactive stage stays attachable across one timed-out `ls`. It can
+        be stale for as long as the daemon is silent, and the next answered
+        `ls` corrects it -- erring toward reachable, because the failure this
+        fixes is a human locked out of a prompt already on screen."""
+        for k in ("running", "mode"):
+            if row.get(k, False) is None:
+                last = self.rows.get((row.get("project"), row.get("id")))
+                if last and last.get(k) is not None:
+                    row[k] = last[k]
+        return row
 
     def refresh_tree(self) -> None:
         self._paint(self._rows())
+
+    def _visible(self, rows: list[dict]) -> list[dict]:
+        """Which rows the tree paints. `done` and `rejected` hide by default;
+        the selected row stays painted whatever its stage, so a ticket that
+        finishes while its pane is open does not take its own row away."""
+        if self.show_finished:
+            return rows
+        return [r for r in rows if r.get("stage") not in FINISHED
+                or (r["project"], r["id"]) == self.selected]
 
     def _paint(self, rows: list[dict]) -> None:
         """Rebuild the tree -- but only when a label actually changed. The 5s
         refresh would otherwise yank the cursor back to the root twice a
         keystroke, which is the difference between a dashboard and a toy."""
+        old = self.rows
         self.rows = {(r["project"], r["id"]): r for r in rows}
-        grouped: dict[str, list[dict]] = {}
-        for r in rows:
-            grouped.setdefault(r["project"], []).append(r)
+        grouped: dict[str, list[dict]] = {r["project"]: [] for r in rows}
+        for r in self._visible(rows):
+            grouped[r["project"]].append(r)
         sig = [(p, [label(r) for r in sorted(rs, key=lambda r: r["id"])])
                for p, rs in sorted(grouped.items())]
         self._status()
+        sel = self.selected
+        # `_pty()` runs from `_show()`, which fires on a selection CHANGE. A
+        # row already selected when the daemon went quiet would keep its
+        # stale mode until the operator moved the cursor away and back.
+        # Gated on the transition so a stream that refuses to attach does not
+        # re-clear the pane every tick.
+        if (sel is not None and self.rows.get(sel, {}).get("mode") == "interactive"
+                and old.get(sel, {}).get("mode") != "interactive"
+                and self.attached != sel):
+            self._show(sel)
         if sig == self.sig:
             return
         self.sig = sig
         tree = self.query_one(Tree)
-        keep = self.selected
+        keep, restored, first = self.selected, False, None
         tree.root.remove_children()
         for p, labels in sig:
             node = tree.root.add(Path(p).name or p, data=p, expand=True)
             for text in labels:
                 leaf = node.add_leaf(text, data=(p, text.split()[0]))
                 if leaf.data == keep:
-                    tree.move_cursor(leaf)
+                    restored, first = True, leaf
+                elif (not restored and first is None
+                      and self.rows.get(leaf.data, {}).get("stage") not in TERMINAL):
+                    first = leaf
+        if first is not None:
+            # a leaf added this tick has `_line == -1`, and `move_cursor` would
+            # clamp that to the root; reading `last_line` forces the line build
+            tree.last_line
+            tree.move_cursor(first)
 
     def _status(self) -> None:
         rows = list(self.rows.values())
         running = sum(1 for r in rows if r.get("running"))
+        unknown = sum(1 for r in rows if r.get("running", False) is None)
+        hidden = len(rows) - len(self._visible(rows))
+        finished = f" - {hidden} finished hidden (f)" if hidden else ""
         drops = f" - {self.dropped} events dropped" if self.dropped else ""
         mode = "RAW (esc esc to exit) - " if self.raw else ""
+        unk = f" - {unknown} unknown (no daemon)" if unknown else ""
         # the sketch's `$2.14 today` lives behind `m`: cost is TICKET-014's
         self.query_one("#status", Static).update(
-            f"{mode}{len(rows)} tickets - {running} running{drops}")
+            f"{mode}{len(rows)} tickets - {running} running{unk}{finished}{drops}")
 
     # -- the event stream ---------------------------------------------------
     @work(thread=True, exclusive=True)
@@ -392,8 +451,10 @@ class PipelineApp(App):
         self._detach()
         self.query_one("#pty", PtyPane).display = False
         log.display = True
-        for line in tail_log(key[0], key[1]):
-            log.write(line)
+        lines, cols = tail_log(key[0], key[1])
+        # a PTY dump renders at the width it was drawn at, so a narrower pane clips and scrolls; stream-json is prose (cols 0) and wraps
+        for line in lines:
+            log.write(line, width=cols or None)
 
     # -- the PTY pane -------------------------------------------------------
     def _pty(self, row: dict) -> bool:
@@ -702,3 +763,11 @@ class PipelineApp(App):
         if key:
             self._kill(key)
             self.refresh_tree()
+
+    def action_finished(self) -> None:
+        """`f` toggles `done`/`rejected` in and out of the tree. Hidden is the
+        default; `self.sig = None` forces the rebuild even when the visible
+        labels did not change."""
+        self.show_finished = not self.show_finished
+        self.sig = None
+        self.refresh_tree()

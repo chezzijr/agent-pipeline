@@ -16,7 +16,7 @@ import time
 import types
 from pathlib import Path
 
-from helpers import ROOT, project
+from helpers import FIXTURE, ROOT, git_project, project
 
 # Before anything imports a path out of the environment: these tests must never
 # touch the developer's real registry, event log or runtime socket.
@@ -176,6 +176,43 @@ def test_subscribe_replays_from_the_cursor_then_goes_live():
     finally:
         srv.conns.clear()
         srv.close()
+
+
+def test_watchers_counts_a_subscribed_client_not_a_one_shot_request():
+    """TICKET-059: `attachable` says a socket exists, `watchers()` says a
+    client is on it. `pipeline ls` connects, is answered and goes away
+    without subscribing, so it must not read as a human watching a PTY."""
+    tmp = Path(tempfile.mkdtemp())
+    a, b = Path(tempfile.mkdtemp()).resolve(), Path(tempfile.mkdtemp()).resolve()
+    (a / ".project").mkdir()
+    (b / ".project").mkdir()
+    registry.register(a)
+    registry.register(b)
+    srv = server_on(tmp, store(tmp))
+    socks = [socket.socketpair(), socket.socketpair()]
+    try:
+        assert srv.watchers() == 0
+        one_shot = Conn(socks[0][0])
+        srv.conns[one_shot.sock.fileno()] = one_shot
+        srv._handle_line(one_shot, json.dumps({"id": 1, "op": "ping"}) + "\n")
+        assert srv.watchers() == 0, "a request with no subscription is not a watcher"
+        tui = Conn(socks[1][0])
+        srv.conns[tui.sock.fileno()] = tui
+        srv._handle_line(tui, json.dumps({"id": 2, "op": "subscribe",
+                                          "project": str(a)}) + "\n")
+        assert srv.watchers(str(a)) == 1
+        assert srv.watchers(str(b)) == 0, "a filtered subscription watches one project"
+        assert srv.watchers() == 1, "unfiltered means every project"
+        srv._drop(tui.sock.fileno())
+        assert srv.watchers(str(a)) == 0, "a client that went away is not a watcher"
+    finally:
+        srv.conns.clear()
+        srv.close()
+        registry.unregister(a)
+        registry.unregister(b)
+        for pair in socks:
+            for s in pair:
+                s.close()
 
 
 def test_a_wedged_client_is_dropped_from_not_the_supervisor():
@@ -415,7 +452,9 @@ def test_the_registry_skips_junk_lines_and_can_drop_a_vanished_project():
 def test_ls_answers_the_same_with_and_without_a_daemon():
     """One `ticket_rows()` behind both, because a command that reports
     different columns depending on whether a daemon happens to be up is a
-    dependency wearing an accelerator's clothes."""
+    dependency wearing an accelerator's clothes. The two daemon-only fields
+    are `None` on the file path because no daemon answered, not because
+    nothing is running."""
     d = project()
     tmp = Path(tempfile.mkdtemp())
     s = store(tmp)
@@ -424,11 +463,40 @@ def test_ls_answers_the_same_with_and_without_a_daemon():
         registry.register(d)
         served = talk(srv, {"id": 1, "op": "ls", "project": str(d)})[0]["data"]
         local = ticket_rows(d)
-        assert served == local, (served, local)
+        assert ([{k: v for k, v in r.items() if k not in ("running", "mode")}
+                 for r in served] ==
+                [{k: v for k, v in r.items() if k not in ("running", "mode")}
+                 for r in local]), (served, local)
+        assert served[0]["running"] is False and served[0]["mode"] == "batch"
+        assert local[0]["running"] is None and local[0]["mode"] is None
         assert {"stale", "leased", "last_session"} <= set(local[0])
     finally:
         srv.close()
         registry.unregister(d)
+
+
+def test_the_file_fallback_does_not_report_an_inflight_interactive_stage_as_batch():
+    """TICKET-062: `ticket_rows()` with no `inflight` (the file-fallback path,
+    used by the TUI and `pipeline ls` whenever the daemon does not answer)
+    must not claim a stage is a finished batch one when it cannot know that.
+    A live `planning` stage (`mode: interactive`) read this way must not come
+    back `mode: "batch"`, because the TUI's `_pty()` refuses to attach to
+    anything but `mode: "interactive"` and the operator is left unable to
+    answer a permission prompt already on screen."""
+    from helpers import FIXTURE
+    d = project(FIXTURE.replace("stage: plan-validation", "stage: planning"))
+    row = ticket_rows(d)[0]
+    assert row["mode"] != "batch", row
+
+
+def test_the_file_fallback_reports_running_as_unknown_not_false():
+    """The file path cannot know `running`/`mode` at all -- it must say so,
+    not guess `False`/`"batch"`."""
+    from helpers import FIXTURE
+    d = project(FIXTURE.replace("stage: plan-validation", "stage: planning"))
+    row = ticket_rows(d)[0]
+    assert row["running"] is None, row
+    assert row["mode"] is None, row
 
 
 def test_an_expired_lease_reads_as_stale_not_as_leased():
@@ -931,3 +999,59 @@ def test_pipeline_run_log_is_readable_while_it_runs():
         proc.terminate()            # it holds a flock on the project
         proc.wait(10)
         fh.close()
+
+
+def test_the_daemon_answers_a_client_while_the_gate_runs_the_project_s_test():
+    """`gate()` runs the project's `test_one` synchronously inside the
+    supervisor's own select loop (`pipeline/daemon/supervisor.py`, the
+    `plan-validation` branch of `dispatch`). While it runs, `server.poll()`
+    never gets called, so a concurrent client request cannot be served and
+    hits its own socket timeout -- the `daemon: cannot read from timed out
+    object` toast the TUI shows. Fixed, the daemon must still answer."""
+    from pipeline.cli.client import Client
+
+    d, sh = git_project()
+    (d / "test_thing.py").write_text("")
+    sh("git add test_thing.py && git commit -qm 'add test file'")
+    # written to disk only, never committed: `project_config()` reads HEAD
+    # first, so a version committed by `git add -A` would shadow this one
+    (d / ".project" / "pipeline.toml").write_text(
+        'test_one = "sleep 3; echo test_broken; exit 1"\n'
+        'test_suite = "true"\n'
+        'test_suite_without_new = "true"\n'
+        'base = "main"\n')
+    (d / ".project" / "tickets" / "TICKET-001.md").write_text(FIXTURE)
+
+    tmp = Path(tempfile.mkdtemp())
+    for var in ("XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_RUNTIME_DIR"):
+        os.environ[var] = str(tmp)
+    registry.register(d)
+
+    sock = tmp / "daemon.sock"
+    env = dict(os.environ, PYTHONPATH=str(ROOT))
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "pipeline.daemon.main", "--socket", str(sock),
+         "--db", str(tmp / "events.db"), "--interval", "1"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT,
+        stdin=subprocess.DEVNULL, env=env, cwd=ROOT)
+    try:
+        for _ in range(100):        # wait on the socket, not on a sleep
+            if sock.exists():
+                break
+            time.sleep(0.05)
+        assert sock.exists(), "daemon never came up"
+
+        # give the loop time to claim the ticket and enter the gate's sleep
+        time.sleep(1.0)
+
+        c = Client(sock, timeout=1.0)
+        try:
+            c.request("ls", project=str(d))     # must not raise
+        except PipelineError as e:
+            assert False, f"daemon did not answer while the gate ran: {e}"
+        finally:
+            c.sock.close()
+    finally:
+        proc.terminate()
+        proc.wait(10)
+        registry.unregister(d)

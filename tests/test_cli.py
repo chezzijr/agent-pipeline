@@ -8,7 +8,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from helpers import ROOT
+from helpers import ROOT, project
 from pipeline.core.ticket import Ticket
 
 
@@ -160,6 +160,7 @@ def test_the_help_text_matches_the_code_it_describes():
     from pipeline.daemon.server import Poller, Server
 
     assert Server.attachable is True and Poller.attachable is False
+    assert Poller().watchers() == 0, "a supervisor with no socket has no watchers"
 
     interactive = [s for s in C.agent_stages()
                    if C.stage_config(s).get("mode") == "interactive"]
@@ -172,6 +173,7 @@ def test_the_help_text_matches_the_code_it_describes():
         return " ".join(r.stdout.split()).lower()   # argparse wraps at $COLUMNS
 
     start, run = help_of("start"), help_of("run")
+    assert "attached" in start and "attached" in run, (start, run)
     for stage in interactive:
         assert stage in start and stage in run, f"{stage} is unnamed: {start} {run}"
     assert "pipeline tui" in start and "headless" in start, start
@@ -195,6 +197,17 @@ def test_cli_new_then_ls():
     assert "TICKET-001" in r.stdout and "new" in r.stdout, r.stdout
     r = cli(d, "approve", "TICKET-001")
     assert r.returncode != 0, "approve must refuse a ticket that is not awaiting-approval"
+    shutil.rmtree(d)
+
+
+def test_ls_says_running_is_unknown_when_no_daemon_answers():
+    """No daemon means every row's `running`/`mode` is unknown, not idle --
+    `ls` must say so once, not per row."""
+    d = Path(tempfile.mkdtemp())
+    cli(d, "new", "cache leaks", "--class", "bugfix")
+    r = cli(d, "ls")
+    assert "-- no daemon: running/mode unknown for these rows" in r.stdout, r.stdout
+    assert "TICKET-001" in r.stdout
     shutil.rmtree(d)
 
 
@@ -436,4 +449,18 @@ def test_plan_errors_on_an_unknown_ticket():
     assert r.returncode == 1, r.stderr
     assert "TICKET-999.md" in r.stderr
     assert "Traceback" not in r.stderr
+    shutil.rmtree(d)
+
+
+def test_gate_writes_its_findings_where_the_dispatcher_asked():
+    """`--findings PATH` is how the dispatcher's spawned gate child hands its
+    verdict back, since its stdout goes straight to a log file it never reads."""
+    d = project(test_passes=True)
+    out = Path(tempfile.mkdtemp()) / "findings.json"
+    r = cli(d, "gate", "TICKET-001", "--findings", str(out))
+    assert r.returncode == 1, r.stdout + r.stderr
+    data = json.loads(out.read_text())
+    assert data["ok"] is False
+    assert len(data["findings"]) == 1
+    assert not any("```" in f for f in data["findings"])
     shutil.rmtree(d)

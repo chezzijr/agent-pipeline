@@ -6,7 +6,7 @@ async thing in the repo and it is not worth a dependency.
 import asyncio
 import base64
 
-from textual.widgets import Tree
+from textual.widgets import RichLog, Tree
 
 from helpers import project as make_project
 from pipeline.core import PipelineError
@@ -76,6 +76,21 @@ def labels(app):
     return {str(n.label): [str(c.label) for c in n.children] for n in root.children}
 
 
+async def select(app, pilot, project, tid):
+    """Move the cursor straight to a ticket's node, by identity.
+
+    `press("down", "down")` cannot select a row the cursor already sits on --
+    re-selecting it must still fire a highlight, which a repeated key press
+    cannot do once the tree opens on the first live ticket.
+    """
+    tree = app.query_one(Tree)
+    node = next(c for n in tree.root.children for c in n.children
+                if c.data == (str(project), tid))
+    tree.move_cursor(None)
+    tree.move_cursor(node)
+    await pilot.pause()
+
+
 def test_tui_renders_tree_from_ls():
     async def go():
         app = PipelineApp(client=FakeClient([
@@ -91,6 +106,111 @@ def test_tui_renders_tree_from_ls():
             assert got["beta"] == ["TICKET-003 implementing"], got
             await pilot.press("q")
         assert app.return_code == 0
+
+    asyncio.run(go())
+
+
+def test_finished_tickets_do_not_bury_live_ones():
+    """A project with many finished tickets and one live ticket should show
+    the live ticket first, not last -- sorting by id alone buries it behind
+    every earlier, finished ticket and forces a scroll to reach it."""
+    async def go():
+        rows = [row("/tmp/alpha", f"TICKET-{n:03d}", "done")
+                for n in range(1, 51)]
+        rows.append(row("/tmp/alpha", "TICKET-060", "implementing",
+                        running=True))
+        app = PipelineApp(client=FakeClient(rows))
+        async with app.run_test() as pilot:
+            got = labels(app)["alpha"]
+            assert got[0].startswith("TICKET-060"), got[:3]
+            await pilot.press("q")
+        assert app.return_code == 0
+
+    asyncio.run(go())
+
+
+def test_the_cursor_opens_on_a_live_ticket():
+    """The tree hides finished tickets by default, so the cursor must open on
+    the first ticket that is not terminal, not on the root."""
+    async def go():
+        d = "/tmp/alpha"
+        rows = [row(d, "TICKET-001", "done"), row(d, "TICKET-002", "done"),
+                row(d, "TICKET-003", "awaiting-approval")]
+        app = PipelineApp(client=FakeClient(rows))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            assert app.selected == (d, "TICKET-003")
+
+    asyncio.run(go())
+
+
+def test_the_f_key_toggles_finished_tickets_back_into_the_tree():
+    """`done` and `rejected` hide by default; `escalated` never hides. `f`
+    brings them all back, and the status line says how many are hidden."""
+    async def go():
+        d = "/tmp/alpha"
+        rows = [row(d, "TICKET-001", "done"), row(d, "TICKET-002", "rejected"),
+                row(d, "TICKET-003", "escalated"),
+                row(d, "TICKET-004", "implementing", running=True)]
+        app = PipelineApp(client=FakeClient(rows))
+        async with app.run_test() as pilot:
+            assert labels(app)["alpha"] == ["TICKET-003 escalated",
+                                            "TICKET-004 implementing *"]
+            assert "2 finished hidden (f)" in status(app), status(app)
+
+            await pilot.press("f")
+            await pilot.pause()
+            assert labels(app)["alpha"] == ["TICKET-001 done",
+                                            "TICKET-002 rejected",
+                                            "TICKET-003 escalated",
+                                            "TICKET-004 implementing *"]
+            assert "hidden" not in status(app), status(app)
+
+            await pilot.press("f")
+            await pilot.pause()
+            assert labels(app)["alpha"] == ["TICKET-003 escalated",
+                                            "TICKET-004 implementing *"]
+
+    asyncio.run(go())
+
+
+def test_the_down_key_moves_the_cursor_off_the_opening_row():
+    """One `down` press still moves the cursor, over two live rows instead of
+    a walk up from the root."""
+    async def go():
+        d = "/tmp/alpha"
+        rows = [row(d, "TICKET-001", "implementing", running=True),
+                row(d, "TICKET-002", "awaiting-approval")]
+        app = PipelineApp(client=FakeClient(rows))
+        async with app.run_test() as pilot:
+            app.query_one(Tree).focus()
+            await pilot.pause()
+            assert app.selected == (d, "TICKET-001")
+
+            await pilot.press("down")
+            await pilot.pause()
+            assert app.selected == (d, "TICKET-002")
+
+    asyncio.run(go())
+
+
+def test_a_selected_ticket_stays_in_the_tree_when_it_finishes():
+    """The row under the cursor stays painted after it turns terminal, so the
+    detail pane you are reading does not lose its row out from under you."""
+    async def go():
+        d = "/tmp/alpha"
+        fake = FakeClient([row(d, "TICKET-001", "implementing", running=True)])
+        app = PipelineApp(client=fake)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            assert app.selected == (d, "TICKET-001")
+
+            fake.rows = [row(d, "TICKET-001", "done")]
+            app.on_frame({"sub": 1, "event": {"project": d, "ticket": "TICKET-001",
+                                              "kind": "transition", "data": {}}})
+            await pilot.pause()
+            assert labels(app)["alpha"] == ["TICKET-001 done"]
+            assert app.selected == (d, "TICKET-001")
 
     asyncio.run(go())
 
@@ -139,7 +259,7 @@ def test_approve_rewrites_the_ticket_file_with_no_daemon_op():
         app = PipelineApp(client=fake)
         async with app.run_test() as pilot:
             app.query_one(Tree).focus()
-            await pilot.press("down", "down")     # root -> project -> the ticket
+            await select(app, pilot, d, "TICKET-001")
             assert app.selected == (str(d), "TICKET-001")
             fake.sent.clear()
             await pilot.press("a")
@@ -159,7 +279,7 @@ def test_a_wrong_stage_refuses_without_taking_the_app_down():
                                                  "plan-validation")]))
         async with app.run_test() as pilot:
             app.query_one(Tree).focus()
-            await pilot.press("down", "down")
+            await select(app, pilot, d, "TICKET-001")
             await pilot.press("a")
             await pilot.pause()
             assert app.is_running
@@ -186,6 +306,47 @@ def test_marker_is_one_glyph():
     assert marker({"stage": "needs-input"}) == "!"
     assert marker({"stage": "planning", "stale": True}) == "?"
     assert marker({"stage": "planning"}) == ""
+
+
+def test_marker_and_status_say_unknown_when_no_daemon_answered():
+    assert marker({"running": None, "stage": "planning"}) == "~"
+    assert marker({"running": None, "stage": "needs-input"}) == "!"
+    assert marker({"stage": "unreadable"}) == ""
+    assert marker({"running": True, "stage": "planning"}) == "*"
+
+
+def test_a_failed_ls_keeps_the_last_daemon_answer_for_a_live_interactive_stage():
+    """One timed-out ls must not make a live interactive stage look like a
+    finished batch one."""
+    async def go():
+        d = make_project()
+
+        class Flaky(FakeClient):
+            def __init__(self, rows):
+                super().__init__(rows)
+                self.fail = False
+
+            def request(self, op, **kw):
+                if op == "ls" and self.fail:
+                    raise PipelineError("timed out")
+                return super().request(op, **kw)
+
+        flaky = Flaky([row(d, "TICKET-001", "planning",
+                            running=True, mode="interactive")])
+        app = PipelineApp(client=flaky, project=str(d))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            assert app.rows[(str(d), "TICKET-001")]["mode"] == "interactive"
+            flaky.fail = True
+            app.refresh_tree()
+            await pilot.pause()
+            assert app.rows[(str(d), "TICKET-001")]["mode"] == "interactive", \
+                "one timed-out ls made a live interactive stage look like a finished batch one"
+            assert app.rows[(str(d), "TICKET-001")]["running"] is True
+            await pilot.press("q")
+        assert app.return_code == 0
+
+    asyncio.run(go())
 
 
 class FakeStream:
@@ -226,7 +387,7 @@ def test_an_interactive_stage_attaches_and_a_dropped_frame_reattaches():
         async with app.run_test() as pilot:
             app.stream = FakeStream()          # the worker thread's socket
             app.query_one(Tree).focus()
-            await pilot.press("down", "down")
+            await select(app, pilot, d, "TICKET-001")
             await pilot.pause()
 
             assert app.attached == (d, "TICKET-001"), app.attached
@@ -251,6 +412,30 @@ def test_an_interactive_stage_attaches_and_a_dropped_frame_reattaches():
             assert app.stream.ops().count("attach") == 2, \
                 "a dropped frame left a silent gap instead of re-attaching"
             assert app.dropped == 3
+
+    asyncio.run(go())
+
+
+def test_a_row_that_becomes_interactive_attaches_without_moving_the_cursor():
+    """The pane must re-attach the moment the selected row turns interactive,
+    not only on the next cursor move."""
+    async def go():
+        d = "/tmp/alpha"
+        fake = FakeClient([row(d, "TICKET-001", "planning")])
+        app = PipelineApp(client=fake)
+        async with app.run_test() as pilot:
+            app.stream = FakeStream()
+            app.query_one(Tree).focus()
+            await select(app, pilot, d, "TICKET-001")
+            await pilot.pause()
+            assert app.attached is None
+
+            fake.rows = [row(d, "TICKET-001", "planning",
+                             running=True, mode="interactive")]
+            app.refresh_tree()
+            await pilot.pause()
+            assert app.attached == (d, "TICKET-001"), \
+                "the pane never re-attached: the operator had to move the cursor away and back"
 
     asyncio.run(go())
 
@@ -302,7 +487,7 @@ def test_the_pane_stops_claiming_to_be_live_when_the_stage_ends():
         async with app.run_test() as pilot:
             app.stream = FakeStream()
             app.query_one(Tree).focus()
-            await pilot.press("down", "down")
+            await select(app, pilot, d, "TICKET-001")
             await pilot.pause()
             assert app.attached == (d, "TICKET-001")
 
@@ -353,7 +538,7 @@ def test_edit_waits_for_the_stage_to_actually_stop():
         app._sh = lambda cmd: opened.append(cmd)
         async with app.run_test() as pilot:
             app.query_one(Tree).focus()
-            await pilot.press("down", "down")
+            await select(app, pilot, d, "TICKET-001")
             assert app.selected == (str(d), "TICKET-001")
 
             app._stopped = lambda key, tries=20: False   # never reaped
@@ -385,7 +570,7 @@ def test_attaching_sends_the_pane_size():
         async with app.run_test(size=(200, 50)) as pilot:
             app.stream = FakeStream()
             app.query_one(Tree).focus()
-            await pilot.press("down", "down")
+            await select(app, pilot, d, "TICKET-001")
             await pilot.pause()
             app.on_frame({"id": app.pty_id, "ok": True,
                           "data": {"screen": ["Allow Bash?"], "rows": 40,
@@ -411,7 +596,7 @@ def test_resizing_the_terminal_resizes_the_child():
         async with app.run_test(size=(200, 50)) as pilot:
             app.stream = FakeStream()
             app.query_one(Tree).focus()
-            await pilot.press("down", "down")
+            await select(app, pilot, d, "TICKET-001")
             await pilot.pause()
             app.on_frame({"id": app.pty_id, "ok": True,
                           "data": {"screen": ["Allow Bash?"], "rows": 40,
@@ -450,7 +635,7 @@ def test_a_read_only_viewer_never_sends_a_resize():
         async with app.run_test(size=(200, 50)) as pilot:
             app.stream = FakeStream()
             app.query_one(Tree).focus()
-            await pilot.press("down", "down")
+            await select(app, pilot, d, "TICKET-001")
             await pilot.pause()
             app.on_frame({"id": app.pty_id, "ok": True,
                           "data": {"screen": ["Allow Bash?"], "rows": 40,
@@ -538,7 +723,7 @@ def test_tail_log_never_returns_a_raw_escape_byte_for_a_pty_dump():
     (logs / "TICKET-001-planning.log").write_bytes(
         b"\x1b[2C\x1b[3A\x1b[?25h\x1b[?25l\x1b[2D\x1b[3B hello\x1b[7A\x1b[38;5;174m*\x1b[39m\n")
 
-    lines = tail_log(str(d), "TICKET-001")
+    lines, _ = tail_log(str(d), "TICKET-001")
 
     for line in lines:
         assert "\x1b" not in line, f"raw escape byte reached the log line: {line!r}"
@@ -554,7 +739,8 @@ def test_tail_log_renders_a_pty_dump_as_the_final_screen():
     (logs / "TICKET-001-planning.log").write_bytes(
         b"\x1b[H\x1b[2Jfirst frame\x1b[H\x1b[2Jsecond frame\x1b[K\n")
 
-    assert tail_log(str(d), "TICKET-001") == ["second frame"]
+    lines, _ = tail_log(str(d), "TICKET-001")
+    assert lines == ["second frame"]
 
 
 def test_tail_log_renders_a_pty_dump_at_its_own_width_not_120():
@@ -574,7 +760,7 @@ def test_tail_log_renders_a_pty_dump_at_its_own_width_not_120():
     redraw = b"\x1b[1A\r\x1b[KSHORT\n"
     (logs / "TICKET-001-planning.log").write_bytes(geom + frame1 + redraw)
 
-    lines = tail_log(str(d), "TICKET-001")
+    lines, _ = tail_log(str(d), "TICKET-001")
 
     assert lines == ["SHORT"], (
         f"replaying at the log's own width (150) should be clean, got {lines!r}"
@@ -635,9 +821,120 @@ def test_tail_log_keeps_a_width_marker_the_tail_cut_dropped():
     frames = b"\x1b[H\x1b[2J" + b"B" * 140 + b"\x1b[1A\r\x1b[KSHORT\n"
     (logs / "TICKET-001-planning.log").write_bytes(geom + pad + frames)
 
-    lines = tail_log(str(d), "TICKET-001")
+    lines, _ = tail_log(str(d), "TICKET-001")
 
     assert lines == ["SHORT"]
+
+
+def test_tail_log_reports_the_width_the_dump_ends_at():
+    """`_show()` writes each line at the width `tail_log()` reports, so the
+    width must be the dump's last recorded marker, not its first."""
+    d = make_project()
+    logs = d / ".project" / "logs"
+    logs.mkdir(parents=True)
+    (logs / "TICKET-001-planning.log").write_bytes(
+        b"\x1b]9999;40;150\x07" + b"A" * 140 +
+        b"\x1b]9999;33;124\x07" + b"B" * 100 + b"\n")
+
+    lines, cols = tail_log(str(d), "TICKET-001")
+
+    assert cols == 124, cols
+
+
+def test_a_pty_dump_wider_than_the_log_pane_is_not_re_wrapped():
+    """TICKET-063: a screen dump is position-significant. `#log` is a
+    `RichLog(wrap=True)`, so a line wider than the pane -- `#tree` alone
+    takes 34 columns -- gets soft-wrapped onto continuation rows, which
+    breaks the recorded alignment instead of just narrowing the view."""
+    d = make_project()
+    logs = d / ".project" / "logs"
+    logs.mkdir(parents=True)
+    rule = b"=" * 120
+    (logs / "TICKET-001-planning.log").write_bytes(
+        b"\x1b]9999;40;120\x07" + rule + b"\n")
+
+    async def go():
+        fake = FakeClient([row(d, "TICKET-001", "planning")])
+        app = PipelineApp(client=fake)
+        async with app.run_test(size=(80, 24)) as pilot:
+            app.query_one(Tree).focus()
+            await pilot.press("down", "down")
+            await pilot.pause()
+
+            log = app.query_one("#log", RichLog)
+
+            def text(strip):
+                return "".join(seg.text for seg in strip)
+
+            strips = [s for s in log.lines if set(text(s).strip()) == {"="}]
+            assert len(strips) == 1, (
+                f"the 120-column rule split across {len(strips)} rows "
+                f"instead of staying one row: {[text(s) for s in strips]}"
+            )
+
+    asyncio.run(go())
+
+
+def test_a_clipped_pty_dump_keeps_the_whole_line_for_horizontal_scrolling():
+    """A dump written wider than the pane must clip, not truncate: the full
+    line stays in the strip and the pane's `virtual_size` grows to it, so
+    the clipped remainder is reachable by scrolling instead of discarded."""
+    d = make_project()
+    logs = d / ".project" / "logs"
+    logs.mkdir(parents=True)
+    rule = b"=" * 120
+    (logs / "TICKET-001-planning.log").write_bytes(
+        b"\x1b]9999;40;120\x07" + rule + b"\n")
+
+    async def go():
+        fake = FakeClient([row(d, "TICKET-001", "planning")])
+        app = PipelineApp(client=fake)
+        async with app.run_test(size=(80, 24)) as pilot:
+            app.query_one(Tree).focus()
+            await pilot.press("down", "down")
+            await pilot.pause()
+
+            log = app.query_one("#log", RichLog)
+
+            def text(strip):
+                return "".join(seg.text for seg in strip)
+
+            strips = [s for s in log.lines if set(text(s).strip()) == {"="}]
+            assert len(strips) == 1
+            assert strips[0].cell_length == 120, strips[0].cell_length
+            assert log.virtual_size.width >= 120, log.virtual_size.width
+
+    asyncio.run(go())
+
+
+def test_a_stream_json_log_still_wraps_in_the_log_pane():
+    """The width fix must not turn wrapping off for prose: a stream-json
+    line still soft-wraps across more than one `RichLog` strip."""
+    d = make_project()
+    logs = d / ".project" / "logs"
+    logs.mkdir(parents=True)
+    text_body = "word " * 40
+    (logs / "TICKET-001-planning.log").write_bytes(
+        ('{"type":"assistant","message":{"content":[{"type":"text","text":"'
+         + text_body + '"}]}}\n').encode())
+
+    async def go():
+        fake = FakeClient([row(d, "TICKET-001", "planning")])
+        app = PipelineApp(client=fake)
+        async with app.run_test(size=(80, 24)) as pilot:
+            app.query_one(Tree).focus()
+            await pilot.press("down", "down")
+            await pilot.pause()
+
+            log = app.query_one("#log", RichLog)
+
+            def text(strip):
+                return "".join(seg.text for seg in strip)
+
+            matches = [s for s in log.lines if "word" in text(s)]
+            assert len(matches) > 1, matches
+
+    asyncio.run(go())
 
 
 def test_tail_log_still_renders_a_stream_json_log():
@@ -651,4 +948,5 @@ def test_tail_log_still_renders_a_stream_json_log():
         b'{"type":"assistant","message":{"content":'
         b'[{"type":"text","text":"planning done"}]}}\n')
 
-    assert tail_log(str(d), "TICKET-001") == ["planning done"]
+    lines, _ = tail_log(str(d), "TICKET-001")
+    assert lines == ["planning done"]

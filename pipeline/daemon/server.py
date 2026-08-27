@@ -106,7 +106,13 @@ def ticket_rows(project: Path, inflight: dict | None = None) -> list[dict]:
     daemon answers. Two implementations would let the same command give two
     different answers depending on whether a daemon happened to be up, which is
     exactly what "the daemon is an accelerator, never a dependency" forbids.
+
+    `running` and `mode` are the only two fields the daemon alone can answer.
+    A caller with no `inflight` gets `None` for both -- unknown, stated as
+    unknown. Reporting `False`/`"batch"` there made a live interactive stage
+    unattachable from the TUI (TICKET-062).
     """
+    known = inflight is not None
     inflight = inflight or {}
     out = []
     for path in all_tickets(project):
@@ -121,7 +127,7 @@ def ticket_rows(project: Path, inflight: dict | None = None) -> list[dict]:
             out.append({
                 "project": str(project), "id": t.id, "stage": t.stage,
                 "class": t.klass, "counters": t.counters, "lease": t.lease,
-                "running": rec is not None, "leased": leased,
+                "running": (rec is not None) if known else None, "leased": leased,
                 "stale": (t.stage not in TERMINAL | HUMAN_GATES and not leased
                           and now() - datetime.fromtimestamp(path.stat().st_mtime,
                                                              timezone.utc)
@@ -130,7 +136,7 @@ def ticket_rows(project: Path, inflight: dict | None = None) -> list[dict]:
                 # the dispatcher's last observation, advisory display only --
                 # never read back as control flow
                 "waiting": w if isinstance(w := t.extra.get("waiting"), dict) else None,
-                "mode": (rec or {}).get("mode", "batch"),
+                "mode": ((rec or {}).get("mode", "batch") if known else None),
                 "title": summary[0] if summary else ""})
         except Exception as e:
             # Exception, not PipelineError, and around the WHOLE row: `_op_ls`
@@ -154,6 +160,13 @@ class Poller:
     # question `spawn()` has to answer before it starts a stage nobody could
     # steer. `poller is not None` was the wrong test: `run()` passes one.
     attachable = False
+
+    def watchers(self, project: str | None = None) -> int:
+        """How many clients could attach to a PTY hosted here right now.
+        `attachable` says a socket exists; this says somebody is on it, which
+        is the question `spawn()` actually has to answer. A bare `Poller` has
+        neither, so this is 0 and stays 0."""
+        return 0
 
     def __init__(self) -> None:
         self.sel = selectors.DefaultSelector()
@@ -229,6 +242,17 @@ class Conn:
 
 class Server(Poller):
     attachable = True   # there is a socket: `attach`/`input` can reach a PTY
+
+    def watchers(self, project: str | None = None) -> int:
+        """Connections holding a subscription for `project` (a resolved path
+        string) or for every project. A one-shot `request` -- `ls`, `kill` --
+        connects, is answered and goes away without subscribing, so only a
+        subscription counts as a human watching: otherwise a `pipeline ls`
+        landing in the same tick as a spawn would read as an attached TUI."""
+        return sum(any(s.get("project") is None or project is None
+                       or s.get("project") == project
+                       for s in c.subs.values())
+                   for c in self.conns.values())
 
     def __init__(self, store, path: Path | None = None) -> None:
         super().__init__()

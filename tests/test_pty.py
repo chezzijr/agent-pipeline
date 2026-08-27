@@ -393,8 +393,12 @@ def test_planning_is_interactive_and_never_rendered_under_print_mode():
 
 
 class Attachable(Poller):
-    """A poller a client could reach -- what `Server` is, without the socket."""
+    """A poller a client could reach, with one on it -- what `Server` is with
+    a `pipeline tui` subscribed, minus the socket."""
     attachable = True
+
+    def watchers(self, project: str | None = None) -> int:
+        return 1
 
 
 def test_an_interactive_stage_runs_headless_when_nothing_can_attach():
@@ -426,6 +430,29 @@ def test_an_interactive_stage_runs_headless_when_nothing_can_attach():
         supervisor.close_child(rec)
         plain.close()
         attachable.close()
+
+
+def test_an_interactive_stage_needs_an_attached_client_not_just_a_daemon():
+    """TICKET-059: `spawn()` gates on `poller.attachable`, which is true for
+    any `Server` whether or not a client has ever run `pipeline tui`. With
+    `pipeline start` up and nobody attached, `planning` still spawns on a PTY
+    in `acceptEdits`, hits its first Bash, and parks at a prompt nobody can
+    see until the lease expires twice. A `Server` with zero attached
+    connections must run the stage headless, the same as the bare `Poller`."""
+    tmp = Path(tempfile.mkdtemp())
+    st = Store(tmp / "events.db")
+    srv = Server(st, tmp / "daemon.sock")
+    try:
+        assert srv.attachable is True
+        rec = supervisor.spawn(tmp, tmp, "TICKET-001", "planning",
+                               harness("fake"), srv)
+        assert rec["mode"] == "batch", \
+            f"nothing is attached, but spawn() ran a REPL anyway (mode={rec['mode']!r})"
+    finally:
+        rec["proc"].terminate()
+        rec["proc"].wait()
+        supervisor.close_child(rec)
+        srv.close()
 
 
 def test_an_interactive_log_opens_with_its_geometry():

@@ -124,7 +124,7 @@ database under your state directory (see *Where it keeps things*).
 
 ```sh
 pipeline register ~/code/myproject   # one path per line in the registry file
-pipeline start                       # spawns pipelined, detached; interactive stages wait for `pipeline tui`
+pipeline start                       # spawns pipelined, detached; interactive stages need `pipeline tui` attached
 pipeline status                      # is it running, and how many projects
 pipeline ls                          # every registered project's tickets
 pipeline ls --project ~/code/myproject     # --project is a FILTER here
@@ -188,14 +188,13 @@ This is not a nicer view of a headless stage. Under `-p` the harness *ignores*
 prompt and an option picker simply do not exist there. A PTY is the only mode in
 which a human can steer a stage.
 
-`mode: interactive` means "interactive when a human can reach it". `pipeline
-run` has no socket, so nothing could ever `attach`, and a REPL nobody attaches
-to would sit at its prompt until its lease expired twice -- which would make
-the daemon a dependency for every ticket that reaches `planning`. Without an
-attachable supervisor the stage runs **headless** instead, and says so on
-stdout. Nothing is lost but the steering: `planning`'s own escape hatch is
-`result: needs-input`, which parks the ticket at a human gate for
-`pipeline answer`. `pipeline start --help` and `pipeline run --help` each say
+`mode: interactive` means "interactive while a human is attached". `pipeline
+run` has no socket, and `pipeline start` with no client subscribed is the same
+case: both run the stage **headless** instead, and say so on stdout. A TUI
+that attaches after the spawn gets a headless stage. Nothing is lost but the
+steering: `planning`'s own escape hatch is `result: needs-input`, which parks
+the ticket at a human gate for `pipeline answer`. `pipeline start --help` and
+`pipeline run --help` each say
 which side they are on, and `tests/test_cli.py::test_the_help_text_matches_the_code_it_describes`
 fails if either stops saying it.
 
@@ -233,10 +232,15 @@ pipeline --project ~/code/myproject tui   # the same filter `ls` takes
 ```
 
 Left pane a tree of projects and their tickets (`*` running, `!` waiting on
-you, `?` untouched for hours), right pane the ticket's stage log rendered the
-way `pipeline logs` renders it, then live events as they arrive. It seeds from
-`ls` and stays current from a `subscribe` on its own connection; with no daemon
-running it reads the ticket files instead and simply does not update itself.
+you, `~` running unknown -- no daemon answered, `?` untouched for hours),
+right pane the ticket's stage log rendered the way `pipeline logs` renders it,
+then live events as they arrive. It seeds from `ls` and stays current from a
+`subscribe` on its own connection; with no daemon running it reads the ticket
+files instead and simply does not update itself. A ticket file cannot say
+whether a stage is running, so those rows report `running`/`mode` as unknown
+rather than idle, and the pane keeps the last answer the daemon gave for
+them; `pipeline ls` prints `-- no daemon: running/mode unknown for these
+rows` once above such a listing.
 
 Select a ticket running an **interactive** stage and the right pane becomes
 that stage's live terminal instead: it `attach`es on the subscription's
@@ -247,11 +251,15 @@ gap. `i` types a line into it -- chunked at 4096 bytes an op, with a short
 write's remainder re-sent, so a long answer cannot be half-swallowed.
 
 `a` approve, `r` reject, `A` answer, `e` edit, `l` logs, `m` metrics, `k` kill,
-`i` type, `q` quit. Only `k` and `i` are daemon ops -- approve, reject and answer rewrite the
+`i` type, `f` finished, `q` quit. Only `k` and `i` are daemon ops -- approve, reject and answer rewrite the
 ticket file, which is the source of truth, and the daemon's next tick notices;
 `e`/`l`/`m` suspend the app and hand you the real terminal. `e` interrupts the
 running stage before opening `$EDITOR`, so your edit cannot trip the
 dispatcher's tamper detection.
+
+The tree hides `done` and `rejected` tickets and opens the cursor on the first
+ticket that is not terminal; `f` brings the hidden ones back, and `escalated`
+is never hidden.
 
 ## Concurrency
 

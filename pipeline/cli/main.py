@@ -89,6 +89,11 @@ def cmd_gate(args) -> None:
     # the ticket's test lives on its branch; running in the main checkout would
     # report a bogus "test file does not exist" straight into the thread
     ok, failures = gate(project, args.id, wt if wt.is_dir() else None)
+    if args.findings:
+        # the dispatcher's gate child sends its stdout to a log file it never
+        # reads back; this is how the verdict and findings reach it instead --
+        # the exit code alone can't carry the findings for the thread note.
+        Path(args.findings).write_text(json.dumps({"ok": ok, "findings": failures}))
     for f in failures:
         print(f"FAIL: {f}")
     print("gate: PASS" if ok else "gate: FAIL")
@@ -261,6 +266,11 @@ def cmd_ls(args) -> None:
     if rows is None:
         targets = [proj(args)] if args.project else registry.projects()
         rows = [r for p in targets for r in ticket_rows(p)]
+    if any(r.get("running", False) is None for r in rows):
+        # one line, not one token per row: with no daemon EVERY row is
+        # unknown, and the per-row marks below are all file facts
+        # (`leased`, `stale`) which are still true
+        print("-- no daemon: running/mode unknown for these rows")
     for r in rows:
         mark = ("LEASED" if r.get("running") or r.get("leased")
                 else f"STALE>{STALE_HOURS}h" if r.get("stale") else "")
@@ -509,16 +519,17 @@ def cmd_tui(args) -> None:
 START_DESC = (
     "Start the one daemon for every registered project. A stage whose "
     "frontmatter says `mode: interactive` -- `planning` -- runs on a PTY the "
-    "daemon owns and blocks on its first permission prompt until a human "
-    "attaches with `pipeline tui`. `pipeline run` executes that same stage "
-    "headless instead."
+    "daemon owns only while a client is attached: leave `pipeline tui` open "
+    "and it waits there at its first permission prompt. With no client "
+    "subscribed it runs headless, exactly as `pipeline run` does."
 )
 RUN_DESC = (
     "Run one project's dispatcher loop, with no daemon and no socket. Nothing "
     "can attach, so a stage whose frontmatter says `mode: interactive` -- "
     "`planning` -- runs headless here and never waits for a human; its escape "
     "hatch is `result: needs-input`, which parks the ticket for `pipeline "
-    "answer`. Under `pipeline start` that same stage waits at `pipeline tui`."
+    "answer`. Under `pipeline start` that same stage waits at `pipeline tui`, "
+    "and only if a tui is attached when it spawns."
 )
 
 
@@ -531,7 +542,7 @@ def main() -> None:
 
     p = sub.add_parser("init"); p.add_argument("dir", nargs="?", default=None); p.add_argument("--private", action="store_true", help="hide .project/ from git in this clone only (.git/info/exclude)"); p.set_defaults(fn=cmd_init)
     p = sub.add_parser("new"); p.add_argument("title"); p.add_argument("--class", dest="cls", default="bugfix"); p.set_defaults(fn=cmd_new)
-    p = sub.add_parser("gate"); p.add_argument("id"); p.set_defaults(fn=cmd_gate)
+    p = sub.add_parser("gate"); p.add_argument("id"); p.add_argument("--findings", help="write {ok, findings} JSON here; the dispatcher's gate child reads it back"); p.set_defaults(fn=cmd_gate)
     p = sub.add_parser("plan"); p.add_argument("id"); p.set_defaults(fn=cmd_plan)
     p = sub.add_parser("approve"); p.add_argument("id"); p.add_argument("--by"); p.set_defaults(fn=cmd_approve)
     p = sub.add_parser("reject"); p.add_argument("id"); p.add_argument("reason"); p.set_defaults(fn=cmd_reject)

@@ -128,10 +128,14 @@ still worth it: it prints one line per case, and the failure names the case.
   *controlling* terminal, and a TUI without one draws nothing. The winsize is
   set in the child before `exec` for the same reason: a child that reads 0x0
   renders an empty screen.
-- **An interactive stage is only interactive if something can attach.**
-  `spawn()` asks `poller.attachable` -- `Server` sets it, the bare `Poller`
-  `pipeline run` builds does not. Gating on `poller is not None` was wrong:
-  `run()` passes one, and the stage parked at a REPL nobody could reach.
+- **An interactive stage is only interactive while a client is attached.**
+  `spawn()` asks two questions: `poller.attachable` (is there a socket --
+  `Server` sets it, the bare `Poller` `pipeline run` builds does not) and
+  `poller.watchers(project)` (is a client subscribed right now). Gating on
+  `attachable` alone was wrong: a daemon with nobody on it still spawned a
+  REPL, and it parked at a prompt nobody could see until the lease expired
+  twice (TICKET-059). A TUI that attaches after the spawn gets a headless
+  stage; that race is accepted.
 - **A REPL does not exit when the agent writes `.result`.** `finish()` fires on
   `proc.poll()`, so `end_interactive()` SIGTERMs an interactive child once its
   sidecar appears. Without it the lease expires twice and the ticket escalates
@@ -223,6 +227,15 @@ still worth it: it prints one line per case, and the failure names the case.
   resize; `render_pty()` replays the dump at that geometry instead of a fixed
   40x120. A batch log must never get one -- `tail_log()` sniffs a PTY dump by
   the raw ESC (DEC-039), so a marker there sends stream-json through pyte.
+  `#log` writes those lines with `RichLog.write(line, width=cols)`, so a pane
+  narrower than the dump clips and scrolls horizontally instead of re-flowing
+  a screen; stream-json lines pass `width=None` and still wrap.
+- **The Tier A gate runs as a spawned child (`gate_cmd()`), not inline.** A
+  PASS at `plan-validation` is a phase of the stage, carried in
+  `counters["gate_ok"]` and consumed by the next `start()`, which spawns the
+  Tier B agent -- it emits no `stage_end`, or one run would put two rows in
+  view 1's denominator. Moving the gate back inline stalls the select loop
+  for the length of the project's suite, exactly the bug TICKET-061 fixed.
 - **The read-only allowlist has a per-project extension.** `[readonly] allow`
   in `.project/pipeline.toml` is exported as `PIPELINE_READONLY_ALLOW`, an
   argv-prefix list matched per shell segment. It never overrides

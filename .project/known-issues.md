@@ -280,13 +280,13 @@ Deferred deliberately in TICKET-013, with a `ponytail:` comment naming the upgra
 child gets SIGHUP; lease expiry recovers the ticket. Worth a ticket only if restarts
 during planning turn out to be common.
 
-## 14. `gate()` runs the project's test command synchronously inside the select loop
+## 14. `gate()` runs the project's test command synchronously inside the select loop — fixed by TICKET-061
 
-Marked with a `ponytail:` comment by TICKET-011. The loop is now the only pipe reader, so
-a slow `test_one` stalls every other project's children. Mitigated (1 MiB pipes,
-`drain_all()` before every blocking call) but not removed. The real fix is running the
-Tier A gate as a spawned child like `verifying` — the mechanism already exists
-(`spawn_command`).
+Marked with a `ponytail:` comment by TICKET-011. The loop was the only pipe reader, so a
+slow `test_one` stalled every other project's children. TICKET-061 moved the Tier A gate to
+run as a `spawn_command()` child, exactly like `verifying`; the ticket waits at its own
+stage on the lease `child()` takes. The 1 MiB pipes and `drain_all()` remain, because they
+still cover the git calls (`ensure_worktree`, `worktree_setup`, the `merging` rebase).
 
 ---
 
