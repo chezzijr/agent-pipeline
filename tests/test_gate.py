@@ -334,6 +334,54 @@ def test_gate_blocks_a_criterion_pinning_an_absolute_count_from_the_digest():
     shutil.rmtree(d)
 
 
+def test_a_count_pinned_line_waives_the_absolute_count_check():
+    """A bare `count-pinned:` line does not match `CRIT_ITEM_RE` and so
+    raises no `names no test` finding of its own."""
+    d = project(_set_digest("- thing.py holds it\n- 630 passed in tests/chz\n"
+                             "- eviction runs on write, not read\n").replace(
+        "- `test_broken` passes",
+        "count-pinned: this ticket is what moves the number\n"
+        "- `test_broken` passes\n- `tests/chz` suite: 630 passed"))
+    ok, failures = gate(d, "TICKET-001")
+    assert ok, failures
+    shutil.rmtree(d)
+
+
+def test_a_number_a_criterion_refers_to_but_does_not_count_is_not_flagged():
+    """The count noun follows the number in a count and precedes it in a
+    reference, so a shared integer alone must not flag."""
+    d = project(_set_digest("- thing.py holds it\n- README.md line 65 names it\n"
+                             "- eviction runs on write, not read\n").replace(
+        "- `test_broken` passes",
+        "- `test_broken` passes, and `README.md` line 65 still names it"))
+    ok, failures = gate(d, "TICKET-001")
+    assert ok, failures
+    shutil.rmtree(d)
+
+
+def test_a_count_a_criterion_measures_itself_is_not_flagged():
+    """A count that appears in no `## Digest` line was not copied out of
+    the digest."""
+    d = project(FIXTURE.replace(
+        "- `test_broken` passes",
+        "- `test_broken` passes and `pytest -q` reports 630 passed"))
+    ok, failures = gate(d, "TICKET-001")
+    assert ok, failures
+    shutil.rmtree(d)
+
+
+def test_a_test_shaped_criterion_pinning_a_count_is_still_flagged():
+    """Pinning a total and naming a test are orthogonal, so this fails
+    against any check placed inside `for c in crits:`."""
+    d = project(_set_digest("- thing.py holds it\n- 630 passed in tests/chz\n"
+                             "- eviction runs on write, not read\n").replace(
+        "- `test_broken` passes",
+        "- `tests/test_x.py::test_suite` passes and the suite reports 630 passed"))
+    ok, failures = gate(d, "TICKET-001")
+    assert not ok and any("absolute count" in f for f in failures), failures
+    shutil.rmtree(d)
+
+
 def test_a_top_level_fence_in_acceptance_criteria_is_not_read_as_criteria():
     """A fence at column 0 under `## Acceptance criteria` is quoted output,
     not a list of criteria -- its lines are skipped with no finding."""

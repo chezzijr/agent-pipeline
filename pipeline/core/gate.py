@@ -44,6 +44,36 @@ PLAN_STEP_RE = re.compile(r"^\s*\d+[.)]")
 # gate checks today.
 CRIT_ITEM_RE = re.compile(r"^\s*(?:[-*]|\d+[.)])")
 
+# A total any other ticket can move (a suite's pass count, a row count) is
+# not a property of this change, so a criterion that pins one copied straight
+# out of `## Digest` goes stale the moment the number moves. Two digits is
+# the floor: a one-digit number in a criterion is an exit code, an ordinal or
+# a count of 1 far more often than a measured total, so a single-digit total
+# goes unflagged on purpose. The lookarounds reject `2.1.238`, `gate.py:411`,
+# `DEC-065` and `10ms` -- a version, a line reference, a decision id or a
+# duration, none of them a count.
+COUNT_RE = re.compile(r"(?<![\w.:/-])(\d{2,})(?![\w.:/-])")
+# The count noun must FOLLOW the number: `630 passed` is a count, but
+# `step 12` and `README.md line 65` are references, where the noun precedes
+# the number. Measured over the 83 tickets in `.project/tickets` on
+# 2026-08-28: 469 criteria, 27 flagged by any shared bare integer, 3 by this
+# noun-after form -- all 3 the defect.
+CRIT_COUNT_RE = re.compile(
+    COUNT_RE.pattern + r"[^A-Za-z0-9]{0,3}(?:pass(?:ed|es|ing)|"
+    r"fail(?:ed|s|ing|ures?)|tests?|cases?|rows?|lines?|entries|files?|"
+    r"criteria|steps?|ok)\b", re.I)
+# The waiver, spelled like DIGEST_SHORT_RE: some counts are legitimately
+# pinned (e.g. a guard-case count a companion test asserts), and a hard
+# reject would make that ticket unplannable.
+COUNT_PINNED_RE = re.compile(r"^\s*count-pinned:\s*\S", re.M)
+# Paraphrases `## Acceptance criteria` in `pipeline/stages/planning.md` and
+# must be changed with it, like PLAN_STEP_RULE.
+CRIT_COUNT_RULE = (
+    "a total any other ticket can move is not a property of this change -- "
+    "state it as a relation to a measured baseline, or re-measure at check "
+    "time; one `count-pinned: <why it cannot move>` line in `## Acceptance "
+    "criteria` waives this check")
+
 # A criterion clears Tier A by naming a test, or by naming a command and the
 # outcome running it must produce -- both halves are required, since a command
 # with no stated result cannot be decided by running it. A one-token span
@@ -423,6 +453,19 @@ def gate(project: Path, tid: str, workdir: Path | None = None) -> tuple[bool, li
             in_crit = True
         else:
             in_crit = False
+    # A separate loop, never folded into the one below: both accept arms of
+    # that loop `continue` on a criterion that names a test or a command, so
+    # a check appended there would only ever see criteria that already fail
+    # the names-no-test rule. Pinning a stale total and naming a test are
+    # orthogonal properties -- a criterion can do both.
+    dig_counts = set(COUNT_RE.findall(dig))
+    if dig_counts and not COUNT_PINNED_RE.search(crit):
+        for c in crits:
+            shared = sorted(set(CRIT_COUNT_RE.findall(c)) & dig_counts, key=int)
+            if shared:
+                findings.append(
+                    "acceptance criterion pins an absolute count copied "
+                    f"from `## Digest` ({', '.join(shared)}): {c} -- {CRIT_COUNT_RULE}")
     for c in crits:
         # a backticked token is not enough -- "`10ms`" is a metric, not a test.
         # `pytest` is named explicitly: `\btest` needs a word boundary before
