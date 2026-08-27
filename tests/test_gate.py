@@ -399,6 +399,25 @@ def test_gate_blocks_a_test_that_passes_on_base():
     shutil.rmtree(d, ignore_errors=True)
 
 
+def test_gate_names_both_causes_when_the_test_exits_zero_on_base():
+    """The base run carries the branch run's exit-0 ambiguity: `test_one`
+    exits 0 on base without printing the node, which is a pass there or a
+    selector that matched nothing, and nothing separates them. No literal
+    brace in the command -- `str.format` raises KeyError on one."""
+    d, wt = _git_ticket_project("fixed\n", "buggy\n")
+    (d / ".project" / "pipeline.toml").write_text(
+        'test_one = "grep -q fixed f.py && exit 0; echo test_broken; exit 1"\n'
+        'test_suite = "true"\ntest_suite_without_new = "true"\nbase = "main"\n')
+    subprocess.run("git add -A && git commit -qm cfg", shell=True, cwd=d,
+                   capture_output=True, text=True)
+    ok, failures = gate(d, "TICKET-001", workdir=wt)
+    assert not ok
+    zero = [f for f in failures if "exited 0 on base" in f]
+    assert len(zero) == 1, failures
+    assert "matched no test" in zero[0], zero
+    shutil.rmtree(d, ignore_errors=True)
+
+
 def test_gate_passes_a_test_that_fails_on_base_too():
     """The complement: a test that fails identically on base and on the
     branch IS the reproduction Tier A demands, and the base check must not

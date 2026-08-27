@@ -173,15 +173,16 @@ def _base_findings(project: Path, cfg: dict, wd: Path, test: str,
         shutil.copy2(wd / rel, dst)
         code, out = run_cmd(
             cfg["test_one"].format(test=shlex.quote(test)), base_wt)
-    if code == 0 and node in out:
-        return [f"`{test}` PASSES on base `{base}` -- it fails only on this "
-                f"branch, so it is not a reproduction: either the bug is "
-                f"already fixed on base, or the test is red for a reason "
-                f"base does not have\n```\n{out[-1200:]}\n```"]
     if code == 0:
-        return [f"`{test}` exited 0 on base `{base}` but its name never "
-                f"appears in the output -- the selector matched nothing, so "
-                f"base proves nothing\n```\n{out[-1200:]}\n```"]
+        # The branch run's ambiguity (TICKET-071), on base: the bug is already
+        # fixed there, or the test is red for a reason base does not have, or
+        # the selector matched no test. Base proves nothing either way.
+        return [f"`{test}` exited 0 on base `{base}`, so base proves nothing. "
+                f"Either it PASSES there -- the bug is already fixed on base, "
+                f"or the test is red for a reason base does not have -- or "
+                f"`test_one` matched no test at all; a runner that names a "
+                f"node only on failure makes the two identical here"
+                f"\n```\n{out[-1200:]}\n```"]
     if node not in out:
         # same trap as the branch run: an import error exits non-zero too,
         # and here that reads as a successful reproduction
