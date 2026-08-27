@@ -270,6 +270,29 @@ def test_approve_rewrites_the_ticket_file_with_no_daemon_op():
     asyncio.run(go())
 
 
+def test_awaiting_approval_shows_the_plan_not_the_validation_log():
+    """TICKET-073: the approval gate asks "is this plan right?", so the pane
+    a ticket at `awaiting-approval` opens on must contain its `## Plan` text,
+    not just the plan-validation stream."""
+    async def go():
+        d = make_project(APPROVABLE)
+        fake = FakeClient([row(d, "TICKET-001", "awaiting-approval")])
+        app = PipelineApp(client=fake)
+        async with app.run_test() as pilot:
+            app.query_one(Tree).focus()
+            await select(app, pilot, d, "TICKET-001")
+
+            log = app.query_one("#log", RichLog)
+
+            def text(strip):
+                return "".join(seg.text for seg in strip)
+
+            rendered = "\n".join(text(s) for s in log.lines)
+            assert "1. do it" in rendered, rendered
+
+    asyncio.run(go())
+
+
 def test_a_wrong_stage_refuses_without_taking_the_app_down():
     """`cmd_approve` calls `die()`, which is `sys.exit`. Reusing the CLI's
     precondition means catching its exit rather than copying its check."""
