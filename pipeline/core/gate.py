@@ -246,13 +246,17 @@ def gate(project: Path, tid: str, workdir: Path | None = None) -> tuple[bool, li
         else:
             code, out = run_cmd(cfg["test_one"].format(test=shlex.quote(test)), wd)
             node = test.split("::")[-1]
-            if code == 0 and node in out:
-                findings.append(f"`{test}` PASSES -- it must fail before implementation")
-            elif code == 0:
+            if code == 0:
+                # Exit 0 has two causes and no portable signal separates them: a
+                # runner names a node only when the test FAILS (pytest prints a dot
+                # and a count), so a real pass and a selector that matched no test
+                # look identical -- TICKET-071, which inverted TICKET-064's split.
+                # Both are a gate failure; the fence is what tells a human which.
                 findings.append(
-                    f"`{test}` exited 0 but its name never appears in the "
-                    f"output -- the selector matched nothing, not a passing "
-                    f"test\n```\n{out[-1200:]}\n```")
+                    f"`{test}` exited 0 -- it must fail before implementation. Either "
+                    f"it PASSES, or `test_one` matched no test at all; a runner that "
+                    f"names a node only on failure makes the two identical here. Read "
+                    f"the output to tell them apart\n```\n{out[-1200:]}\n```")
             elif node not in out:
                 # a missing dependency or an import error exits non-zero too, and
                 # looks exactly like a failing test unless you check for the name

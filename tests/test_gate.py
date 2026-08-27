@@ -161,16 +161,19 @@ def test_gate_blocks_a_test_that_already_passes():
     shutil.rmtree(d)
 
 
-def test_gate_distinguishes_a_selector_matching_nothing_from_a_real_pass():
-    """`test_one` exiting 0 without ever naming the test is a runner whose
-    filter matched zero tests, not a passing reproduction -- TICKET-064."""
+def test_gate_fails_an_exit_zero_test_and_names_both_causes():
+    """`test_one` exiting 0 without ever naming the test is either a
+    passing reproduction or a runner whose filter matched zero tests
+    (TICKET-064). No portable signal separates them -- a runner names a
+    node only on failure (TICKET-071) -- so one finding names both."""
     d = project()
     (d / ".project" / "pipeline.toml").write_text(
         'test_one = "true"\ntest_suite = "true"\ntest_suite_without_new = "true"\n')
     ok, failures = gate(d, "TICKET-001")
     assert not ok
-    assert not any("PASSES -- it must fail before implementation" in f
-                   for f in failures), failures
+    zero = [f for f in failures if "exited 0" in f]
+    assert len(zero) == 1, failures
+    assert "PASSES" in zero[0] and "matched no test" in zero[0], zero
     shutil.rmtree(d)
 
 
