@@ -1338,6 +1338,17 @@ def test_structural_only_classifies_a_gate_finding():
         ["gate child exit 2 left no readable findings (JSONDecodeError: x)"]) is False
 
 
+def test_an_absolute_count_finding_is_structural():
+    """A criterion pinning an absolute count from `## Digest` charges
+    `structural_gate_failures`, not `plan_validation_attempts`."""
+    from pipeline.core.gate import structural_only
+
+    finding = ("acceptance criterion pins an absolute count copied from "
+               "`## Digest` (630): `tests/chz` suite: 630 passed -- state it "
+               "as a relation to a measured baseline")
+    assert structural_only([finding]) is True
+
+
 def test_a_gate_verdict_picks_its_result_string():
     """Only `plan-validation` splits `fail` into `bad-plan`: `revalidating`
     always gets `fail`, so a stale plan charges `stale_regate` (DEC-029) and

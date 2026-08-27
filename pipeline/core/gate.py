@@ -106,6 +106,7 @@ STRUCTURAL_MARKS = (
     "plan line names no declared file",
     "plan step names no declared file",
     "acceptance criterion names no test",
+    "acceptance criterion pins an absolute count",
 )
 
 
