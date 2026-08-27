@@ -435,9 +435,10 @@ def test_answer_and_reject_record_too():
     shutil.rmtree(state)
 
 
-def test_plan_prints_only_the_plan_and_acceptance_criteria():
+def test_plan_prints_the_plan_criteria_and_rollback():
     """The approval gate needs a decision, not a search through a ticket
-    file that can exceed 65KB."""
+    file that can exceed 65KB. Approving a plan approves its undo path too,
+    so the rollback must be in view alongside the plan."""
     d = Path(tempfile.mkdtemp())
     cli(d, "new", "t")
     path = d / ".project/tickets/TICKET-001.md"
@@ -445,13 +446,17 @@ def test_plan_prints_only_the_plan_and_acceptance_criteria():
     body = body.replace("## Plan\n\n", "## Plan\n\nmove the widget.\n\n")
     body = body.replace("## Acceptance criteria\n\n",
                          "## Acceptance criteria\n\nwidget moved.\n\n")
+    body = body.replace("## Rollback\n\n",
+                         "## Rollback\n\nput the widget back.\n\n")
     path.write_text(body)
     r = cli(d, "plan", "TICKET-001")
     assert r.returncode == 0, r.stderr
     assert "move the widget." in r.stdout
     assert "widget moved." in r.stdout
+    assert "put the widget back." in r.stdout
     assert "## Plan" in r.stdout
     assert "## Acceptance criteria" in r.stdout
+    assert "## Rollback" in r.stdout
     assert "## Summary" not in r.stdout
     assert "## Reproduction" not in r.stdout
     shutil.rmtree(d)

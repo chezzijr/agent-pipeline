@@ -66,7 +66,7 @@ pipeline --project ~/code/myproject new "cache leaks on evict"
 pipeline --project ~/code/myproject run       # dispatcher loop, no daemon; interactive stages run headless
 
 pipeline --project ~/code/myproject ls
-pipeline --project ~/code/myproject plan TICKET-001    # the plan and its acceptance criteria, nothing else
+pipeline --project ~/code/myproject plan TICKET-001    # the plan, its acceptance criteria and its rollback, nothing else
 pipeline --project ~/code/myproject approve TICKET-001   # -> revalidating, or -> merging from awaiting-merge
 pipeline --project ~/code/myproject reject  TICKET-001 "ignores cache invalidation"
 pipeline --project ~/code/myproject resume  TICKET-001 \

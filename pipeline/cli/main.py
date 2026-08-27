@@ -105,12 +105,25 @@ def cmd_gate(args) -> None:
     sys.exit(0 if ok else 1)
 
 
+# what the approval gate asks about: the plan, its criteria, its undo path
+PLAN_SECTIONS = ("Plan", "Acceptance criteria", "Rollback")
+
+
+def plan_text(t: Ticket) -> str:
+    """Render the sections an approval gate needs to see.
+
+    `Ticket.section()` strips the `## <name>` heading, so this prints it
+    back. The TUI's `awaiting-approval` pane renders this same string.
+    """
+    parts = []
+    for name in PLAN_SECTIONS:
+        body = t.section(name) or "(empty)"
+        parts.append(f"## {name}\n\n{body}")
+    return "\n\n".join(parts)
+
+
 def cmd_plan(args) -> None:
-    t = Ticket.find(proj(args), args.id)
-    print("## Plan\n")
-    print(t.section("Plan"))
-    print("\n## Acceptance criteria\n")
-    print(t.section("Acceptance criteria"))
+    print(plan_text(Ticket.find(proj(args), args.id)))
 
 
 def record(project: Path, t: Ticket, frm: str, result: str) -> None:
