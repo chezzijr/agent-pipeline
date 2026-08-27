@@ -137,6 +137,19 @@ def test_resume_refuses_reset_and_grant_on_one_counter():
     shutil.rmtree(d)
 
 
+def test_resume_has_no_way_to_attach_an_operator_note():
+    """`answer` refuses outside `needs-input`, so an escalated ticket being
+    resumed has nowhere for the operator's reasoning to go. `resume` should
+    accept `--note` the way `answer` accepts its text, but it does not."""
+    d = Path(tempfile.mkdtemp())
+    cli(d, "new", "t")
+    r = cli(d, "resume", "TICKET-001", "--stage", "planning",
+            "--note", "granted because the escalation was a flaky test")
+    assert r.returncode != 0, r.stdout
+    assert "unrecognized arguments" in r.stderr, r.stderr
+    shutil.rmtree(d)
+
+
 def test_start_and_run_help_explain_the_interactive_stage_difference():
     """A `mode: interactive` stage waits for a human under `start` (attach via
     `pipeline tui`) but runs headless under `run` (nothing can attach). Neither
