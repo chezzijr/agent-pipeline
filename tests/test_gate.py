@@ -140,6 +140,19 @@ def test_gate_blocks_a_test_that_already_passes():
     shutil.rmtree(d)
 
 
+def test_gate_distinguishes_a_selector_matching_nothing_from_a_real_pass():
+    """`test_one` exiting 0 without ever naming the test is a runner whose
+    filter matched zero tests, not a passing reproduction -- TICKET-064."""
+    d = project()
+    (d / ".project" / "pipeline.toml").write_text(
+        'test_one = "true"\ntest_suite = "true"\ntest_suite_without_new = "true"\n')
+    ok, failures = gate(d, "TICKET-001")
+    assert not ok
+    assert not any("PASSES -- it must fail before implementation" in f
+                   for f in failures), failures
+    shutil.rmtree(d)
+
+
 def test_gate_blocks_a_test_that_errors_instead_of_failing():
     """A missing dependency exits non-zero exactly like a real failure."""
     d = project()
