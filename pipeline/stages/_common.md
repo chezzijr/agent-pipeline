@@ -33,7 +33,7 @@ it is lost.
    are in the wrong tree.
    The one path under your working directory you must not write is its own
    `.project/tickets/` copy -- it is read-only, and a write there is lost work.
-6. Finish by writing the result file **at the exact absolute path given in
+6. Write the result file **at the exact absolute path given in
    your instructions** (your working directory is a git worktree, not the
    project root, so a relative path lands in the wrong tree):
 
@@ -43,6 +43,11 @@ summary: one line, what you did or why you stopped
 files_declared: []  # optional; files this ticket will touch
 test_file: null     # optional; triage only
 ```
+
+Write it as soon as your stage's work is done -- before you append your
+`## Thread` entry and rewrite `## Summary`. A stage killed at its spending cap
+loses whatever it had not written yet, and the sidecar is the one thing the
+dispatcher cannot reconstruct.
 
 This sidecar is your only channel for anything that belongs in the frontmatter.
 

@@ -95,6 +95,7 @@ def _norm(ev: dict) -> dict:
                 "usage": ev.get("usage") or {}, "modelUsage": ev.get("modelUsage") or {},
                 "permission_denials": ev.get("permission_denials") or [],
                 "stop_reason": ev.get("stop_reason"), "is_error": ev.get("is_error"),
+                "terminal_reason": ev.get("terminal_reason"),
                 "subtype": sub}
 
     if typ == "rate_limit_event":

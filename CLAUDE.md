@@ -265,6 +265,14 @@ still worth it: it prints one line per case, and the failure names the case.
   `unregister()` also refuse when `PIPELINE_STAGE` is set -- a guardrail, not
   a boundary, since the registry lives outside the worktree, the ticket's
   diff and `machine.FENCED` (TICKET-072).
+- **A budget kill is not a crash, and the stream says which it was.** Claude
+  Code's final `result` event carries `terminal_reason`, which
+  `--max-budget-usd` sets to `budget_exhausted`. `terminal_sink()` keeps it on
+  the child's record and `_finish()` escalates on the FIRST one, naming the
+  cap, instead of charging `no_result` and respawning into the identical
+  spend. An interactive stage emits no `result` event, so it is never
+  classified this way -- and it writes its `.result` LAST, because
+  `end_interactive()` SIGTERMs on the sidecar.
 
 ## Conventions
 
