@@ -73,6 +73,7 @@ pipeline --project ~/code/myproject resume  TICKET-001 \
     --stage planning --reset plan_validation_attempts
 pipeline --project ~/code/myproject resume  TICKET-001 \
     --stage planning --grant plan_validation_attempts   # hand back one spent attempt, not the whole budget
+pipeline --project ~/code/myproject resume  TICKET-001 --stage planning --note "the escalation was a flaky test"
 ```
 
 `init` also installs `.claude/skills/file-ticket/SKILL.md` -- the protocol a
@@ -389,6 +390,11 @@ Then one of three:
 `--reset` zeroes a counter; `--grant` hands back one spent attempt (`N` with
 `--grant counter=N`) and cannot return more than was spent. Naming the same
 counter in both is an error, not a merge.
+
+`--note` attaches your reasoning to the resume. It lands in `## Thread`
+attributed to you, as a kind the stage view never omits, so the stage you
+resume to reads it. `pipeline answer` refuses outside `needs-input`, which is
+why the note rides on `resume`.
 
 The bound that was hit lives in the dispatcher, never in a stage prompt:
 `BOUNDS[class][counter]` in `pipeline/core/machine.py`, which is 2 for `bugfix`

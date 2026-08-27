@@ -157,7 +157,30 @@ def test_resume_records_an_operator_note():
     t.save()
     view = stage_view(Ticket.load(t.path), "planning")
     assert "granted because the escalation was a flaky test" in view, view
+
+
+def test_resume_note_is_optional_and_may_not_be_empty():
+    d = Path(tempfile.mkdtemp())
+    cli(d, "new", "t")
+    r = cli(d, "resume", "TICKET-001", "--stage", "planning", "--note", "   ")
+    assert r.returncode != 0, r.stdout
+    assert "a note needs text" in r.stderr, r.stderr
+    t = Ticket.load(d / ".project/tickets/TICKET-001.md")
+    assert t.stage == "new"
+
+    r = cli(d, "resume", "TICKET-001", "--stage", "planning")
+    assert r.returncode == 0, r.stderr
+    t = Ticket.load(d / ".project/tickets/TICKET-001.md")
+    assert [e for e in t.thread() if e.kind == "answer"] == []
     shutil.rmtree(d)
+
+
+def test_resume_help_and_readme_name_the_note_flag():
+    r = subprocess.run([sys.executable, "-m", "pipeline", "resume", "--help"],
+                        cwd=ROOT, capture_output=True, text=True)
+    assert "--note" in r.stdout, r.stdout
+    readme = (Path(ROOT) / "README.md").read_text()
+    assert "resume  TICKET-001 --stage planning --note" in readme, readme
 
 
 def test_start_and_run_help_explain_the_interactive_stage_difference():
