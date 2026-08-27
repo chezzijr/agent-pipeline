@@ -135,7 +135,11 @@ pipeline projects                # is this repo registered
 `pipeline status` **exits 1 when no daemon is running** — that is its answer, not a
 failure. Read the line it prints, not the exit code.
 
-- Not registered → `pipeline register .` from the repo root
+- Not registered → `pipeline register .` from the repo root. It runs this
+  project's `test_suite` once and probes `test_one` with a selector that
+  matches nothing, then refuses when the suite cannot run at all or when
+  `test_one` exits 0 on that probe; fix `.project/pipeline.toml` (the
+  `pipeline-config` skill teaches how) or pass `--force` for a slow suite.
 - Daemon down → `pipeline run` (this project, in your terminal; `--once` drains the
   queue and exits) or `pipeline start` (detached, every registered project).
   **They differ where it matters:** `planning` is `mode: interactive`, so under the

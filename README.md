@@ -126,7 +126,7 @@ working after you close the terminal, and it records what happened to an event
 database under your state directory (see *Where it keeps things*).
 
 ```sh
-pipeline register ~/code/myproject   # one path per line in the registry file
+pipeline register ~/code/myproject   # runs its test_suite and probes test_one first
 pipeline start                       # spawns pipelined, detached; interactive stages need `pipeline tui` attached
 pipeline status                      # is it running, and how many projects
 pipeline ls                          # every registered project's tickets
@@ -139,6 +139,14 @@ pipeline unregister ~/code/myproject
 `.project/` and the daemon would then tick a ticket's own checkout as a
 second project. `register`/`unregister` also refuse when `PIPELINE_STAGE` is
 set, because the registry is operator state.
+
+`register` also refuses a project whose test commands are wrong, because
+every ticket filed against it would die at the gate instead. `test_suite`
+must run at all: the shell must find the command, and the runner must run
+something. `test_one` must exit non-zero when its selector matches no test,
+which is the one thing `gate()` cannot tell from a runner's output. A suite
+that runs and reports failures still registers. `pipeline register --force
+<path>` skips both checks, which is what a slow suite wants.
 
 `pipelined` itself stays a raw foreground process, so `systemd --user`, `launchd`
 or tmux can supervise it; `pipeline start` is just a convenience wrapper. There is
