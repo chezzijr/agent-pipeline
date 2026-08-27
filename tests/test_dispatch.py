@@ -1425,3 +1425,41 @@ def test_a_tier_b_rejection_charges_the_plan_not_the_structural_counter():
     assert t.counters["plan_validation_attempts"] == 1
     assert "structural_gate_failures" not in t.counters
     shutil.rmtree(d, ignore_errors=True)
+
+
+def test_a_budget_kill_is_charged_and_retried_exactly_like_a_crash():
+    """A stage terminated by `--max-budget-usd` writes no `.result` sidecar,
+    so `_finish()` cannot tell it apart from a harness that crashed: both
+    fall into the `no_result` branch, both respawn, and the escalation
+    message never names the cap. Expected (TICKET-077): a budget kill is its
+    own outcome with its own counter, not a blind retry into the same spend."""
+    d = project()
+    path = d / ".project/tickets/TICKET-001.md"
+    snap = Ticket.load(path)
+
+    log = d / ".project" / "logs" / "TICKET-001.log"
+    log.parent.mkdir(parents=True, exist_ok=True)
+
+    def rec():
+        return {"fh": log.open("w"), "prompt": d / "gone.md", "settings": None,
+                "path": path, "tid": "TICKET-001", "stage": "plan-validation",
+                "session": "s1", "log": log, "wt": d, "meta": snap,
+                "before": None, "terminal_reason": "budget_exhausted"}
+
+    # first respawn: charged to no_result, no mention of the cap it hit
+    supervisor.finish(d, rec())
+    t = Ticket.load(path)
+    assert t.counters.get("no_result") == 1
+    assert "budget" not in t.thread()[-1].text.lower(), \
+        "a budget kill is already being classified -- reproduction is stale"
+
+    # second respawn hits the shared MAX_ATTEMPTS bound and escalates as if
+    # the harness had crashed twice, identical spend and all
+    supervisor.finish(d, rec())
+    t = Ticket.load(path)
+    assert t.stage == "escalated"
+    msg = t.thread()[-1].text
+    assert "budget" in msg.lower(), (
+        "escalation must name the cap a budget-killed stage hit, not read "
+        f"like a crash: {msg!r}")
+    shutil.rmtree(d, ignore_errors=True)
