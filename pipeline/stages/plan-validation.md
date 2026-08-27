@@ -35,4 +35,16 @@ fail.
 Do not comment on code style or conventions. That is the review stage's job,
 and raising it here turns you into a prose nitpicker.
 
-`result`: `ok` (all items pass) | `fail` (append per-item findings first; the dispatcher records it as `bad-plan`)
+You are read-only, so the guard blocks any command substitution you might try
+to test your own reasoning. If a project needs you to run a specific
+read-only command, ask the human to add it to `[readonly] allow` in
+`.project/pipeline.toml` -- do not try to work around the guard.
+
+If an item cannot be measured -- every probe you have was blocked, or none
+exists -- mark it `unverified` and say what you would have run. An
+`unverified` item is not a scored finding against the plan: it does not turn
+an otherwise-passing item into a `fail`. State it separately from your
+per-item findings so the human sees what rests on documented semantics alone,
+not on something you checked.
+
+`result`: `ok` (all items pass; `unverified` items do not count against this) | `fail` (append per-item findings first; the dispatcher records it as `bad-plan`)
