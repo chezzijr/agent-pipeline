@@ -1168,9 +1168,11 @@ def shut_down(project: Path, inflight: dict) -> None:
 def _start_cap(project: Path, max_parallel: int) -> int:
     """A project's `max_parallel` lowers the daemon `-j`, it never raises it.
 
-    `project_max_parallel()` can raise on a bad value, and this is the only
-    place that call happens: `tick()` must not raise it onward. `run()`
-    (`pipeline/daemon/supervisor.py:1326`) does not wrap its `tick()` call, so
+    `project_max_parallel()` can raise `PipelineError` on a bad value, and
+    `project_config()` underneath it can also raise `tomllib.TOMLDecodeError`
+    (a `ValueError`) on a malformed `.project/pipeline.toml`. This is the only
+    place that call happens: `tick()` must not raise either onward. `run()`
+    (`pipeline/daemon/supervisor.py:1352`) does not wrap its `tick()` call, so
     a raise there would reach `finally: shut_down(project, inflight)` and
     SIGTERM every inflight child. A bad value is printed and ignored instead,
     falling back to `max_parallel` -- exactly the behaviour before this key
@@ -1178,7 +1180,7 @@ def _start_cap(project: Path, max_parallel: int) -> int:
     """
     try:
         cap = project_max_parallel(project)
-    except PipelineError as e:
+    except (PipelineError, ValueError) as e:
         print(f"  {project}: ignoring max_parallel ({e})")
         return max_parallel
     if cap is None:

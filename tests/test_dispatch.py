@@ -660,6 +660,30 @@ def test_a_bad_project_max_parallel_never_leaves_tick(capsys):
     shutil.rmtree(d, ignore_errors=True)
 
 
+def test_a_malformed_project_pipeline_toml_never_leaves_tick(capsys):
+    """A committed `.project/pipeline.toml` that fails to parse must not raise
+    out of `tick()` -- `project_config()` raises `tomllib.TOMLDecodeError`
+    (a `ValueError`, not a `PipelineError`), and `run()`'s bare `tick()` call
+    does not wrap it, so an unhandled raise would SIGTERM every inflight
+    child via `shut_down()`."""
+    d, sh = git_project()
+    (d / ".project" / "pipeline.toml").write_text('[[[bad')
+    sh("git add -A && git commit -qm 'break pipeline.toml'")
+    for n, fname in (("001", "thing.py"), ("002", "other.py")):
+        (d / f".project/tickets/TICKET-{n}.md").write_text(
+            FIXTURE.replace("stage: plan-validation", "stage: triage")
+            .replace("id: TICKET-001", f"id: TICKET-{n}")
+            .replace("branch: ticket/001", f"branch: ticket/{n}")
+            .replace("files_declared: [thing.py]", f"files_declared: [{fname}]"))
+
+    inflight = {}
+    supervisor.tick(d, harness("fake"), inflight, 3)  # must not raise
+    out = capsys.readouterr().out
+    assert "ignoring max_parallel" in out
+    assert "start failed" in out
+    shutil.rmtree(d, ignore_errors=True)
+
+
 def test_two_tickets_never_merge_in_the_same_tick():
     """Both would `git merge base` against the same base; the first
     `--ff-only` to land moves base, and the second -- a fully verified,
