@@ -174,6 +174,23 @@ def test_gate_distinguishes_a_selector_matching_nothing_from_a_real_pass():
     shutil.rmtree(d)
 
 
+def test_gate_reports_a_pytest_style_pass_as_a_pass_not_a_bad_selector():
+    """TICKET-071: pytest names a node only when it FAILS -- a genuine pass
+    prints a dot and a count, never the node name. `code == 0 and node in out`
+    is false for every real pass, so the gate falls into the TICKET-064
+    branch and calls it a selector matching nothing, which is the wrong
+    diagnosis for a project like this one."""
+    d = project()
+    (d / ".project" / "pipeline.toml").write_text(
+        'test_one = "echo \'.                                    [100%]\'; '
+        'echo \'1 passed in 0.03s\'; exit 0"\n'
+        'test_suite = "true"\ntest_suite_without_new = "true"\n')
+    ok, failures = gate(d, "TICKET-001")
+    assert not ok
+    assert not any("selector matched nothing" in f for f in failures), failures
+    shutil.rmtree(d)
+
+
 def test_gate_blocks_a_test_that_errors_instead_of_failing():
     """A missing dependency exits non-zero exactly like a real failure."""
     d = project()
