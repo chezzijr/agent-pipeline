@@ -23,6 +23,17 @@ FILES_PER_ATTEMPT = 4
 # the largest plan this repo has produced (24 steps, 10 files), which
 # converged on its fifth planning run.
 BOUND_CEILING = 5
+# The three review stages spawn with a `max_usd` that grows one dollar per 4
+# declared files or per 8 plan steps, whichever is larger. A $4 review cap
+# covered ten small tickets on 2026-08-27 and was exhausted by the one
+# 677-line, 15-file diff, killing the stage mid-verdict. The ceiling is
+# twice the stage's own number, so one runaway diff cannot buy an unbounded
+# spend. Every other stage stays out of `USD_SCALED` until evidence says
+# otherwise.
+USD_SCALED = {"review", "quick-review", "holistic-review"}
+USD_FILES_PER_DOLLAR = 4
+USD_STEPS_PER_DOLLAR = 8
+USD_CEILING_FACTOR = 2
 TERMINAL = {"done", "rejected", "escalated"}
 HUMAN_GATES = {"awaiting-approval", "needs-input", "awaiting-merge"}
 # The nine things `CLAUDE.md` fences off from unattended merge, path to symbol
@@ -76,6 +87,19 @@ def bound_for(klass: str, key: str, counters: dict) -> int:
     return min(base + max(_size(counters, "plan_steps") // STEPS_PER_ATTEMPT,
                            _size(counters, "plan_files") // FILES_PER_ATTEMPT),
                BOUND_CEILING)
+
+
+def cap_for(base, counters: dict):
+    """A stage's dollar cap, scaled by plan size the way `bound_for()` scales
+    an attempt budget. Empty `counters` means no scaling -- `cap_config()` in
+    `pipeline/core/config.py` decides which spawns get a non-empty one."""
+    if not isinstance(counters, dict) or not counters:
+        return base
+    if not isinstance(base, (int, float)) or isinstance(base, bool):
+        return base
+    return min(base + max(_size(counters, "plan_steps") // USD_STEPS_PER_DOLLAR,
+                           _size(counters, "plan_files") // USD_FILES_PER_DOLLAR),
+               base * USD_CEILING_FACTOR)
 
 
 def transition(stage: str, result: str, counters: dict, klass: str = "bugfix"):

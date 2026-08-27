@@ -249,6 +249,19 @@ def test_plan_validation_budget_ignores_the_plans_size():
     assert huge["plan_validation_attempts"] == 5
 
 
+def test_cap_for_scales_with_plan_size_and_stops_at_the_ceiling():
+    """`cap_for()` mirrors `bound_for()`, but for a stage's dollar cap
+    instead of an attempt budget (DEC-047's model, TICKET-078)."""
+    assert M.cap_for(4, {}) == 4
+    assert M.cap_for(4, {"plan_files": 8}) == 6
+    assert M.cap_for(4, {"plan_files": 15, "plan_steps": 40}) == 8
+    assert M.cap_for(4, {"plan_files": 4000}) == 8, "the ceiling is the point"
+    assert M.cap_for(4, {"plan_files": "many"}) == 4, \
+        "a hostile counter reads as 0"
+    assert M.cap_for(0, {"plan_files": 15}) == 0, \
+        "a harness with no cap flag keeps its 0"
+
+
 def test_a_structural_gate_failure_charges_its_own_counter():
     """A purely structural Tier A failure charges `structural_gate_failures`,
     never `plan_validation_attempts`: the budget for bad plans stays untouched
