@@ -112,6 +112,27 @@ def test_gate_blocks_a_plan_of_prose():
     shutil.rmtree(d)
 
 
+def test_a_purely_structural_gate_failure_does_not_charge_a_plan_validation_attempt():
+    """TICKET-065: a prose line above the numbered step fails Tier A on
+    format alone -- the gate never judges the plan's content. `files_declared`
+    is cited, so `_dedupe`'s only finding is the structural one; the gate never
+    even reaches a substantive check. Charging `plan_validation_attempts` for
+    this is charging the ticket for a typo, not a bad plan."""
+    d = project(FIXTURE.replace(
+        "## Plan\n1. fix thing.py\n",
+        "## Plan\nDEC-003 sets the commit structure for thing.py: tests first.\n"
+        "1. fix thing.py\n"))
+    ok, failures = gate(d, "TICKET-001")
+    assert not ok
+    real = [f for f in failures if not f.startswith("ok:")]
+    assert all("is not a numbered step" in f for f in real), real
+    nxt, counters = transition("plan-validation", "fail", {})
+    assert counters.get("plan_validation_attempts", 0) == 0, (
+        "a structural-only gate failure charged plan_validation_attempts: "
+        f"{counters}")
+    shutil.rmtree(d)
+
+
 def test_gate_blocks_a_plan_step_citing_an_undeclared_path():
     d = project(FIXTURE.replace("1. fix thing.py", "1. fix other.py"))
     ok, failures = gate(d, "TICKET-001")
