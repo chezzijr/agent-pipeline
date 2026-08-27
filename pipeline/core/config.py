@@ -95,6 +95,22 @@ def project_config(project: Path) -> dict:
     return tomllib.loads(text)
 
 
+TEST_PLACEHOLDER_RE = re.compile(r"\{(test|path|name)\}")
+
+
+def format_test_cmd(template: str, test: str) -> str:
+    """Substitute `{test}`, `{path}` and `{name}` in a project test command.
+
+    `test` is the ticket's whole `test_file` value (`<path>::<name>`), and
+    every substitution is `shlex.quote`d, exactly as the single `{test}`
+    was. Only these three names are touched: `str.format` raised
+    `KeyError: 't##*'` on a literal `${t##*::}`, and `test_suite` was never
+    formatted at all, so any other brace must reach the shell as written.
+    """
+    parts = {"test": test, "path": test.split("::")[0], "name": test.split("::")[-1]}
+    return TEST_PLACEHOLDER_RE.sub(lambda m: shlex.quote(parts[m.group(1)]), template)
+
+
 def harness(name: str = "claude-code") -> dict:
     p = HARNESSES_DIR / f"{name}.toml"
     if not p.is_file():
