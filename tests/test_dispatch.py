@@ -1338,6 +1338,36 @@ def test_structural_only_classifies_a_gate_finding():
         ["gate child exit 2 left no readable findings (JSONDecodeError: x)"]) is False
 
 
+def test_unmatchable_names_only_tokens_that_cannot_recur():
+    """The detector fires on a temp path, a pid inside one, an object address
+    and a trailing ellipsis; it stays silent on an exit status, a hex
+    constant, a project path and an ordinary error (TICKET-076)."""
+    from pipeline.core.gate import unmatchable
+
+    assert unmatchable("registered /tmp/tmpn7w0imby") is not None
+    assert unmatchable("names the unreadable subdir /tmp/chz_w8_39_2424171/sub") is not None
+    assert unmatchable("<Cache object at 0x7f3a2b1c9d50>") is not None
+    assert unmatchable('got: [CheckError { message: x, ...') is not None
+
+    assert unmatchable("exit status 137") is None
+    assert unmatchable("0xdeadbeef is wrong") is None
+    assert unmatchable("no such file: .project/pipeline.toml") is None
+    assert unmatchable("KeyError: 'evict'") is None
+
+
+def test_an_unmatchable_expect_finding_is_structural():
+    """The new finding must be classified structural, or a malformed
+    `expect:` line charges `plan_validation_attempts` like a bad plan
+    instead of `structural_gate_failures` (TICKET-076, DEC-065)."""
+    from pipeline.core.gate import UNMATCHABLE_MARK, structural_only
+
+    assert structural_only(
+        [UNMATCHABLE_MARK + ": 'x' is a path under the system temp dir"]) is True
+    assert structural_only(
+        ["`t.py::x` fails, but its output does not mention the expected "
+         "string 'y'"]) is False
+
+
 def test_a_gate_verdict_picks_its_result_string():
     """Only `plan-validation` splits `fail` into `bad-plan`: `revalidating`
     always gets `fail`, so a stale plan charges `stale_regate` (DEC-029) and
