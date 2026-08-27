@@ -119,6 +119,11 @@ still worth it: it prints one line per case, and the failure names the case.
   all. A committed edit lands in the ticket's diff, and
   `.project/pipeline.toml` is in `machine.FENCED`, so it parks at
   `awaiting-merge`.
+- **`-j` is already per project, not machine-wide.** `serve()` passes
+  `states[key]`, one inflight dict per project, so `max_parallel` in
+  `.project/pipeline.toml` only lowers it -- neither number bounds the
+  machine across projects. A bad value is printed and ignored, because a
+  raise from `tick()` would kill `run()`.
 - **`--add-dir` is inert under `bypassPermissions`** (headless spawns run under
   it) -- the guard's path rule is what confines a stage, not this flag. A
   read-only stage's baseline is two snapshots: `tree_snapshot(wt)` plus

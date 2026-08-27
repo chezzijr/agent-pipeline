@@ -277,6 +277,16 @@ is never hidden.
 
     pipeline --project ~/code/myproject run -j 4
 
+A project can lower that number further in `.project/pipeline.toml`:
+
+```toml
+max_parallel = 1
+```
+
+The dispatcher uses the smaller of `-j` and that key for this project's
+tickets. The key is read from HEAD, so a ticket branch cannot raise its own
+cap.
+
 Each ticket gets its own git worktree under `.worktrees/<ID>`, created from
 `base` and removed when the ticket reaches a terminal stage. Two tickets cannot
 share one checkout, which is why worktrees and parallelism arrive together.

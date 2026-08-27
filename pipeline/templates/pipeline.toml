@@ -25,6 +25,11 @@ test_suite_without_new  = "pytest --deselect {test}"
 # The branch tickets are cut from, and the one Tier A re-runs {test} against.
 base                    = "main"
 
+# Lowers the daemon's -j for this project's tickets only; it never raises it.
+# A project with no key leaves -j alone. A value below 1 is reported and
+# ignored, and -j stands.
+# max_parallel = 1
+
 # Per-project stage overrides. A [stages.<name>] table is merged shallow onto
 # that stage's packaged frontmatter -- a key here replaces the packaged one,
 # it does not extend it (a `skills` list included).

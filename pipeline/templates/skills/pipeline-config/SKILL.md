@@ -80,6 +80,6 @@ parked on it while the dispatcher runs, or `merging` refuses to land.
 
 ## The rest of the file
 
-`[stages.<name>]`, `[mcp.<name>]` and `[readonly] allow` are documented in the
-comments of `.project/pipeline.toml` itself. Read them there rather than
-inventing keys — an unknown key is silently ignored.
+`[stages.<name>]`, `[mcp.<name>]`, `[readonly] allow` and `max_parallel` are
+documented in the comments of `.project/pipeline.toml` itself. Read them there
+rather than inventing keys — an unknown key is silently ignored.
