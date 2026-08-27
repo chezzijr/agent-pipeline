@@ -215,6 +215,21 @@ def test_gate_blocks_a_test_that_errors_instead_of_failing():
     shutil.rmtree(d)
 
 
+def test_gate_distinguishes_a_suite_that_could_not_run_from_pre_existing_breakage():
+    """A syntax error in the suite command exits non-zero without running any
+    test -- TICKET-074. `gate()` must not report that as pre-existing
+    breakage in the project's own tests."""
+    d = project()
+    (d / ".project" / "pipeline.toml").write_text(
+        'test_one = "echo test_broken; exit 1"\n'
+        'test_suite = "true"\n'
+        'test_suite_without_new = "sh -c \'if ; then\'"\n')
+    ok, failures = gate(d, "TICKET-001")
+    assert not ok
+    assert not any("RED -- pre-existing breakage" in f for f in failures), failures
+    shutil.rmtree(d)
+
+
 def test_gate_blocks_empty_files_declared():
     d = project(FIXTURE.replace("files_declared: [thing.py]", "files_declared: []"))
     ok, failures = gate(d, "TICKET-001")
