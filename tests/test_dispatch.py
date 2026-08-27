@@ -1061,6 +1061,25 @@ def test_a_project_override_reaches_the_spawned_command_and_prompt():
     assert "EXTRA-MARKER-4471" in recorded["text"]
 
 
+def test_spawn_threads_the_tickets_counters_into_the_review_cap():
+    """A review spawn's cap grows with the plan it has to read, and
+    `rec["cap"]` -- the number `_finish()` names in a budget-kill escalation
+    -- must carry the same scaled number `render()` used."""
+    d = project(FIXTURE.replace("stage: plan-validation", "stage: review")
+                .replace("counters: {}", "counters: {plan_files: 15, plan_steps: 40}"))
+    rec = supervisor.spawn(d, d, "TICKET-001", "review", harness("fake"))
+    rec["proc"].wait()
+    supervisor.close_child(rec)
+    assert rec["cap"] == 8, \
+        "spawn() did not scale the 4 dollar review cap by the ticket plan size"
+
+    d2 = project()
+    rec2 = supervisor.spawn(d2, d2, "TICKET-001", "review", harness("fake"))
+    rec2["proc"].wait()
+    supervisor.close_child(rec2)
+    assert rec2["cap"] == 4, "an empty counters map must not scale the cap"
+
+
 def test_a_ticket_held_at_merging_is_rebased_before_the_merge_is_attempted():
     """TICKET-045: `revalidating` rebases a ticket onto base once, right after
     approval. Nothing rebases it again. `files_conflict` and `start()`'s merge
