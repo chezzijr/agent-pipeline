@@ -321,6 +321,19 @@ def test_a_wrapped_criterion_naming_no_test_anywhere_still_fails():
     shutil.rmtree(d)
 
 
+def test_gate_blocks_a_criterion_pinning_an_absolute_count_from_the_digest():
+    """TICKET-081: a criterion that copies an absolute total out of `## Digest`
+    goes stale the moment a sibling ticket or this ticket's own change moves
+    that total. The gate has no check for this shape yet."""
+    d = project(_set_digest("- thing.py holds it\n- 630 passed in tests/chz\n"
+                             "- eviction runs on write, not read\n").replace(
+        "- `test_broken` passes",
+        "- `test_broken` passes\n- `tests/chz` suite: 630 passed"))
+    ok, failures = gate(d, "TICKET-001")
+    assert not ok and any("absolute count" in f for f in failures), failures
+    shutil.rmtree(d)
+
+
 def test_a_top_level_fence_in_acceptance_criteria_is_not_read_as_criteria():
     """A fence at column 0 under `## Acceptance criteria` is quoted output,
     not a list of criteria -- its lines are skipped with no finding."""
