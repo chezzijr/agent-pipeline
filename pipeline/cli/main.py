@@ -12,7 +12,7 @@ from pathlib import Path
 from pipeline.cli import metrics
 from pipeline.cli.client import connect
 from pipeline.core import PipelineError, line_buffer_stdout
-from pipeline.core.config import CONFIG_TEMPLATE, SKILLS_DIR, TICKET_TEMPLATE
+from pipeline.core.config import CONFIG_TEMPLATE, SKILLS_DIR, TICKET_TEMPLATE, selector_failure, suite_failure
 from pipeline.core.gate import gate
 from pipeline.core.machine import KNOWN_STAGES
 from pipeline.core.ticket import Ticket, now, tickets_dir
@@ -303,7 +303,25 @@ def cmd_ls(args) -> None:
 
 # -- the registry -------------------------------------------------------
 def cmd_register(args) -> None:
-    print(f"registered {registry.register(Path(args.path))}")
+    # a project whose test commands are wrong registers clean otherwise,
+    # and every ticket filed against it then dies at the gate reporting a
+    # different symptom of the one broken config
+    #
+    # `check()` first: it holds DEC-072's `PIPELINE_STAGE` and worktree
+    # refusals, and a stage running `pipeline register .` must get that
+    # error rather than a run of the project's suite
+    path = registry.check(Path(args.path))
+    if args.force:
+        print("--force: registering without checking this project's test commands")
+    else:
+        print("checking this project's test commands (--force skips this)")
+        # `test_suite` first: the reproduction test asserts its message
+        # wins over `test_one`'s, and `or` skips the second command once
+        # the first has already refused
+        problem = suite_failure(path) or selector_failure(path)
+        if problem:
+            raise PipelineError(problem)
+    print(f"registered {registry.register(path)}")
 
 
 def cmd_unregister(args) -> None:
@@ -570,7 +588,7 @@ def main() -> None:
     p = sub.add_parser("ls", help="tickets (via the daemon if one is running)"); p.add_argument("-v", "--verbose", action="store_true"); p.set_defaults(fn=cmd_ls)
     p = sub.add_parser("status", help="is the daemon running"); p.set_defaults(fn=cmd_daemon_status)
     p = sub.add_parser("tui", help="watch and steer running stages"); p.set_defaults(fn=cmd_tui)
-    p = sub.add_parser("register"); p.add_argument("path", nargs="?", default="."); p.set_defaults(fn=cmd_register)
+    p = sub.add_parser("register"); p.add_argument("path", nargs="?", default="."); p.add_argument("--force", action="store_true", help="register without running the project's test commands"); p.set_defaults(fn=cmd_register)
     p = sub.add_parser("unregister"); p.add_argument("path", nargs="?", default="."); p.set_defaults(fn=cmd_unregister)
     p = sub.add_parser("projects"); p.set_defaults(fn=cmd_projects)
     p = sub.add_parser("start", help="start the one daemon (interactive stages wait at `pipeline tui`)", description=START_DESC); p.add_argument("--interval", type=int, default=10); p.add_argument("--harness", default="claude-code"); p.add_argument("-j", "--max-parallel", type=int, default=3); p.set_defaults(fn=cmd_start)
