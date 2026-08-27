@@ -14,7 +14,7 @@ from pathlib import Path
 
 from pipeline.core import PipelineError
 from pipeline.core.ticket import split_frontmatter
-from pipeline.core.worktree import head_file
+from pipeline.core.worktree import head_file, run_cmd
 
 PKG = Path(__file__).resolve().parent.parent
 STAGES_DIR = PKG / "stages"
@@ -109,6 +109,54 @@ def format_test_cmd(template: str, test: str) -> str:
     """
     parts = {"test": test, "path": test.split("::")[0], "name": test.split("::")[-1]}
     return TEST_PLACEHOLDER_RE.sub(lambda m: shlex.quote(parts[m.group(1)]), template)
+
+
+# `suite_failure`, not `test_suite_failure`, and `project_test_cmd`, not
+# `test_command`: pytest collects every module-level name matching
+# `test*`, including one a test module imported, and would run these as
+# tests it cannot supply `project` for -- `fixture 'project' not found`.
+SHELL_CANNOT_RUN = {126: "the shell found it but could not execute it",
+                    127: "the shell could not find it"}
+# `pytest` exits 5 and prints this when it collected nothing -- what the
+# packaged default `test_suite = "pytest"` does in a repo that is not a
+# Python one. A collection error prints it too, and exits 2.
+NO_TESTS_RE = re.compile(r"no tests ran|no tests were run|collected 0 items")
+
+
+def project_test_cmd(project: Path, key: str) -> str:
+    """The project's `key` command. Raises `PipelineError` when the config
+    has no usable one; `project_config()` raises before that for a project
+    with no config at all, naming `pipeline init`."""
+    cmd = project_config(project).get(key)
+    if not isinstance(cmd, str) or not cmd.strip():
+        raise PipelineError(f"{project}: `.project/pipeline.toml` has no `{key}` -- "
+                            f"the dispatcher would have no command to run")
+    return cmd
+
+
+def suite_failure(project: Path) -> str | None:
+    """`None` when the project's `test_suite` can run; the refusal message
+    when it cannot run at all.
+
+    A suite that ran and reported failures returns `None`: that is the
+    normal state of a project with an open bug, and it is what a ticket is
+    filed against. Only two things count as cannot-run -- the shell's own
+    126 and 127, and a non-zero exit whose output says nothing ran.
+
+    Substituted with `format_test_cmd(cmd, "")`, matching
+    `supervisor.py`'s `t.test_file or ""` for a ticket with no test file.
+    """
+    cmd = format_test_cmd(project_test_cmd(project, "test_suite"), "")
+    code, out = run_cmd(cmd, project)
+    reason = SHELL_CANNOT_RUN.get(code)
+    if reason is None and code != 0 and NO_TESTS_RE.search(out):
+        reason = "it ran no tests"
+    if reason is None:
+        return None
+    return (f"{project}: `test_suite` cannot run -- `{cmd}`: {reason} "
+            f"(exit {code})\n{out.strip()[-1200:]}\n"
+            f"fix `test_suite` in {project}/.project/pipeline.toml, or "
+            f"`pipeline register --force {project}` to register anyway")
 
 
 def harness(name: str = "claude-code") -> dict:

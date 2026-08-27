@@ -4,7 +4,7 @@ import tempfile
 from pathlib import Path
 
 from pipeline.core import PipelineError
-from pipeline.core.config import format_test_cmd, project_config, stage_extra
+from pipeline.core.config import format_test_cmd, project_config, stage_extra, suite_failure
 from tests.helpers import git_project
 
 
@@ -75,3 +75,29 @@ def test_format_test_cmd_leaves_other_braces_untouched():
     cmd = """awk '{print $1}' && cargo test -- --skip "${t##*::}" {name}"""
     assert format_test_cmd(cmd, "tests/f.rs::t_a") == (
         """awk '{print $1}' && cargo test -- --skip "${t##*::}" t_a""")
+
+
+def _probe_project(test_one="false", test_suite="true"):
+    """A throwaway project. It is not a git repo, so `project_config()`
+    takes its disk fallback (DEC-037)."""
+    d = Path(tempfile.mkdtemp())
+    (d / ".project").mkdir()
+    (d / ".project" / "pipeline.toml").write_text(
+        'test_one = "%s"\ntest_suite = "%s"\n'
+        'test_suite_without_new = "true"\n' % (test_one, test_suite))
+    return d
+
+
+def test_suite_failure_tells_a_broken_command_from_a_red_suite():
+    """A suite that runs and fails is the normal state of a project with an
+    open bug and must register. Only a suite that cannot run is refused."""
+    missing = suite_failure(_probe_project(test_suite="pipeline-068-nonexistent-command-xyz"))
+    assert missing and "pipeline-068-nonexistent-command-xyz" in missing
+    assert "exit 127" in missing
+    nothing = suite_failure(_probe_project(test_suite="echo no tests ran; exit 5"))
+    assert nothing and "ran no tests" in nothing
+    assert suite_failure(_probe_project(test_suite="echo 1 failed; exit 1")) is None
+    assert suite_failure(_probe_project(test_suite="true")) is None
+    # DEC-067: `test_suite` has never been `str.format`ed, so a literal
+    # brace must reach the shell instead of raising
+    assert suite_failure(_probe_project(test_suite="echo ${t##*::} ok")) is None
