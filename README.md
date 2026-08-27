@@ -250,6 +250,10 @@ rather than idle, and the pane keeps the last answer the daemon gave for
 them; `pipeline ls` prints `-- no daemon: running/mode unknown for these
 rows` once above such a listing.
 
+A ticket parked at `awaiting-approval` opens on its plan -- `## Plan`,
+`## Acceptance criteria` and `## Rollback`, the same three sections
+`pipeline plan` prints -- with `-- stage log --` and the stage log below it.
+
 Select a ticket running an **interactive** stage and the right pane becomes
 that stage's live terminal instead: it `attach`es on the subscription's
 connection, seeds from the daemon's `screen` snapshot and paints the `pty`
