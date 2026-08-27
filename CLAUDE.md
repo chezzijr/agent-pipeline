@@ -168,6 +168,13 @@ still worth it: it prints one line per case, and the failure names the case.
   file on disk is unchanged and stays the protocol. A stage that reads
   the whole file to make an edit undoes the saving -- `_common.md`
   rule 4 is what stops it.
+- **`Ticket.save()` writes two destinations.** The main checkout's file, and a
+  `0444` mirror at `<worktree>/.project/tickets/<id>.md`, marked
+  `git update-index --skip-worktree` in the worktree's own index. Without the
+  mirror, the worktree copy is the branch-cut snapshot, and `implementing`
+  reads its own prompt as fabricated (TICKET-067). Without the mark, a write
+  there leaves the worktree dirty, and `merging`'s rebase fails with
+  `error: cannot rebase: You have unstaged changes.`
 - **`gate()` quotes each distinct output once and references the rest.** A
   re-gate re-runs the same test against the same code, so its fence is
   byte-identical to one the thread already holds, and `_dedupe()` replaces
