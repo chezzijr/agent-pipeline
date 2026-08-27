@@ -159,6 +159,41 @@ def suite_failure(project: Path) -> str | None:
             f"`pipeline register --force {project}` to register anyway")
 
 
+# The selector `selector_failure()` probes `test_one` with: a path and a
+# name no project has. A runner that reports success for this cannot tell
+# `gate()` that a real selector matched nothing either.
+PROBE_TEST = ("pipeline_register_probe_no_such_file.py"
+              "::pipeline_register_probe_no_such_test")
+
+
+def selector_failure(project: Path) -> str | None:
+    """`None` when the project's `test_one` exits non-zero for a selector
+    that matches no test; the refusal message when it does not.
+
+    `gate()` cannot tell `the test passed` from `the selector matched
+    nothing` by reading output -- `pytest` prints `1 passed` and never the
+    node name. The project's command knows its own runner and can tell, so
+    the requirement is checked here, once, at `register`.
+
+    Substituted with `format_test_cmd()`, the one substitution the four
+    dispatcher call sites use (DEC-067). It quotes `{test}`, `{path}` and
+    `{name}` itself and never raises on any other brace.
+    """
+    probe = format_test_cmd(project_test_cmd(project, "test_one"), PROBE_TEST)
+    code, out = run_cmd(probe, project)
+    reason = SHELL_CANNOT_RUN.get(code)
+    if reason is None and code == 0:
+        reason = "it exited 0 -- `gate()` would read that as `the test PASSES`"
+    if reason is None:
+        return None
+    return (f"{project}: `test_one` must exit non-zero when its selector "
+            f"matches no test -- probed with `{PROBE_TEST}`, ran `{probe}`: "
+            f"{reason} (exit {code})\n{out.strip()[-1200:]}\n"
+            f"make `test_one` fail when its filter matches nothing (the "
+            f"`pipeline-config` skill shows how), or "
+            f"`pipeline register --force {project}` to register anyway")
+
+
 def harness(name: str = "claude-code") -> dict:
     p = HARNESSES_DIR / f"{name}.toml"
     if not p.is_file():

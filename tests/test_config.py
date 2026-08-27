@@ -4,7 +4,7 @@ import tempfile
 from pathlib import Path
 
 from pipeline.core import PipelineError
-from pipeline.core.config import format_test_cmd, project_config, stage_extra, suite_failure
+from pipeline.core.config import format_test_cmd, project_config, selector_failure, stage_extra, suite_failure
 from tests.helpers import git_project
 
 
@@ -101,3 +101,20 @@ def test_suite_failure_tells_a_broken_command_from_a_red_suite():
     # DEC-067: `test_suite` has never been `str.format`ed, so a literal
     # brace must reach the shell instead of raising
     assert suite_failure(_probe_project(test_suite="echo ${t##*::} ok")) is None
+
+
+def test_selector_failure_wants_test_one_to_fail_when_it_matches_nothing():
+    """`gate()` cannot tell `the test passed` from `the selector matched
+    nothing` by reading output: a runner may name a test only when it
+    fails. The project's own command knows its runner and can tell."""
+    passes = selector_failure(_probe_project(test_one="true"))
+    assert passes and "exited 0" in passes
+    assert "pipeline_register_probe_no_such_test" in passes
+    missing = selector_failure(_probe_project(test_one="pipeline-068-nonexistent-command-xyz"))
+    assert missing and "exit 127" in missing
+    assert selector_failure(_probe_project(test_one="false")) is None
+    assert selector_failure(_probe_project(test_one="echo no test matched {test}; exit 1")) is None
+    # DEC-067: `format_test_cmd()` leaves every other brace verbatim, so
+    # this command is judged by its exit code. Under `str.format` it would
+    # raise `KeyError: 't##*'` and this arm would error instead of pass.
+    assert selector_failure(_probe_project(test_one="echo ${t##*::} matched nothing; exit 1")) is None
