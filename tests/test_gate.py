@@ -418,6 +418,25 @@ def test_gate_passes_a_failure_that_matches_the_reported_one():
     shutil.rmtree(d)
 
 
+def test_expect_naming_a_temp_path_is_refused_as_unmatchable():
+    """An `expect:` copied verbatim from triage's own run can carry a fresh
+    `mkdtemp` path. That path cannot recur in any later run, so an expect
+    that names one must be refused, not passed just because it happens to
+    match on this one run (TICKET-076)."""
+    tmp = tempfile.mkdtemp()
+    d = project(FIXTURE.replace("expect: test_broken", f"expect: registered {tmp}"))
+    (d / ".project" / "pipeline.toml").write_text(
+        f'test_one = "echo test_broken: registered {tmp}; exit 1"\n'
+        'test_suite = "true"\ntest_suite_without_new = "true"\n')
+    ok, failures = gate(d, "TICKET-001")
+    assert not ok, (
+        "gate passed an `expect:` string that names a temp path -- it "
+        "cannot match a second run")
+    assert any("cannot recur" in f for f in failures), failures
+    shutil.rmtree(d, ignore_errors=True)
+    shutil.rmtree(tmp, ignore_errors=True)
+
+
 def test_expect_containing_a_backtick_does_not_corrupt_the_thread_entry():
     """`expect:` is unvalidated body text an agent wrote -- a backtick in it
     must not break out of the markdown fence the finding is written into."""
