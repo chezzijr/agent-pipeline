@@ -70,6 +70,36 @@ def test_resume_reset_only_zeroes_it_cannot_grant_back_one():
     shutil.rmtree(d)
 
 
+def test_resume_reset_drops_the_forgiveness_credit_too():
+    """--reset on a counter that has a `_cleared` credit drops the credit
+    with it; --grant lowers the credit by the same amount it grants."""
+    d = Path(tempfile.mkdtemp())
+    cli(d, "new", "t")
+    cli(d, "resume", "TICKET-001", "--stage", "planning")
+    t = Ticket.load(d / ".project/tickets/TICKET-001.md")
+    t.counters["stale_regate"] = 2
+    t.counters["stale_regate_cleared"] = 1
+    t.save()
+
+    r = cli(d, "resume", "TICKET-001", "--stage", "planning",
+            "--reset", "stale_regate")
+    assert r.returncode == 0, r.stderr
+    t = Ticket.load(d / ".project/tickets/TICKET-001.md")
+    assert t.counters["stale_regate"] == 0, "the reset left a credit behind"
+    assert t.counters["stale_regate_cleared"] == 0, "the reset left a credit behind"
+
+    t.counters["stale_regate"] = 2
+    t.counters["stale_regate_cleared"] = 2
+    t.save()
+
+    r = cli(d, "resume", "TICKET-001", "--stage", "planning",
+            "--grant", "stale_regate")
+    assert r.returncode == 0, r.stderr
+    t = Ticket.load(d / ".project/tickets/TICKET-001.md")
+    assert (t.counters["stale_regate"], t.counters["stale_regate_cleared"]) == (1, 1)
+    shutil.rmtree(d)
+
+
 def test_resume_grant_refuses_to_hand_back_more_than_was_spent():
     d = Path(tempfile.mkdtemp())
     cli(d, "new", "t")

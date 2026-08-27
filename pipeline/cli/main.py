@@ -17,7 +17,7 @@ from pipeline.core.config import (CONFIG_TEMPLATE, SKILLS_DIR, TICKET_TEMPLATE,
                                   project_config, selector_failure,
                                   suite_failure, sync_pins)
 from pipeline.core.gate import gate
-from pipeline.core.machine import KNOWN_STAGES
+from pipeline.core.machine import KNOWN_STAGES, cleared_key
 from pipeline.core.ticket import Ticket, now, tickets_dir
 from pipeline.core.worktree import exclude_project_dir, worktree
 from pipeline.daemon import registry
@@ -280,6 +280,12 @@ def cmd_resume(args) -> None:
         have = t.counters[key]
         t.counters[key] = have - n
         granted.append(f"`{key}` {have} -> {have - n}")
+    # charge() subtracts this credit, so a counter a human lowered would
+    # keep a credit that outlives the failures it forgave.
+    for key in (*(args.reset or []), *grants):
+        cred = cleared_key(key)
+        if cred in t.counters:
+            t.counters[cred] = min(t.counters[cred], t.counters.get(key, 0))
     t.release_lease()
     who = os.environ.get("USER", "human")
     note = f"**resumed** by {who} -> `{args.stage}`, reset {args.reset or []}"
