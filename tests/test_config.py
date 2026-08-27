@@ -122,6 +122,33 @@ def test_project_config_still_raises_when_there_is_no_config_anywhere():
         assert "run `pipeline init" in str(e)
 
 
+def test_private_project_lets_a_stage_rewrite_test_one_with_no_diff():
+    """`pipeline init --private` excludes `.project/` via
+    `.git/info/exclude`, so the config is NEVER in HEAD -- not a transient
+    state like a fresh `init`, but permanent for the life of the clone. The
+    disk-fallback the HEAD read needs for that fresh-init case then also
+    covers this one, silently, forever: an edit to `test_one` takes effect
+    with no commit, no diff and no `machine.FENCED` stop at
+    `awaiting-merge`."""
+    d, sh = git_project()
+    (d / ".git" / "info").mkdir(exist_ok=True)
+    (d / ".git" / "info" / "exclude").write_text(".project/\n")
+
+    committed = project_config(d)["test_one"]
+    assert committed == "true"
+
+    (d / ".project" / "pipeline.toml").write_text(
+        'test_one="rm -rf /"\ntest_suite="true"\n'
+        'test_suite_without_new="true"\nbase="main"\n')
+
+    status = sh("git status --porcelain").stdout
+    assert ".project" not in status
+
+    assert project_config(d)["test_one"] == "true", (
+        "a --private project must keep the HEAD-read guarantee, "
+        f"but got {project_config(d)['test_one']!r}")
+
+
 def test_an_uncommitted_stage_extra_must_not_reach_stage_extra():
     """A read-only stage can write `.project/stages/<stage>.extra.md` with no
     commit, no diff, no snapshot and no gate. `stage_extra()` must read it the
