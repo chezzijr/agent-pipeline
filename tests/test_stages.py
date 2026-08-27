@@ -21,6 +21,19 @@ def test_every_stage_prompt_declares_its_config():
     assert not C.is_readonly("implementing")
 
 
+def test_plan_validation_can_mark_an_item_unverified():
+    """plan-validation is read-only: the guard blocks every `$(...)` probe it
+    might try, so the prompt must give it a way to flag a finding it could
+    not measure, distinct from a scored fail. It must also know about
+    `[readonly] allow` in .project/pipeline.toml, the supported way to ask
+    for a specific read-only command."""
+    text = (C.STAGES_DIR / "plan-validation.md").read_text()
+    assert "unverified" in text.lower(), \
+        "plan-validation has no channel for an item it could not measure"
+    assert "[readonly] allow" in text, \
+        "plan-validation is never told about the per-project readonly allowlist"
+
+
 def test_composed_prompt_has_common_rules_and_no_frontmatter():
     f = C.compose_prompt("review")
     text = f.read_text()
