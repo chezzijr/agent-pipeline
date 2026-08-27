@@ -591,6 +591,29 @@ def test_a_ticket_that_raises_in_start_does_not_take_the_tick_down():
     shutil.rmtree(d, ignore_errors=True)
 
 
+def test_a_project_max_parallel_caps_ticket_concurrency():
+    """`.project/pipeline.toml` can lower the daemon's `-j` for one project.
+    Two triage-stage tickets, `max_parallel = 1` in the project config, one
+    `tick()` at the CLI's default `-j 3` -- only one should start."""
+    d, sh = git_project()
+    (d / ".project" / "pipeline.toml").write_text(
+        'test_one="true"\ntest_suite="true"\ntest_suite_without_new="true"\n'
+        'base="main"\nmax_parallel = 1\n')
+    sh("git add -A && git commit -qm 'lower max_parallel'")
+    for n, fname in (("001", "thing.py"), ("002", "other.py")):
+        (d / f".project/tickets/TICKET-{n}.md").write_text(
+            FIXTURE.replace("stage: plan-validation", "stage: triage")
+            .replace("id: TICKET-001", f"id: TICKET-{n}")
+            .replace("branch: ticket/001", f"branch: ticket/{n}")
+            .replace("files_declared: [thing.py]", f"files_declared: [{fname}]"))
+
+    inflight = {}
+    supervisor.tick(d, harness("fake"), inflight, 3)
+    assert len(inflight) == 1, \
+        f"project max_parallel=1 should cap this project at 1, got {len(inflight)}"
+    shutil.rmtree(d, ignore_errors=True)
+
+
 def test_two_tickets_never_merge_in_the_same_tick():
     """Both would `git merge base` against the same base; the first
     `--ff-only` to land moves base, and the second -- a fully verified,
