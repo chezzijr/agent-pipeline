@@ -12,7 +12,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from helpers import git_project
+from helpers import git_project, project
 
 for var in ("XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_RUNTIME_DIR"):
     os.environ[var] = tempfile.mkdtemp()
@@ -56,3 +56,15 @@ def test_projects_skips_a_worktree_line_already_in_the_registry():
     registry.registry_path().write_text(f"{d}\n{wt}\n")
 
     assert registry.projects() == [d], registry.projects()
+
+
+def test_register_still_accepts_a_main_checkout_and_a_plain_directory():
+    d, sh = git_project()
+    r = sh("git add -A .project && git commit -qm 'add .project'")
+    assert r.returncode == 0, r.stderr
+    p = project()
+
+    assert registry.register(d) == d
+    assert registry.register(p) == p
+    assert d in registry.projects()
+    assert p in registry.projects()
