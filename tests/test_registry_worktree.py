@@ -64,7 +64,38 @@ def test_register_still_accepts_a_main_checkout_and_a_plain_directory():
     assert r.returncode == 0, r.stderr
     p = project()
 
-    assert registry.register(d) == d
-    assert registry.register(p) == p
+    try:
+        assert registry.register(d) == d
+        assert registry.register(p) == p
+        assert d in registry.projects()
+        assert p in registry.projects()
+    finally:
+        # `p` carries a real TICKET-001, unlike the git_project() fixtures
+        # elsewhere in this file -- leaving it registered would collide with
+        # tests/test_daemon.py's own TICKET-001 project on the shared registry.
+        registry.unregister(p)
+
+
+def test_a_stage_cannot_register_or_unregister():
+    d, sh = git_project()
+    r = sh("git add -A .project && git commit -qm 'add .project'")
+    assert r.returncode == 0, r.stderr
+    registry.register(d)
+
+    os.environ["PIPELINE_STAGE"] = "planning"
+    try:
+        try:
+            registry.register(d)
+            assert False, "register() ran under PIPELINE_STAGE"
+        except PipelineError as e:
+            assert "operator state" in str(e), e
+
+        try:
+            registry.unregister(d)
+            assert False, "unregister() ran under PIPELINE_STAGE"
+        except PipelineError as e:
+            assert "operator state" in str(e), e
+    finally:
+        del os.environ["PIPELINE_STAGE"]
+
     assert d in registry.projects()
-    assert p in registry.projects()

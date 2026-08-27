@@ -81,6 +81,16 @@ def is_worktree(project: Path) -> bool:
 
 
 def register(project: Path) -> Path:
+    """Register `project` with the daemon.
+
+    Refuses when `PIPELINE_STAGE` is set: a guardrail against a stage
+    exploring this command, not a boundary -- the registry file lives outside
+    the worktree, the ticket's diff and `machine.FENCED`, so nothing else
+    would catch a stage that unset the variable or wrote the file directly.
+    """
+    stage = os.environ.get("PIPELINE_STAGE")
+    if stage:
+        raise PipelineError(f"the registry is operator state: the {stage} stage cannot register {project}")
     project = Path(project).resolve()
     if not (project / ".project").is_dir():
         raise PipelineError(f"{project} has no .project/ -- run `pipeline init` first")
@@ -101,7 +111,14 @@ def register(project: Path) -> Path:
 def unregister(project: Path) -> bool:
     """Drops the line, not the filtered entry: a project whose directory has
     since been deleted no longer shows up in `projects()` and must still be
-    removable."""
+    removable.
+
+    Refuses when `PIPELINE_STAGE` is set, for the same reason `register()`
+    does: a guardrail, not a boundary.
+    """
+    stage = os.environ.get("PIPELINE_STAGE")
+    if stage:
+        raise PipelineError(f"the registry is operator state: the {stage} stage cannot unregister {project}")
     project = Path(project).resolve()
     keep = [l for l in _raw() if Path(l.split("#", 1)[0].strip() or "/dev/null")
             != project]
