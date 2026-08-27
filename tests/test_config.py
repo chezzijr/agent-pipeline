@@ -4,8 +4,34 @@ import tempfile
 from pathlib import Path
 
 from pipeline.core import PipelineError
-from pipeline.core.config import format_test_cmd, project_config, selector_failure, stage_extra, suite_failure
+from pipeline.core.config import format_test_cmd, harness, project_config, render, selector_failure, stage_config, stage_extra, suite_failure
 from tests.helpers import git_project
+
+
+def test_render_cap_does_not_scale_with_diff_size():
+    """review's cap must grow with the plan it has to read the way
+    bound_for() already grows plan_validation_attempts with plan size
+    (DEC-047). Today it does not: render() computes the cap from static
+    frontmatter/harness config alone, so a 15-file, 40-step plan gets the
+    same cap as an empty one."""
+    hcfg = harness("claude-code")
+    cfg = stage_config("review")
+    prompt = Path("/tmp/t.md")
+
+    baseline = render(hcfg, cfg, tid="TICKET-001", project=Path("/tmp"),
+                       ticket=Path("/tmp/t.md"), result_file=Path("/tmp/t.result"),
+                       session="s", prompt=prompt)
+    assert "--max-budget-usd 4" in baseline
+
+    scaled_cfg = {**cfg, "counters": {"plan_files": 15, "plan_steps": 40}}
+    scaled = render(hcfg, scaled_cfg, tid="TICKET-001", project=Path("/tmp"),
+                     ticket=Path("/tmp/t.md"), result_file=Path("/tmp/t.result"),
+                     session="s", prompt=prompt)
+    assert "--max-budget-usd 4" not in scaled, (
+        "expected the cap to grow with plan_files/plan_steps the way "
+        "bound_for() scales plan_validation_attempts, but render() emitted "
+        "the same --max-budget-usd 4 for a 15-file, 40-step plan as for "
+        "one with no counters at all")
 
 
 def test_an_uncommitted_edit_to_pipeline_toml_does_not_change_project_config():
