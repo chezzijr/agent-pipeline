@@ -322,6 +322,21 @@ def test_init_installs_the_file_ticket_skill():
     shutil.rmtree(d, ignore_errors=True)
 
 
+def test_init_installs_every_packaged_skill():
+    """`init` loops `SKILLS_DIR`, so a skill added to the package reaches the
+    projects it scaffolds with no second edit in `cmd_init`. Naming one skill
+    there is what left `pipeline-config` uninstalled."""
+    from pipeline.core.config import SKILLS_DIR
+    d = Path(tempfile.mkdtemp())
+    r = cli(d, "init")
+    assert r.returncode == 0, r.stderr
+    for src in SKILLS_DIR.iterdir():
+        skill = d / ".claude" / "skills" / src.name / "SKILL.md"
+        assert skill.is_file(), f"{src.name} not installed: {list(d.rglob('SKILL.md'))}"
+        assert skill.read_text() == (src / "SKILL.md").read_text(), src.name
+    shutil.rmtree(d, ignore_errors=True)
+
+
 def test_init_keeps_a_customised_file_ticket_skill():
     """`init` mirrors `.project/pipeline.toml`: a project that customised its
     skill file keeps it on re-init, and `init` prints the skill's path either

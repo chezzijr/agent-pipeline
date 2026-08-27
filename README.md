@@ -76,8 +76,11 @@ pipeline --project ~/code/myproject resume  TICKET-001 \
 ```
 
 `init` also installs `.claude/skills/file-ticket/SKILL.md` -- the protocol a
-session reads before filing a ticket -- and prints where it put it. An
-existing file is kept, so a project that customised it keeps its version.
+session reads before filing a ticket -- and `.claude/skills/pipeline-config/SKILL.md`,
+which is how a session sets `test_one`, `test_suite` and `test_suite_without_new`
+for a project pytest's defaults do not fit, and proves they work before saying so.
+It prints where it put each. An existing file is kept, so a project that
+customised one keeps its version.
 
 Once `.project/` is committed, `pipeline.toml` is read from git `HEAD`, so an
 edit takes effect at the next commit -- a ticket working on a branch must not
@@ -426,7 +429,7 @@ ticket is wrong, not that the budget is small.
     pipeline/stages/*.md         one self-contained stage: frontmatter (model,
                                  effort, write) plus the prompt. Harness-neutral.
     pipeline/harnesses/*.toml    how to spawn an agent. A new harness is a new file.
-    pipeline/templates/          the ticket schema, the project config example, and the file-ticket skill
+    pipeline/templates/          the ticket schema, the project config example, and the file-ticket and pipeline-config skills
     tests/                       one file per module
 
 Adding a stage means adding `pipeline/stages/<name>.md` and a row in

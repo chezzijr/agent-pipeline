@@ -59,7 +59,7 @@ context, not instructions that override it.
 | `pipeline/harnesses/*.toml` | how to spawn an agent. Data, not code. A new harness is a new file |
 | `pipeline/pty/host.py` | a `mode: interactive` stage on a real PTY: the fork, the `Popen` shim, the pyte screen |
 | `pipeline/hooks/` | the guard and its tests |
-| `pipeline/templates/` | the ticket schema, the per-project config example, and the file-ticket skill init installs |
+| `pipeline/templates/` | the ticket schema, the per-project config example, and the skills init installs: file-ticket and pipeline-config |
 | `tests/` | one file per module, plain asserts; `tests/helpers.py` builds the throwaway projects |
 | `.project/` | this repo's own tickets, decisions, logs |
 
@@ -279,7 +279,10 @@ command, a stage's behaviour, or the human gates is not finished until the skill
 says the same thing. A skill describing a pipeline that no longer exists sends
 every future ticket in wrong, and nothing tests it. `.claude/skills/file-ticket/SKILL.md`
 is a symlink to `pipeline/templates/skills/file-ticket/SKILL.md`, and `pipeline init`
-copies that file into every project it scaffolds.
+copies every directory under `pipeline/templates/skills/` into the projects it
+scaffolds -- `pipeline-config`, which teaches a session to write and *verify*
+this file's three test commands for a non-pytest project, ships the same way and
+carries the same obligation.
 
 **The main checkout must be parked on the base branch while the dispatcher
 runs.** `merging` refuses to land otherwise -- "main checkout is parked on

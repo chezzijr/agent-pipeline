@@ -22,7 +22,8 @@ HOOKS_DIR = PKG / "hooks"
 HARNESSES_DIR = PKG / "harnesses"
 TICKET_TEMPLATE = PKG / "templates" / "ticket.md"
 CONFIG_TEMPLATE = PKG / "templates" / "pipeline.toml"
-SKILL_TEMPLATE = PKG / "templates" / "skills" / "file-ticket" / "SKILL.md"
+SKILLS_DIR = PKG / "templates" / "skills"
+SKILL_TEMPLATE = SKILLS_DIR / "file-ticket" / "SKILL.md"
 
 
 def project_stage_config(project: Path | None, stage: str) -> dict:

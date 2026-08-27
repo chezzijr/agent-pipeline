@@ -226,15 +226,18 @@ def test_the_repo_skill_is_the_packaged_file():
     that loader's conditions. Replacing the link with a copy fails here.
     """
     from helpers import ROOT
-    repo = ROOT / ".claude" / "skills" / "file-ticket" / "SKILL.md"
-    assert repo.is_symlink(), \
-        f"{repo} is a copy, not a symlink -- the two copies will drift"
-    assert repo.is_file(), \
-        f"{repo} is a broken symlink -- the skill would not load"
-    assert repo.resolve() == C.SKILL_TEMPLATE.resolve(), \
-        f"{repo} resolves to {repo.resolve()}, not to {C.SKILL_TEMPLATE}"
-    assert repo.stat().st_size < 128 * 1024, \
-        f"{repo} is {repo.stat().st_size} bytes -- too large to load"
+    packaged = sorted(p.name for p in C.SKILLS_DIR.iterdir())
+    assert "file-ticket" in packaged and "pipeline-config" in packaged, packaged
+    for name in packaged:
+        repo = ROOT / ".claude" / "skills" / name / "SKILL.md"
+        assert repo.is_symlink(), \
+            f"{repo} is a copy, not a symlink -- the two copies will drift"
+        assert repo.is_file(), \
+            f"{repo} is a broken symlink -- the skill would not load"
+        assert repo.resolve() == (C.SKILLS_DIR / name / "SKILL.md").resolve(), \
+            f"{repo} resolves to {repo.resolve()}, not to the packaged copy"
+        assert repo.stat().st_size < 128 * 1024, \
+            f"{repo} is {repo.stat().st_size} bytes -- too large to load"
 
 
 def test_the_docs_name_the_skill_init_installs():
