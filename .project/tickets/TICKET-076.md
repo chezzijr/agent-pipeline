@@ -1,12 +1,20 @@
 ---
 id: TICKET-076
-stage: new
+stage: triage
 class: bugfix
 branch: ticket/076
 test_file: null
 files_declared: []
-counters: {plan_validation_attempts: 0, review_loops: 0, blocked_count: 0, lease_expiries: 0}
-lease: {holder: null, expires: null}
+counters:
+  plan_validation_attempts: 0
+  review_loops: 0
+  blocked_count: 0
+  lease_expiries: 0
+  plan_steps: 0
+  plan_files: 0
+lease:
+  holder: null
+  expires: null
 ---
 
 ## Summary
@@ -42,7 +50,19 @@ TRUNCATED carries the truncation marker as literal text.
     \'lenght\'", ...'
 
 The trailing `, ...` is an ellipsis the reporter printed, not text any run
-emits. The fix is the same shape -- trim to the invariant prefix -- so both
+emits.
+
+A third cause, same effect: an escape sequence written twice.
+
+    `tests/test_tui.py::test_awaiting_approval_shows_the_plan_not_the_validation_log`
+    fails, but its output does not mention the expected string
+    'AssertionError: == TICKET-001 awaiting-approval bugfix a thing\\n(no log yet)'
+
+The real output holds a newline; the `expect:` line holds the two characters
+`\` and `n`. Nothing in the run can produce them, so the grep never matches.
+
+Three causes, one effect: the recorded string is not a substring of any future
+run's output. A fix aimed at only one of them leaves the other two. The fix is the same shape -- trim to the invariant prefix -- so both
 belong in one ticket, but a volatile-token detector alone would not catch this
 one: there is no path and no pid in it. The test is red, it is red for exactly the reported reason, and the
 gate rejects it anyway -- then charges `plan_validation_attempts`, because an
@@ -97,3 +117,9 @@ unmatchable the moment it is recorded.
 ## Rollback
 
 ## Thread
+
+### 2026-08-27 16:15:56Z · new · transition · to=triage · result=new
+
+**new -> triage** (result: `new`)
+
+dispatcher pickup
