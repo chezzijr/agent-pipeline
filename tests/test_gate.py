@@ -179,12 +179,28 @@ def test_gate_substitutes_the_name_placeholder_in_test_one():
     and output check (`test.split("::")`), but only ever formats the
     project's `test_one` with `test=...` -- TICKET-067. A project whose
     command wants `{name}` should get the substituted name, not a
-    `KeyError`."""
+    `KeyError`. Read the substituted output back from `## Thread`: `gate()`
+    writes the entry, then `_dedupe()`s the copy it returns."""
     d = project()
     (d / ".project" / "pipeline.toml").write_text(
         'test_one = "echo GOT:{name}; exit 1"\n'
         'test_suite = "true"\ntest_suite_without_new = "true"\n')
     gate(d, "TICKET-001")
+    entry = T.Ticket.load(T.ticket_path(d, "TICKET-001")).thread()[-1].text
+    assert "GOT:test_broken" in entry, entry
+    shutil.rmtree(d)
+
+
+def test_gate_substitutes_the_path_placeholder_in_test_suite_without_new():
+    d = project()
+    (d / ".project" / "pipeline.toml").write_text(
+        'test_one = "echo test_broken; exit 1"\n'
+        'test_suite = "true"\n'
+        'test_suite_without_new = "echo GOT:{path}; exit 1"\n')
+    ok, findings = gate(d, "TICKET-001")
+    assert not ok and any("pre-existing breakage" in f for f in findings), findings
+    entry = T.Ticket.load(T.ticket_path(d, "TICKET-001")).thread()[-1].text
+    assert "GOT:test_thing.py" in entry, entry
     shutil.rmtree(d)
 
 

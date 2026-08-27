@@ -1,10 +1,9 @@
 """Tier A gate -- deterministic, no LLM judgment anywhere in the path."""
 import re
-import shlex
 import shutil
 from pathlib import Path
 
-from pipeline.core.config import project_config
+from pipeline.core.config import format_test_cmd, project_config
 from pipeline.core.ticket import (FENCE_RE, Ticket, _fenced, active_decisions,
                                   decisions_dir, ticket_path)
 from pipeline.core.worktree import base_checkout, base_ref, run_cmd
@@ -172,7 +171,7 @@ def _base_findings(project: Path, cfg: dict, wd: Path, test: str,
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(wd / rel, dst)
         code, out = run_cmd(
-            cfg["test_one"].format(test=shlex.quote(test)), base_wt)
+            format_test_cmd(cfg["test_one"], test), base_wt)
     if code == 0 and node in out:
         return [f"`{test}` PASSES on base `{base}` -- it fails only on this "
                 f"branch, so it is not a reproduction: either the bug is "
@@ -244,7 +243,7 @@ def gate(project: Path, tid: str, workdir: Path | None = None) -> tuple[bool, li
         if not test_path.is_file():
             findings.append(f"test file {test_path} does not exist")
         else:
-            code, out = run_cmd(cfg["test_one"].format(test=shlex.quote(test)), wd)
+            code, out = run_cmd(format_test_cmd(cfg["test_one"], test), wd)
             node = test.split("::")[-1]
             if code == 0 and node in out:
                 findings.append(f"`{test}` PASSES -- it must fail before implementation")
@@ -272,7 +271,7 @@ def gate(project: Path, tid: str, workdir: Path | None = None) -> tuple[bool, li
             else:
                 findings.append(f"ok: `{test}` fails as required\n```\n{out[-1200:]}\n```")
                 findings += _base_findings(project, cfg, wd, test, node)
-            code, out = run_cmd(cfg["test_suite_without_new"].format(test=shlex.quote(test)), wd)
+            code, out = run_cmd(format_test_cmd(cfg["test_suite_without_new"], test), wd)
             if code != 0:
                 findings.append(
                     f"suite excluding `{test}` is RED -- pre-existing breakage, "
