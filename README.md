@@ -498,6 +498,13 @@ the same stage files by default. A project can override one in two ways:
   **shallow** onto the packaged frontmatter: a key you set replaces the
   packaged one outright, it does not extend it -- a `skills` list you give
   replaces the packaged list, not appends to it.
+
+  `review`, `quick-review` and `holistic-review` are spawned with `max_usd`
+  grown by one dollar per 4 declared files or per 8 plan steps, whichever is
+  larger, capped at twice the stage's own number. A project's own `max_usd`
+  pins the cap and is never scaled past unless the table also sets
+  `scale_usd = true`. `scale_usd = false` turns scaling off for a stage that
+  has it by default.
 - **Prose**, in `.project/stages/<name>.extra.md` -- free text appended after
   the packaged prompt and before the ticket view. It can only add
   instructions, never remove or relax one: there is no frontmatter in an
