@@ -17,6 +17,7 @@ from helpers import git_project
 for var in ("XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_RUNTIME_DIR"):
     os.environ[var] = tempfile.mkdtemp()
 from pipeline.daemon import registry
+from pipeline.core import PipelineError
 
 
 def test_register_refuses_a_worktree_of_a_registered_project():
@@ -30,7 +31,11 @@ def test_register_refuses_a_worktree_of_a_registered_project():
     assert r.returncode == 0, r.stderr
     assert (wt / ".project").is_dir()
 
-    registry.register(wt)
+    try:
+        registry.register(wt)
+        assert False, "register() accepted a worktree of a registered project"
+    except PipelineError as e:
+        assert "worktree" in str(e), e
 
     assert wt not in registry.projects(), (
         f"register() accepted a worktree of a registered project: {wt} is "

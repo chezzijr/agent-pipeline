@@ -57,10 +57,33 @@ def projects() -> list[Path]:
     return out
 
 
+def is_worktree(project: Path) -> bool:
+    """True if `project` is a linked git worktree, not a main checkout.
+
+    `git worktree add` copies `.project/` along with everything else, so a
+    worktree passes every other check `register()` makes. A linked worktree's
+    `.git` is a *file* holding `gitdir: <common>/worktrees/<name>`; a main
+    checkout's `.git` is a directory, and a submodule's pointer names
+    `modules`, not `worktrees`.
+    """
+    try:
+        text = (Path(project) / ".git").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    text = text.strip()
+    if not text.startswith("gitdir:"):
+        return False
+    return Path(text.split(":", 1)[1].strip()).parent.name == "worktrees"
+
+
 def register(project: Path) -> Path:
     project = Path(project).resolve()
     if not (project / ".project").is_dir():
         raise PipelineError(f"{project} has no .project/ -- run `pipeline init` first")
+    if is_worktree(project):
+        raise PipelineError(
+            f"{project} is a git worktree, not a project -- register the main checkout instead"
+        )
     if "\n" in str(project) or "#" in str(project):
         # one path per line, `#` comments: a path carrying either would inject
         # a second entry or silently truncate this one
