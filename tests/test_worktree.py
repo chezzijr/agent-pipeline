@@ -8,6 +8,35 @@ from pathlib import Path
 
 from helpers import git_project
 from pipeline.core import worktree as W
+from pipeline.core.ticket import Ticket, stage_view
+
+TICKET_TEXT = """---
+id: TICKET-001
+stage: new
+class: bugfix
+branch: ticket/001
+test_file: null
+files_declared: []
+counters: {}
+lease: {holder: null, expires: null}
+---
+
+## Summary
+x
+## Reproduction
+
+## Digest
+
+## Decisions checked
+
+## Plan
+
+## Acceptance criteria
+
+## Rollback
+
+## Thread
+"""
 
 
 def test_recreating_a_worktree_never_resets_the_branch():
@@ -138,3 +167,30 @@ def test_head_file_reads_the_commit_not_the_working_tree():
     sh("git add -A && git commit -qm commit-config")
     assert 'test_one="true"' in W.head_file(d, ".project/pipeline.toml")
     assert W.head_file(Path(tempfile.mkdtemp()), "f.py") is None  # not a repo
+
+
+def test_the_worktree_ticket_copy_goes_stale_the_moment_a_stage_records_progress():
+    """`ensure_worktree` checks out the branch at cut time. `Ticket.save()`
+    (main checkout) records a stage's work without committing until merge, so
+    the worktree's own `.project/tickets/<id>.md` freezes at `## Reproduction`
+    empty while the view a later stage is handed already has it filled in --
+    the TICKET-067 incident (see TICKET-083 Summary)."""
+    d, sh = git_project()
+    (d / ".project" / "tickets" / "TICKET-001.md").write_text(TICKET_TEXT)
+    sh("git add -A && git commit -qm file-ticket")
+    meta = {"id": "TICKET-001", "branch": "ticket/001"}
+    cfg = {"base": "main"}
+    wt = W.ensure_worktree(d, meta, cfg)
+
+    t = Ticket.find(d, "TICKET-001")
+    t.body = t.body.replace("## Reproduction\n\n", "## Reproduction\ntest fails: KeyError\n")
+    t.save()
+
+    view = stage_view(Ticket.find(d, "TICKET-001"), "planning")
+    worktree_copy = (wt / ".project" / "tickets" / "TICKET-001.md").read_text()
+
+    assert "KeyError" in view
+    assert "KeyError" in worktree_copy, (
+        "the worktree's own ticket file contradicts the view a stage is "
+        "handed -- it is still the branch-cut snapshot")
+    shutil.rmtree(d, ignore_errors=True)
