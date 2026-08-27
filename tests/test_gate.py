@@ -5,6 +5,8 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+import pytest
+
 from helpers import FIXTURE, project
 from pipeline.core import ticket as T
 from pipeline.core.gate import _dedupe, gate, plan_steps
@@ -171,6 +173,21 @@ def test_gate_distinguishes_a_selector_matching_nothing_from_a_real_pass():
     assert not ok
     assert not any("PASSES -- it must fail before implementation" in f
                    for f in failures), failures
+    shutil.rmtree(d)
+
+
+def test_gate_cannot_use_path_and_name_placeholders_in_test_one():
+    """`gate()` splits `test` into `path` and `name` for its own file check
+    and output check (`test.split("::")`), but only ever formats the
+    project's `test_one` with `test=...` -- TICKET-067. A project whose
+    command wants `{path}` or `{name}` gets a `KeyError`, not a working
+    selector."""
+    d = project()
+    (d / ".project" / "pipeline.toml").write_text(
+        'test_one = "echo {name}; exit 1"\n'
+        'test_suite = "true"\ntest_suite_without_new = "true"\n')
+    with pytest.raises(KeyError):
+        gate(d, "TICKET-001")
     shutil.rmtree(d)
 
 
