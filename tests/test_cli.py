@@ -9,7 +9,7 @@ import tempfile
 from pathlib import Path
 
 from helpers import ROOT, project
-from pipeline.core.ticket import Ticket
+from pipeline.core.ticket import Ticket, stage_view
 
 
 # Every `pipeline` process writes its events to $XDG_STATE_HOME/pipeline. With
@@ -137,16 +137,26 @@ def test_resume_refuses_reset_and_grant_on_one_counter():
     shutil.rmtree(d)
 
 
-def test_resume_has_no_way_to_attach_an_operator_note():
+def test_resume_records_an_operator_note():
     """`answer` refuses outside `needs-input`, so an escalated ticket being
     resumed has nowhere for the operator's reasoning to go. `resume` should
-    accept `--note` the way `answer` accepts its text, but it does not."""
+    accept `--note` the way `answer` accepts its text, and the note must
+    survive as a kind the stage view never omits."""
     d = Path(tempfile.mkdtemp())
     cli(d, "new", "t")
+    env = {"USER": "operator-marker"}
     r = cli(d, "resume", "TICKET-001", "--stage", "planning",
-            "--note", "granted because the escalation was a flaky test")
-    assert r.returncode != 0, r.stdout
-    assert "unrecognized arguments" in r.stderr, r.stderr
+            "--note", "granted because the escalation was a flaky test", env=env)
+    assert r.returncode == 0, r.stderr
+    t = Ticket.load(d / ".project/tickets/TICKET-001.md")
+    e = [e for e in t.thread() if e.kind == "answer"][-1]
+    assert "granted because the escalation was a flaky test" in e.text, e.text
+    assert "operator-marker" in e.text, e.text
+    for i in range(9):
+        t.append("planning", "note", f"filler {i}")
+    t.save()
+    view = stage_view(Ticket.load(t.path), "planning")
+    assert "granted because the escalation was a flaky test" in view, view
     shutil.rmtree(d)
 
 
