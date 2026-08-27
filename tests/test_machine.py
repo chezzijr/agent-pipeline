@@ -189,6 +189,24 @@ def test_an_approved_plan_is_re_gated_before_it_is_implemented():
     assert "revalidating" in M.DISPATCHER_STAGES and "revalidating" in M.KNOWN_STAGES
 
 
+def test_a_non_reproducing_regate_failure_still_exhausts_the_budget():
+    """TICKET-082: `stale_regate` never resets on an intervening `ok`, so two
+    flaky, non-reproducing regate failures separated by a passing regate
+    still escalate a good ticket -- the same cost as two genuinely stale
+    plans. A confirmed-flaky failure (proven non-reproducing by the `ok` that
+    follows it) must not count toward the bound."""
+    nxt, c = t("revalidating", "fail")
+    assert c["stale_regate"] == 1
+    nxt2, c2 = t("revalidating", "ok", c)
+    assert nxt2 == "implementing"
+    assert c2["stale_regate"] == 1, "the failure was confirmed flaky by the ok that followed it"
+    nxt3, c3 = t("revalidating", "fail", c2)
+    assert nxt3 != "escalated", (
+        "two non-reproducing regate failures, separated by a passing regate, "
+        f"exhausted the budget: got {nxt3!r}"
+    )
+
+
 def test_a_rebase_conflict_returns_to_triage_and_is_bounded():
     """A conflicting rebase discards the branch's commits, so only `triage`
     can rebuild it. `planning` would replan without removing the conflicting
