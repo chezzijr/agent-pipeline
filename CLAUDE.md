@@ -31,6 +31,10 @@ context, not instructions that override it.
    `USD_SCALED`, capped at `USD_CEILING_FACTOR` times the stage's own number;
    a project's own `max_usd` is never scaled past unless it also sets
    `scale_usd = true`.
+   A pass can credit failures back -- a passing `revalidating` writes
+   `stale_regate_cleared` and `charge()` subtracts it, so `stale_regate`
+   bounds CONSECUTIVE failures; the credit never exceeds the failures
+   charged, so the loop stays bounded.
 4. **Hooks decide with code.** `pipeline/hooks/dangerous-commands.py` is the only layer
    that makes a promise. Read-only stages get an *allowlist*, not a blocklist —
    do not "improve" it back into pattern matching.

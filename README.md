@@ -330,7 +330,11 @@ identically, so re-planning is the only thing that can fix it. A rebase
 conflict aborts the rebase, recuts the branch from base against its own
 counter (`rebase_conflicts`), and hands the ticket back to `triage`, which
 rewrites its test on current base; nothing is auto-resolved, and a second
-conflict escalates.
+conflict escalates. A re-gate that passes credits the failures before it
+(`stale_regate_cleared`), so the bound counts consecutive failures: a red gate
+that the next re-gate does not reproduce -- a flaky suite, a machine under
+load -- costs a re-plan and not the ticket. Two failures with no pass between
+them still escalate.
 
 Two tickets whose `files_declared` intersect never run at the same time -- the
 second one waits rather than failing. That ordering is silent, so `ls` flags
@@ -427,6 +431,12 @@ plan line that is not a numbered step, a step citing no declared file --
 charges `structural_gate_failures` instead, because `plan_validation_attempts`
 bounds bad plans and the gate never judged that plan. It stays at 2 whatever
 the class, the same shape as `lease_expiries` and `no_result`.
+
+`stale_regate` is the one counter a later pass credits back: a passing
+`revalidating` writes `stale_regate_cleared`, capped at the failures already
+charged, and the bound is compared against the difference. `pipeline resume
+--reset` and `--grant` lower the credit with its counter, so a reset by a
+human cannot hand back an attempt twice.
 
 Resetting a counter because the loop is tiresome is how an unbounded loop gets
 back in. A stage that escalates twice for the same reason is telling you the
