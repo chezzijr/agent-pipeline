@@ -39,6 +39,7 @@ def test_happy_path():
 def test_bounds_escalate_on_the_second_failure():
     for stage, result, key in [
         ("plan-validation", "fail", "plan_validation_attempts"),
+        ("plan-validation", "bad-plan", "plan_validation_attempts"),
         ("review", "fail", "review_loops"),
         ("holistic-review", "fail", "review_loops"),
         ("verifying", "fail", "review_loops"),
@@ -235,15 +236,15 @@ def test_plan_validation_budget_ignores_the_plans_size():
     tiny = {"plan_validation_attempts": 0, "plan_steps": 1, "plan_files": 1}
     huge = {"plan_validation_attempts": 0, "plan_steps": 24, "plan_files": 10}
     for _ in range(2):
-        tiny_next, tiny = M.transition("plan-validation", "fail", tiny, "bugfix")
-        huge_next, huge = M.transition("plan-validation", "fail", huge, "bugfix")
+        tiny_next, tiny = M.transition("plan-validation", "bad-plan", tiny, "bugfix")
+        huge_next, huge = M.transition("plan-validation", "bad-plan", huge, "bugfix")
     assert tiny_next == "escalated", "a 1-step/1-file plan exhausted its budget as expected"
     assert huge_next != "escalated", \
         "a 24-step/10-file plan (TICKET-041's shape) must get more attempts than a " \
         "1-step/1-file plan, but it escalated at the same attempt count: " \
         f"{huge['plan_validation_attempts']} == {tiny['plan_validation_attempts']}"
     for _ in range(3):
-        huge_next, huge = M.transition("plan-validation", "fail", huge, "bugfix")
+        huge_next, huge = M.transition("plan-validation", "bad-plan", huge, "bugfix")
     assert huge_next == "escalated"
     assert huge["plan_validation_attempts"] == 5
 

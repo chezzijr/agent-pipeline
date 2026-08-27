@@ -45,6 +45,33 @@ PLAN_STEP_RE = re.compile(r"^\s*\d+[.)]")
 # gate checks today.
 CRIT_ITEM_RE = re.compile(r"^\s*(?:[-*]|\d+[.)])")
 
+# An allowlist, not a blocklist: a finding whose opener is not listed here
+# reads as substantive, which is what every finding did before this ticket.
+# `startswith`, never `in` -- a substantive finding can carry a fenced block
+# of captured test output, and that output can quote a structural finding's
+# text verbatim, so a substring match could be faked by a ticket's own test
+# output into buying a free `plan-validation` attempt.
+STRUCTURAL_MARKS = (
+    "section `## ",
+    "`## Digest` has ",
+    "`## Reproduction` has no `expect:` line",
+    "`## Decisions checked` cites",
+    "`files_declared` is empty",
+    "`## Plan` has zero numbered steps",
+    "plan line is not a numbered step",
+    "plan line names no declared file",
+    "plan step names no declared file",
+    "acceptance criterion names no test",
+)
+
+
+def structural_only(failures: list[str]) -> bool:
+    """Are every one of `failures` a structural (formatting) finding?
+
+    Empty is False: no findings is a PASS, not this function's question.
+    """
+    return bool(failures) and all(f.startswith(STRUCTURAL_MARKS) for f in failures)
+
 
 def _cites(text: str, path: str) -> bool:
     """Does `text` name `path`? Substring match, but anchored at a

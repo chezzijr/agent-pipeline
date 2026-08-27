@@ -117,6 +117,12 @@ def transition(stage: str, result: str, counters: dict, klass: str = "bugfix"):
             return "awaiting-approval", c
         case ("plan-validation", "fail"):
             return charge("plan_validation_attempts", "planning")
+        case ("plan-validation", "bad-plan"):
+            # the gate judged the plan's content, not its formatting -- the
+            # test passes already, the suite is red, base is already fixed, or
+            # the Tier B agent rejected the plan. This is the verdict
+            # `plan_validation_attempts` bounds bad plans against.
+            return charge("plan_validation_attempts", "planning")
         case ("revalidating", "ok"):
             return "implementing", c
         case ("revalidating", "fail"):
