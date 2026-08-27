@@ -359,6 +359,43 @@ def test_a_criterion_naming_a_command_and_its_expected_output_is_accepted():
     shutil.rmtree(d)
 
 
+def test_a_criterion_naming_a_command_and_an_exit_status_is_accepted():
+    d = project(FIXTURE.replace(
+        "- `test_broken` passes",
+        "- `uv run ruff check .` exits 0"))
+    ok, failures = gate(d, "TICKET-001")
+    assert ok, failures
+    shutil.rmtree(d)
+
+
+def test_a_command_criterion_with_no_stated_result_is_still_caught():
+    d = project(FIXTURE.replace(
+        "- `test_broken` passes",
+        "- `cargo build --release` is nicer than before"))
+    ok, failures = gate(d, "TICKET-001")
+    assert not ok and any("names no test" in f for f in failures), failures
+    shutil.rmtree(d)
+
+
+def test_an_opinion_quoting_an_identifier_is_still_caught():
+    d = project(FIXTURE.replace(
+        "- `test_broken` passes",
+        "- `pipeline/core/gate.py` is cleaner and the latency drops below `10ms`"))
+    ok, failures = gate(d, "TICKET-001")
+    assert not ok and any("names no test" in f for f in failures), failures
+    shutil.rmtree(d)
+
+
+def test_the_criterion_finding_states_the_rule_that_would_fix_it():
+    d = project(FIXTURE.replace(
+        "- `test_broken` passes",
+        "- code should be clean"))
+    ok, failures = gate(d, "TICKET-001")
+    assert not ok and any(
+        "names no test" in f and "backticks" in f for f in failures), failures
+    shutil.rmtree(d)
+
+
 def test_gate_blocks_a_failure_that_is_not_the_reported_one():
     """A red test proves nothing if it is red for the wrong reason."""
     d = project(FIXTURE.replace("expect: test_broken", "expect: KeyError: 'evict'"))

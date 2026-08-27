@@ -44,6 +44,21 @@ PLAN_STEP_RE = re.compile(r"^\s*\d+[.)]")
 # gate checks today.
 CRIT_ITEM_RE = re.compile(r"^\s*(?:[-*]|\d+[.)])")
 
+# A criterion clears Tier A by naming a test, or by naming a command and the
+# outcome running it must produce -- both halves are required, since a command
+# with no stated result cannot be decided by running it. A one-token span
+# (`` `10ms` ``, `` `gate.py` ``) is deliberately not a command: prose quotes an
+# identifier or a metric constantly, so accepting a lone span would let an
+# opinion like "the code is cleaner, see `gate.py`" through. The content class
+# excludes a backtick, so a match never spans two separate code spans.
+CRIT_CMD_RE = re.compile(r"`[A-Za-z_./][\w.+/-]*\s+\S[^`\n]*`")
+CRIT_OUTCOME_RE = re.compile(
+    r"\b(prints?|outputs?|reports?|returns?|exits?|shows?|lists?|finds?|"
+    r"contains?|passes|fails|succeeds|empty|nothing|none|green|clean|zero|"
+    r"no output|exit (?:code|status))\b", re.I)
+CRIT_RULE = ("name a test, or name a command in backticks together with the "
+             "output or exit status running it must produce")
+
 # An allowlist, not a blocklist: a finding whose opener is not listed here
 # reads as substantive, which is what every finding did before this ticket.
 # `startswith`, never `in` -- a substantive finding can carry a fenced block
@@ -416,9 +431,12 @@ def gate(project: Path, tid: str, workdir: Path | None = None) -> tuple[bool, li
         # It cost TICKET-041 a plan-validation attempt on a plan the gate had
         # no other complaint about. Not `\btest` without the boundary: that
         # matches `latest`, `greatest`, `contest`.
-        if not re.search(r"\bpytest\b|\btest[_a-zA-Z0-9]*\b|::|\b\w+_test\b|\btests?/",
-                         c, re.I):
-            findings.append(f"acceptance criterion names no test: {c}")
+        if re.search(r"\bpytest\b|\btest[_a-zA-Z0-9]*\b|::|\b\w+_test\b|\btests?/",
+                     c, re.I):
+            continue
+        if CRIT_CMD_RE.search(c) and CRIT_OUTCOME_RE.search(c):
+            continue
+        findings.append(f"acceptance criterion names no test: {c} -- {CRIT_RULE}")
 
     seen: dict[str, str] = {}
     for e in t.thread():
