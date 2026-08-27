@@ -194,3 +194,46 @@ def test_the_worktree_ticket_copy_goes_stale_the_moment_a_stage_records_progress
         "the worktree's own ticket file contradicts the view a stage is "
         "handed -- it is still the branch-cut snapshot")
     shutil.rmtree(d, ignore_errors=True)
+
+
+def test_the_ticket_mirror_is_read_only_and_never_enters_the_branch_diff():
+    """`Ticket.save()` mirrors the live ticket into the worktree at 0444,
+    marked `--skip-worktree`, so the mirror never shows up in `git status`,
+    never enters `implementing`'s own commit, and never blocks `merging`'s
+    rebase (TICKET-083)."""
+    d, sh = git_project()
+    (d / ".project" / "tickets" / "TICKET-001.md").write_text(TICKET_TEXT)
+    sh("git add -A && git commit -qm file-ticket")
+    meta = {"id": "TICKET-001", "branch": "ticket/001"}
+    cfg = {"base": "main"}
+    wt = W.ensure_worktree(d, meta, cfg)
+
+    t = Ticket.find(d, "TICKET-001")
+    t.body = t.body.replace("## Digest", "## Digest\nmirrored")
+    t.save()
+
+    mirror = wt / ".project" / "tickets" / "TICKET-001.md"
+
+    def wsh(cmd):
+        return subprocess.run(cmd, shell=True, cwd=wt, capture_output=True, text=True)
+
+    assert "mirrored" in mirror.read_text()
+    assert mirror.stat().st_mode & 0o222 == 0
+    assert wsh("git status --porcelain").stdout == ""
+
+    (wt / "new.py").write_text("work")
+    wsh("git add -A && git commit -qm work")
+    assert "mirrored" not in wsh("git show HEAD:.project/tickets/TICKET-001.md").stdout
+
+    assert wsh("git rebase main").returncode == 0
+    assert wsh("git status --porcelain").stdout == ""
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_mirror_ticket_is_a_no_op_without_a_worktree():
+    """No `.worktrees/` for this project, or a path that is not a ticket
+    path: `mirror_ticket()` returns None rather than guessing a destination."""
+    d, sh = git_project()
+    assert W.mirror_ticket(d / ".project" / "tickets" / "TICKET-001.md", "x") is None
+    assert W.mirror_ticket(d / "f.py", "x") is None
+    shutil.rmtree(d, ignore_errors=True)
