@@ -362,6 +362,18 @@ def test_the_rule_file_counts_the_guard_cases():
     assert claimed == [str(cases)], f"CLAUDE.md says {claimed}, tables hold {cases}"
 
 
+def test_the_config_docs_name_every_test_placeholder():
+    """`{path}` and `{name}` are part of the config interface (TICKET-067).
+    These two files are what a project reads before writing its three
+    commands; one that still documents `{test}` alone sends every non-pytest
+    project back to re-deriving the split in shell."""
+    skill = C.SKILLS_DIR / "pipeline-config" / "SKILL.md"
+    for p in (C.CONFIG_TEMPLATE, skill):
+        text = p.read_text()
+        assert "{path}" in text and "{name}" in text, p
+        assert "sed 's/.*:://'" not in text, f"{p} still splits the test id in shell"
+
+
 def test_stage_config_can_take_a_per_project_override(tmp_path):
     """TICKET-038: `stage_config()` resolves against the packaged stage only,
     with no way for a project to add a model, tool or skill of its own. A
