@@ -381,6 +381,12 @@ grows with the plan -- one more attempt per 8 steps or 4 declared files, never
 past 5. `lease_expiries` and `no_result` are the dispatcher's own counters and
 stay at 2 whatever the class.
 
+A Tier A failure whose findings are all structural -- a missing section, a
+plan line that is not a numbered step, a step citing no declared file --
+charges `structural_gate_failures` instead, because `plan_validation_attempts`
+bounds bad plans and the gate never judged that plan. It stays at 2 whatever
+the class, the same shape as `lease_expiries` and `no_result`.
+
 Resetting a counter because the loop is tiresome is how an unbounded loop gets
 back in. A stage that escalates twice for the same reason is telling you the
 ticket is wrong, not that the budget is small.

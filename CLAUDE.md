@@ -236,6 +236,13 @@ still worth it: it prints one line per case, and the failure names the case.
   Tier B agent -- it emits no `stage_end`, or one run would put two rows in
   view 1's denominator. Moving the gate back inline stalls the select loop
   for the length of the project's suite, exactly the bug TICKET-061 fixed.
+- **`gate_result()` splits a Tier A failure at `plan-validation` into two
+  verdicts, `bad-plan` and `fail`.** `structural_only()` in
+  `pipeline/core/gate.py` classifies the findings against `STRUCTURAL_MARKS`, a
+  `startswith` prefix allowlist: an unlisted finding reads as substantive on
+  purpose, so a new structural finding in `gate()` needs its own mark or it
+  silently charges `plan_validation_attempts` instead of
+  `structural_gate_failures` like a bad plan.
 - **The read-only allowlist has a per-project extension.** `[readonly] allow`
   in `.project/pipeline.toml` is exported as `PIPELINE_READONLY_ALLOW`, an
   argv-prefix list matched per shell segment. It never overrides
