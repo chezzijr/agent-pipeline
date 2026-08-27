@@ -307,8 +307,18 @@ Per-project worktree setup (shared build cache, `.env`, dependency install) is
 one config line, so it is never improvised by an agent:
 
 ```toml
-worktree_setup = "ln -s ~/.cache/cargo-target target && cp ../../.env ."
+worktree_setup = "cp ../../.env . && npm ci --prefer-offline"
 ```
+
+**A build cache shared across worktrees must be keyed per checkout.** Every
+ticket gets its own worktree, and a plain
+`ln -s ~/.cache/cargo-target target` points them all at one directory: a stale
+artifact from one ticket is served into another's build, which shows up as a
+test failing for a reason that is not in that ticket's diff, and clears only
+after the source is touched. A planning agent reads that as a code failure and
+burns validation attempts on it. Key the cache
+(`CARGO_TARGET_DIR=~/.cache/cargo/$(basename $PWD)`, `ccache` with a per-branch
+prefix) or leave it unshared.
 
 ## Watching a run
 

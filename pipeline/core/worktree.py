@@ -59,7 +59,9 @@ def ensure_worktree(project: Path, meta: dict, cfg: dict) -> Path | None:
         print(f"  worktree failed for {meta['id']}: {out.strip()[:300]}")
         return None
     if cfg.get("worktree_setup"):
-        # per-project: link a shared build cache, copy .env, install deps
+        # per-project: copy .env, install deps, key a build cache to THIS
+        # worktree. A cache shared across worktrees unkeyed serves one
+        # ticket's artifact into another's build -- see README.
         run_cmd(cfg["worktree_setup"], wt)
     return wt
 
