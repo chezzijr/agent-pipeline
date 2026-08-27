@@ -4,7 +4,8 @@ import tempfile
 from pathlib import Path
 
 from pipeline.core import PipelineError
-from pipeline.core.config import format_test_cmd, project_config, stage_extra
+from pipeline.core.config import (format_test_cmd, project_config,
+                                  project_max_parallel, stage_extra)
 from tests.helpers import git_project
 
 
@@ -58,6 +59,50 @@ def test_an_uncommitted_stage_extra_must_not_reach_stage_extra():
     (d / ".project" / "stages" / "implementing.extra.md").write_text("INJECTED-9137\n")
 
     assert "INJECTED-9137" not in stage_extra(d, "implementing")
+
+
+def test_project_max_parallel_reads_the_committed_value():
+    d, sh = git_project()
+    (d / ".project" / "pipeline.toml").write_text(
+        'test_one="true"\ntest_suite="true"\ntest_suite_without_new="true"\n'
+        'base="main"\nmax_parallel = 1\n')
+    sh("git add -A && git commit -qm 'set max_parallel'")
+
+    assert project_max_parallel(d) == 1
+
+    (d / ".project" / "pipeline.toml").write_text(
+        'test_one="true"\ntest_suite="true"\ntest_suite_without_new="true"\n'
+        'base="main"\nmax_parallel = 9\n')
+
+    assert project_max_parallel(d) == 1
+
+
+def test_project_max_parallel_is_none_without_a_key():
+    d, _ = git_project()
+    assert project_max_parallel(d) is None
+
+
+def test_project_max_parallel_refuses_a_value_below_one():
+    d, sh = git_project()
+    (d / ".project" / "pipeline.toml").write_text(
+        'test_one="true"\ntest_suite="true"\ntest_suite_without_new="true"\n'
+        'base="main"\nmax_parallel = 0\n')
+    sh("git add -A && git commit -qm 'zero max_parallel'")
+    try:
+        project_max_parallel(d)
+        assert False, "max_parallel = 0 must raise"
+    except PipelineError as e:
+        assert "must be an integer >= 1" in str(e)
+
+    (d / ".project" / "pipeline.toml").write_text(
+        'test_one="true"\ntest_suite="true"\ntest_suite_without_new="true"\n'
+        'base="main"\nmax_parallel = true\n')
+    sh("git add -A && git commit -qm 'bool max_parallel'")
+    try:
+        project_max_parallel(d)
+        assert False, "max_parallel = true must raise"
+    except PipelineError as e:
+        assert "must be an integer >= 1" in str(e)
 
 
 def test_format_test_cmd_substitutes_test_path_and_name():

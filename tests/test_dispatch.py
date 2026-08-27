@@ -614,6 +614,52 @@ def test_a_project_max_parallel_caps_ticket_concurrency():
     shutil.rmtree(d, ignore_errors=True)
 
 
+def test_a_project_cannot_raise_the_daemons_max_parallel():
+    """A project `max_parallel = 5` must never widen the daemon's own `-j 1`
+    -- the config a ticket branch can reach must only lower the ceiling."""
+    d, sh = git_project()
+    (d / ".project" / "pipeline.toml").write_text(
+        'test_one="true"\ntest_suite="true"\ntest_suite_without_new="true"\n'
+        'base="main"\nmax_parallel = 5\n')
+    sh("git add -A && git commit -qm 'raise max_parallel'")
+    for n, fname in (("001", "thing.py"), ("002", "other.py")):
+        (d / f".project/tickets/TICKET-{n}.md").write_text(
+            FIXTURE.replace("stage: plan-validation", "stage: triage")
+            .replace("id: TICKET-001", f"id: TICKET-{n}")
+            .replace("branch: ticket/001", f"branch: ticket/{n}")
+            .replace("files_declared: [thing.py]", f"files_declared: [{fname}]"))
+
+    inflight = {}
+    supervisor.tick(d, harness("fake"), inflight, 1)
+    assert len(inflight) == 1, \
+        f"the daemon -j 1 must win over the project 5, got {len(inflight)}"
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_a_bad_project_max_parallel_never_leaves_tick(capsys):
+    """A committed `max_parallel = 0` must not raise out of `tick()` -- it
+    reaches `run()`'s bare `tick()` call, which does not wrap it, and a raise
+    there would SIGTERM every inflight child via `shut_down()`."""
+    d, sh = git_project()
+    (d / ".project" / "pipeline.toml").write_text(
+        'test_one="true"\ntest_suite="true"\ntest_suite_without_new="true"\n'
+        'base="main"\nmax_parallel = 0\n')
+    sh("git add -A && git commit -qm 'zero max_parallel'")
+    for n, fname in (("001", "thing.py"), ("002", "other.py")):
+        (d / f".project/tickets/TICKET-{n}.md").write_text(
+            FIXTURE.replace("stage: plan-validation", "stage: triage")
+            .replace("id: TICKET-001", f"id: TICKET-{n}")
+            .replace("branch: ticket/001", f"branch: ticket/{n}")
+            .replace("files_declared: [thing.py]", f"files_declared: [{fname}]"))
+
+    inflight = {}
+    supervisor.tick(d, harness("fake"), inflight, 3)
+    assert len(inflight) == 2, \
+        f"a bad max_parallel must leave -j 3 standing, got {len(inflight)}"
+    assert "ignoring max_parallel" in capsys.readouterr().out
+    shutil.rmtree(d, ignore_errors=True)
+
+
 def test_two_tickets_never_merge_in_the_same_tick():
     """Both would `git merge base` against the same base; the first
     `--ff-only` to land moves base, and the second -- a fully verified,

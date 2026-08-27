@@ -177,6 +177,28 @@ def readonly_allow(project: Path) -> list[list[str]]:
     return out
 
 
+def project_max_parallel(project: Path) -> int | None:
+    """A project's own concurrency ceiling: `max_parallel` in
+    `.project/pipeline.toml`, or `None` when the project has no config or the
+    key is absent -- the daemon `-j` argument stands alone.
+
+    Read through `project_config()`, so the value comes from HEAD of the main
+    checkout (DEC-037): a stage cannot widen its own project's concurrency
+    from its worktree. The raise here is caught by `_start_cap()` in
+    `pipeline/daemon/supervisor.py`, never left to reach `tick()`'s caller.
+    """
+    try:
+        cfg = project_config(project)
+    except PipelineError:
+        return None
+    v = cfg.get("max_parallel")
+    if v is None:
+        return None
+    if isinstance(v, bool) or not isinstance(v, int) or v < 1:
+        raise PipelineError(f"{project}: max_parallel must be an integer >= 1, not {v!r}")
+    return v
+
+
 def mcp_config(servers: dict) -> Path | None:
     """The `--mcp-config` file Claude Code wants: `mcpServers` keyed by name,
     with `readonly` stripped -- that key is the pipeline's own, read by

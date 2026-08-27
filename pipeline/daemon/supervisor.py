@@ -16,8 +16,8 @@ from pipeline import __version__
 from pipeline.core import PipelineError
 from pipeline.core.config import (compose_prompt, format_test_cmd, harness,
                                   is_readonly, mcp_config, mcp_servers,
-                                  project_config, readonly_allow, render,
-                                  stage_config,
+                                  project_config, project_max_parallel,
+                                  readonly_allow, render, stage_config,
                                   stage_settings)
 from pipeline.core.fence import fenced_touches
 from pipeline.core.gate import gate, plan_steps, structural_only
@@ -1165,14 +1165,38 @@ def shut_down(project: Path, inflight: dict) -> None:
     inflight.clear()
 
 
+def _start_cap(project: Path, max_parallel: int) -> int:
+    """A project's `max_parallel` lowers the daemon `-j`, it never raises it.
+
+    `project_max_parallel()` can raise on a bad value, and this is the only
+    place that call happens: `tick()` must not raise it onward. `run()`
+    (`pipeline/daemon/supervisor.py:1326`) does not wrap its `tick()` call, so
+    a raise there would reach `finally: shut_down(project, inflight)` and
+    SIGTERM every inflight child. A bad value is printed and ignored instead,
+    falling back to `max_parallel` -- exactly the behaviour before this key
+    existed.
+    """
+    try:
+        cap = project_max_parallel(project)
+    except PipelineError as e:
+        print(f"  {project}: ignoring max_parallel ({e})")
+        return max_parallel
+    if cap is None:
+        return max_parallel
+    return min(max_parallel, cap)
+
+
 def tick(project: Path, hcfg: dict, inflight: dict, max_parallel: int = 3,
          poller: Poller | None = None, emit=noop, stopping=lambda: False) -> bool:
     """One pass over one project: reap what finished, start what can start.
     The whole loop body, so the daemon can run it for many projects and
-    `pipeline run` can run it for one."""
+    `pipeline run` can run it for one. The start cap is the smaller of the
+    `-j` argument and the project's own `max_parallel` key."""
     worked = reap(project, inflight, emit)
-    for path in all_tickets(project):
-        if stopping() or len(inflight) >= max_parallel:
+    tickets = all_tickets(project)
+    cap = _start_cap(project, max_parallel) if tickets else max_parallel
+    for path in tickets:
+        if stopping() or len(inflight) >= cap:
             break
         try:
             tid = Ticket.load(path).id
