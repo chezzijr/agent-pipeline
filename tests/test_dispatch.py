@@ -1298,3 +1298,58 @@ def test_a_passing_gate_child_hands_the_ticket_to_the_plan_validation_agent():
     supervisor.close_child(rec)
     s.close()
     shutil.rmtree(d, ignore_errors=True)
+
+
+def test_structural_only_classifies_a_gate_finding():
+    """An allowlist matched with `startswith`: a substantive finding whose
+    fenced output quotes a structural finding's text verbatim must not read
+    as structural."""
+    from pipeline.core.gate import structural_only
+
+    structural = "plan line is not a numbered step -- the plan reads as prose: 'x'"
+    substantive = ("`t.py::x` PASSES -- it must fail before implementation\n"
+                   "```\nplan line is not a numbered step\n```")
+    assert structural_only([structural]) is True
+    assert structural_only([substantive]) is False
+    assert structural_only([structural, substantive]) is False
+    assert structural_only([]) is False
+    assert structural_only(
+        ["gate child exit 2 left no readable findings (JSONDecodeError: x)"]) is False
+
+
+def test_a_gate_verdict_picks_its_result_string():
+    """Only `plan-validation` splits `fail` into `bad-plan`: `revalidating`
+    always gets `fail`, so a stale plan charges `stale_regate` (DEC-029) and
+    never escalates through an unknown `(revalidating, bad-plan)` pair."""
+    assert supervisor.gate_result(True, [], "plan-validation") == "ok"
+    assert supervisor.gate_result(
+        False, ["`files_declared` is empty"], "plan-validation") == "fail"
+    assert supervisor.gate_result(
+        False, ["test file /x/test_thing.py does not exist"],
+        "plan-validation") == "bad-plan"
+    assert supervisor.gate_result(
+        False, ["`files_declared` is empty"], "revalidating") == "fail"
+
+
+def test_a_tier_b_rejection_charges_the_plan_not_the_structural_counter():
+    """Tier B judges the plan's content and has no structural half, so its
+    `fail` is a bad plan by definition: `_finish()` remaps it to `bad-plan`
+    before it reaches `transition()`."""
+    d = project()
+    path = d / ".project/tickets/TICKET-001.md"
+    snap = Ticket.load(path)
+
+    T.result_file(d, "TICKET-001").write_text(
+        "result: fail\nsummary: the plan skips the migration\n")
+    log = d / ".project" / "logs" / "TICKET-001.log"
+    log.parent.mkdir(parents=True, exist_ok=True)
+    rec = {"fh": log.open("w"), "prompt": d / "gone.md", "settings": None,
+           "path": path, "tid": "TICKET-001", "stage": "plan-validation",
+           "session": "s1", "log": log, "wt": d, "meta": snap, "before": None}
+    supervisor.finish(d, rec)
+
+    t = Ticket.load(path)
+    assert t.stage == "planning"
+    assert t.counters["plan_validation_attempts"] == 1
+    assert "structural_gate_failures" not in t.counters
+    shutil.rmtree(d, ignore_errors=True)

@@ -19,7 +19,7 @@ from pipeline.core.config import (compose_prompt, harness, is_readonly,
                                   readonly_allow, render, stage_config,
                                   stage_settings)
 from pipeline.core.fence import fenced_touches
-from pipeline.core.gate import gate, plan_steps
+from pipeline.core.gate import gate, plan_steps, structural_only
 from pipeline.core.machine import (CLEANUP_STAGES, CONTROL_FIELDS,
                                    HUMAN_GATES, MAX_ATTEMPTS, TERMINAL,
                                    apply_claims, bound_for, conflict_holder,
@@ -886,6 +886,18 @@ def read_findings(rec: dict, code: int) -> tuple[bool, list[str]]:
     return ok, failures
 
 
+def gate_result(ok: bool, failures: list[str], stage: str) -> str:
+    """The verdict string a Tier A gate's outcome charges. Only `plan-validation`
+    splits `fail` in two: `revalidating` always gets `fail`, because
+    `("revalidating", "bad-plan")` is an unknown pair that would escalate a
+    stale plan instead of charging `stale_regate` (DEC-029)."""
+    if ok:
+        return "ok"
+    if stage == "plan-validation" and not structural_only(failures):
+        return "bad-plan"
+    return "fail"
+
+
 def finish_gate(project: Path, rec: dict, emit=noop) -> str:
     """Apply the Tier A gate child's verdict. A PASS at `plan-validation` is a
     phase of the stage, not an ended attempt: it is recorded in
@@ -906,8 +918,9 @@ def finish_gate(project: Path, rec: dict, emit=noop) -> str:
         t.release_lease()
         t.save()
         return GATE_PASS
-    advance(project, t, "ok" if ok else "fail", note, emit, agent=False)
-    return "ok" if ok else "fail"
+    res = gate_result(ok, failures, t.stage)
+    advance(project, t, res, note, emit, agent=False)
+    return res
 
 
 def finish_regate(project: Path, rec: dict, emit=noop) -> str:
@@ -1074,6 +1087,12 @@ def _finish(project: Path, rec: dict, emit=noop) -> str:
     drop_result(project, tid)
 
     result = res.get("result", "fail")
+    # Tier B judges the plan's content and has no structural half, so its
+    # `fail` is a bad plan by definition. The dispatcher classifies rather
+    # than the prompt: a stage that could pick `fail` over `bad-plan` would
+    # be choosing its own budget (invariant 1).
+    if stage == "plan-validation" and result == "fail":
+        result = "bad-plan"
     advance(project, t, result, res.get("summary", ""), emit)
     return result
 

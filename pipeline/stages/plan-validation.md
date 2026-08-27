@@ -35,4 +35,4 @@ fail.
 Do not comment on code style or conventions. That is the review stage's job,
 and raising it here turns you into a prose nitpicker.
 
-`result`: `ok` (all items pass) | `fail` (append per-item findings first)
+`result`: `ok` (all items pass) | `fail` (append per-item findings first; the dispatcher records it as `bad-plan`)
