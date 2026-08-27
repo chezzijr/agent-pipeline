@@ -13,6 +13,7 @@ import tomllib
 from pathlib import Path
 
 from pipeline.core import PipelineError
+from pipeline.core.machine import USD_SCALED, cap_for
 from pipeline.core.ticket import split_frontmatter
 from pipeline.core.worktree import head_file, run_cmd
 
@@ -59,6 +60,18 @@ def stage_config(stage: str, project: Path | None = None) -> dict:
     """
     meta, _ = split_frontmatter(STAGES_DIR / f"{stage}.md")
     return {**meta, **project_stage_config(project, stage)}
+
+
+def cap_config(stage: str, cfg: dict, project: Path | None, counters: dict) -> dict:
+    """`cfg`, with `counters` attached when `stage` should scale its dollar
+    cap. A computed cap never exceeds the operator's own `max_usd` unless the
+    operator also sets `scale_usd = true` -- the same direction as the
+    TICKET-069 rule."""
+    override = project_stage_config(project, stage)
+    want = override.get("scale_usd")
+    if want is None:
+        want = stage in USD_SCALED and "max_usd" not in override
+    return {**cfg, "counters": counters} if want else cfg
 
 
 def agent_stages() -> list[str]:
@@ -337,8 +350,13 @@ def stage_cap(cfg: dict, hcfg: dict):
     """The dollar cap a stage spawns under: its own frontmatter, then the
     harness default, then 5. One definition, because `_finish()` names the
     cap a budget-killed stage hit and it must be the number `render()`
-    passed."""
-    return cfg.get("max_usd", hcfg.get("max_usd", 5))
+    passed.
+
+    `cfg["counters"]` is the plan size the cap scales by. Its absence means
+    no scaling. The scaling lives here, rather than at the `render()` call
+    site, so `rec["cap"]` in `pipeline/daemon/supervisor.py` names the same
+    number the rendered flag does (DEC-077)."""
+    return cap_for(cfg.get("max_usd", hcfg.get("max_usd", 5)), cfg.get("counters") or {})
 
 
 def render(hcfg: dict, cfg: dict, *, tid: str, project: Path, ticket: Path,
