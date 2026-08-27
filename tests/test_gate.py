@@ -346,6 +346,19 @@ def test_a_fenced_block_indented_under_a_criterion_is_part_of_it():
     shutil.rmtree(d)
 
 
+def test_a_criterion_naming_a_command_and_its_expected_output_is_accepted():
+    """TICKET-079: a criterion that names a command plus its observable
+    result is falsifiable even though it names no test node id. The current
+    regex only recognises a test-shaped token, so this reproduces the
+    reported false rejection."""
+    d = project(FIXTURE.replace(
+        "- `test_broken` passes",
+        "- `grep -c 'on an unreadable root' docs/stdlib.md` prints `0`"))
+    ok, failures = gate(d, "TICKET-001")
+    assert ok, failures
+    shutil.rmtree(d)
+
+
 def test_gate_blocks_a_failure_that_is_not_the_reported_one():
     """A red test proves nothing if it is red for the wrong reason."""
     d = project(FIXTURE.replace("expect: test_broken", "expect: KeyError: 'evict'"))
