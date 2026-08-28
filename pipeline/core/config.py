@@ -160,6 +160,28 @@ def project_config(project: Path) -> dict:
     return tomllib.loads(text)
 
 
+def config_source(project: Path) -> str:
+    """Where `project_config()` would read from: "head" (committed),
+    "pinned" (git will never have it), or "disk" (not yet committed)."""
+    if head_file(project, ".project/pipeline.toml") is not None:
+        return "head"
+    if git_ignored(project, ".project/pipeline.toml"):
+        return "pinned"
+    return "disk"
+
+
+def sync_pins(project: Path) -> list[Path]:
+    """Drop every pinned file for `project`, so the next `project_config()`
+    or `stage_extra()` call re-pins from the current disk copy. This is the
+    operator's only way to adopt an edit on a project git will never have."""
+    d = pin_dir(project)
+    if not d.exists():
+        return []
+    removed = sorted(p for p in d.rglob("*") if p.is_file() and p != d / "project")
+    shutil.rmtree(d, ignore_errors=True)
+    return removed
+
+
 TEST_PLACEHOLDER_RE = re.compile(r"\{(test|path|name)\}")
 
 

@@ -12,7 +12,10 @@ from pathlib import Path
 from pipeline.cli import metrics
 from pipeline.cli.client import connect
 from pipeline.core import PipelineError, line_buffer_stdout
-from pipeline.core.config import CONFIG_TEMPLATE, SKILLS_DIR, TICKET_TEMPLATE, selector_failure, suite_failure
+from pipeline.core.config import (CONFIG_TEMPLATE, SKILLS_DIR, TICKET_TEMPLATE,
+                                  config_source, pin_dir, pin_path,
+                                  project_config, selector_failure,
+                                  suite_failure, sync_pins)
 from pipeline.core.gate import gate
 from pipeline.core.machine import KNOWN_STAGES
 from pipeline.core.ticket import Ticket, now, tickets_dir
@@ -72,6 +75,10 @@ def cmd_init(args) -> None:
         wrote = exclude_project_dir(project)
         print(f"  excluded `.project/` in {wrote} -- this clone only" if wrote
               else "  `.project/` already excluded (or this is not a git repo)")
+        print(f"  {cfg} will never be in git here -- it is pinned at "
+              f"{pin_path(project, '.project/pipeline.toml')}")
+        print(f"  an unsynced edit is inert -- run "
+              f"`pipeline --project {project} config --sync` to adopt it")
 
 
 def cmd_new(args) -> None:
@@ -103,6 +110,27 @@ def cmd_gate(args) -> None:
         print(f"FAIL: {f}")
     print("gate: PASS" if ok else "gate: FAIL")
     sys.exit(0 if ok else 1)
+
+
+def cmd_config(args) -> None:
+    project = proj(args)
+    if args.sync:
+        removed = sync_pins(project)
+        print(f"unpinned {len(removed)} file(s) from {pin_dir(project)}" if removed
+              else "nothing pinned for this project")
+    src = config_source(project)
+    print(f"project: {project}")
+    print(f"source:  {src}")
+    if src == "pinned":
+        pin = pin_path(project, ".project/pipeline.toml")
+        print(f"pin:     {pin}")
+        disk = project / ".project" / "pipeline.toml"
+        if pin.is_file() and (not disk.is_file() or pin.read_text() != disk.read_text()):
+            print("warning: the working tree differs from the pin -- "
+                  "run `pipeline config --sync` to adopt it")
+    cfg = project_config(project)
+    for k in ("test_one", "test_suite", "test_suite_without_new", "base"):
+        print(f"{k} = {cfg.get(k)!r}")
 
 
 # what the approval gate asks about: the plan, its criteria, its undo path
@@ -327,6 +355,9 @@ def cmd_register(args) -> None:
         if problem:
             raise PipelineError(problem)
     print(f"registered {registry.register(path)}")
+    if config_source(path) == "pinned":
+        print(f"  its .project/pipeline.toml is pinned -- run "
+              f"`pipeline --project {path} config --sync` after an edit")
 
 
 def cmd_unregister(args) -> None:
@@ -584,6 +615,7 @@ def main() -> None:
     p = sub.add_parser("init"); p.add_argument("dir", nargs="?", default=None); p.add_argument("--private", action="store_true", help="hide .project/ from git in this clone only (.git/info/exclude)"); p.set_defaults(fn=cmd_init)
     p = sub.add_parser("new"); p.add_argument("title"); p.add_argument("--class", dest="cls", default="bugfix"); p.set_defaults(fn=cmd_new)
     p = sub.add_parser("gate"); p.add_argument("id"); p.add_argument("--findings", help="write {ok, findings} JSON here; the dispatcher's gate child reads it back"); p.set_defaults(fn=cmd_gate)
+    p = sub.add_parser("config", help="where the dispatcher reads this project's pipeline.toml"); p.add_argument("--sync", action="store_true", help="adopt the working tree's config on a project git will never have"); p.set_defaults(fn=cmd_config)
     p = sub.add_parser("plan"); p.add_argument("id"); p.set_defaults(fn=cmd_plan)
     p = sub.add_parser("approve"); p.add_argument("id"); p.add_argument("--by"); p.set_defaults(fn=cmd_approve)
     p = sub.add_parser("reject"); p.add_argument("id"); p.add_argument("reason"); p.set_defaults(fn=cmd_reject)

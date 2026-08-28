@@ -604,3 +604,31 @@ def test_register_force_skips_both_test_command_checks():
     assert r.returncode == 0, r.stdout + r.stderr
     assert f"registered {d}" in r.stdout
     shutil.rmtree(d, ignore_errors=True)
+
+
+def test_config_reports_the_pinned_source_and_sync_adopts_an_edit():
+    """`pipeline config` names the pin and warns on divergence; `--sync` is
+    the only way to adopt an edit on a project git will never have."""
+    d = Path(tempfile.mkdtemp())
+    subprocess.run("git init -qb main", shell=True, cwd=d)
+    cli(d, "init", "--private")
+    assert "source:  pinned" in cli(d, "config").stdout
+    (d / ".project" / "pipeline.toml").write_text(
+        'test_one="edited"\ntest_suite="true"\n'
+        'test_suite_without_new="true"\nbase="main"\n')
+    out = cli(d, "config").stdout
+    assert "pipeline config --sync" in out
+    assert "'edited'" not in out
+    synced = cli(d, "config", "--sync")
+    assert synced.returncode == 0, synced.stdout + synced.stderr
+    assert "'edited'" in cli(d, "config").stdout
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_init_private_and_register_both_name_the_pin():
+    """Both commands print the sync command on a `--private` project."""
+    d = Path(tempfile.mkdtemp())
+    subprocess.run("git init -qb main", shell=True, cwd=d)
+    assert "config --sync" in cli(d, "init", "--private").stdout
+    assert "pinned" in cli(d, "register", "--force", str(d)).stdout
+    shutil.rmtree(d, ignore_errors=True)
