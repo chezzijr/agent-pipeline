@@ -383,6 +383,18 @@ def test_the_config_docs_name_every_test_placeholder():
         assert "sed 's/.*:://'" not in text, f"{p} still splits the test id in shell"
 
 
+def test_the_config_skill_names_every_knob_the_code_reads():
+    """TICKET-084: `max_usd`, `scale_usd`, `worktree_setup`, the
+    `.project/stages/<name>.extra.md` prose append, and `pinned` are all
+    knobs the pipeline reads, but landed in the code across 2026-08-27
+    without a matching update to the skill a session reads before writing
+    `.project/pipeline.toml`."""
+    skill = C.SKILLS_DIR / "pipeline-config" / "SKILL.md"
+    text = skill.read_text()
+    for knob in ("max_usd", "scale_usd", "worktree_setup", "extra.md", "pinned"):
+        assert knob in text, f"{skill} does not mention {knob!r}"
+
+
 def test_stage_config_can_take_a_per_project_override(tmp_path):
     """TICKET-038: `stage_config()` resolves against the packaged stage only,
     with no way for a project to add a model, tool or skill of its own. A
