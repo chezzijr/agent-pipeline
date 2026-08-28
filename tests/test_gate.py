@@ -161,16 +161,36 @@ def test_gate_blocks_a_test_that_already_passes():
     shutil.rmtree(d)
 
 
-def test_gate_distinguishes_a_selector_matching_nothing_from_a_real_pass():
-    """`test_one` exiting 0 without ever naming the test is a runner whose
-    filter matched zero tests, not a passing reproduction -- TICKET-064."""
+def test_gate_fails_an_exit_zero_test_and_names_both_causes():
+    """`test_one` exiting 0 without ever naming the test is either a
+    passing reproduction or a runner whose filter matched zero tests
+    (TICKET-064). No portable signal separates them -- a runner names a
+    node only on failure (TICKET-071) -- so one finding names both."""
     d = project()
     (d / ".project" / "pipeline.toml").write_text(
         'test_one = "true"\ntest_suite = "true"\ntest_suite_without_new = "true"\n')
     ok, failures = gate(d, "TICKET-001")
     assert not ok
-    assert not any("PASSES -- it must fail before implementation" in f
-                   for f in failures), failures
+    zero = [f for f in failures if "exited 0" in f]
+    assert len(zero) == 1, failures
+    assert "PASSES" in zero[0] and "matched no test" in zero[0], zero
+    shutil.rmtree(d)
+
+
+def test_gate_reports_a_pytest_style_pass_as_a_pass_not_a_bad_selector():
+    """TICKET-071: pytest names a node only when it FAILS -- a genuine pass
+    prints a dot and a count, never the node name. `code == 0 and node in out`
+    is false for every real pass, so the gate falls into the TICKET-064
+    branch and calls it a selector matching nothing, which is the wrong
+    diagnosis for a project like this one."""
+    d = project()
+    (d / ".project" / "pipeline.toml").write_text(
+        'test_one = "echo \'.                                    [100%]\'; '
+        'echo \'1 passed in 0.03s\'; exit 0"\n'
+        'test_suite = "true"\ntest_suite_without_new = "true"\n')
+    ok, failures = gate(d, "TICKET-001")
+    assert not ok
+    assert not any("selector matched nothing" in f for f in failures), failures
     shutil.rmtree(d)
 
 
@@ -566,6 +586,25 @@ def test_gate_blocks_a_test_that_passes_on_base():
     ok, failures = gate(d, "TICKET-001", workdir=wt)
     assert not ok, "gate passed a test that does not fail on base"
     assert any("base" in f for f in failures), failures
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_gate_names_both_causes_when_the_test_exits_zero_on_base():
+    """The base run carries the branch run's exit-0 ambiguity: `test_one`
+    exits 0 on base without printing the node, which is a pass there or a
+    selector that matched nothing, and nothing separates them. No literal
+    brace in the command -- `str.format` raises KeyError on one."""
+    d, wt = _git_ticket_project("fixed\n", "buggy\n")
+    (d / ".project" / "pipeline.toml").write_text(
+        'test_one = "grep -q fixed f.py && exit 0; echo test_broken; exit 1"\n'
+        'test_suite = "true"\ntest_suite_without_new = "true"\nbase = "main"\n')
+    subprocess.run("git add -A && git commit -qm cfg", shell=True, cwd=d,
+                   capture_output=True, text=True)
+    ok, failures = gate(d, "TICKET-001", workdir=wt)
+    assert not ok
+    zero = [f for f in failures if "exited 0 on base" in f]
+    assert len(zero) == 1, failures
+    assert "matched no test" in zero[0], zero
     shutil.rmtree(d, ignore_errors=True)
 
 

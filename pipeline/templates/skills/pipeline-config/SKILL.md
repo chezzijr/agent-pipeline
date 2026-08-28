@@ -1,6 +1,6 @@
 ---
 name: pipeline-config
-description: Set up or fix this project's .project/pipeline.toml for the agent pipeline. Use when the pipeline was just installed here, when a stage or the Tier A gate runs the wrong test command, when the gate says a test "errored rather than failed" or "PASSES -- it must fail", or when the user says "configure the pipeline", "set up pipeline.toml", "the pipeline can't run my tests".
+description: Set up or fix this project's .project/pipeline.toml for the agent pipeline. Use when the pipeline was just installed here, when a stage or the Tier A gate runs the wrong test command, when the gate says a test "errored rather than failed" or "exited 0 -- it must fail before implementation", or when the user says "configure the pipeline", "set up pipeline.toml", "the pipeline can't run my tests".
 ---
 
 # Configuring `.project/pipeline.toml`

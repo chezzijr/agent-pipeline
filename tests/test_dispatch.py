@@ -1440,7 +1440,7 @@ def test_structural_only_classifies_a_gate_finding():
     from pipeline.core.gate import structural_only
 
     structural = "plan line is not a numbered step -- the plan reads as prose: 'x'"
-    substantive = ("`t.py::x` PASSES -- it must fail before implementation\n"
+    substantive = ("`t.py::x` exited 0 -- it must fail before implementation\n"
                    "```\nplan line is not a numbered step\n```")
     assert structural_only([structural]) is True
     assert structural_only([substantive]) is False
