@@ -28,6 +28,10 @@ DIGEST_SHORT_RE = re.compile(r"^\s*digest-short:\s*\S", re.M)
 # all `SAFE_DEC_ID` allows. A `TICKET-012` in this section is prose, not a citation.
 DEC_ID_RE = re.compile(r"\bDEC-\d{1,6}\b")
 
+# A bare `{test}` in `test_suite_without_new` substitutes every listed test
+# space-joined, and `pytest --deselect a b` deselects `a` and SELECTS `b`.
+BARE_PLACEHOLDER_RE = re.compile(r"[{](test|path|name)[}]")
+
 # The next two constants paraphrase `## Plan` in `pipeline/stages/planning.md`
 # and must be changed together.
 PLAN_STEP_RULE = (
@@ -447,20 +451,34 @@ def gate(project: Path, tid: str, workdir: Path | None = None) -> tuple[bool, li
             findings += _base_findings(project, cfg, wd, [x for x, _ in reproduced])
         if runnable:
             names = " ".join(f"`{x}`" for x in runnable)
-            suite_cmd = format_tests_cmd(cfg["test_suite_without_new"], runnable)
-            code, out = run_cmd(suite_cmd, wd)
-            if code != 0 and suite_ran(code, out):
+            bare = next((m for m in BARE_PLACEHOLDER_RE.finditer(
+                cfg["test_suite_without_new"])
+                if len({selector_parts(x)[m.group(1)] for x in runnable}) > 1), None)
+            if bare:
                 findings.append(
-                    f"suite excluding {names} is RED -- pre-existing breakage, "
-                    f"fix that first\n```\n{out[-1200:]}\n```"
-                )
-            elif code != 0:
-                findings.append(
-                    f"could not run the suite excluding {names}: {suite_cmd!r} "
-                    f"exited {code} and reported no test result, so pre-existing "
-                    f"breakage is neither proven nor ruled out -- fix "
-                    f"`test_suite_without_new` in `.project/pipeline.toml`"
-                    f"\n```\n{out[-1200:]}\n```")
+                    f"`test_suite_without_new` substitutes a bare `{bare.group(0)}` "
+                    f"and this ticket names {len(runnable)} tests -- a flag that "
+                    f"takes one value at a time excludes only the first, and the "
+                    f"rest come back as pre-existing breakage. Write "
+                    f"`{{{bare.group(1)}:<flag> }}` (pytest: "
+                    f"`pytest {{test:--deselect }}`) in `.project/pipeline.toml`, "
+                    f"or `{{{bare.group(1)}:}}` if the runner takes them all "
+                    f"after one flag")
+            else:
+                suite_cmd = format_tests_cmd(cfg["test_suite_without_new"], runnable)
+                code, out = run_cmd(suite_cmd, wd)
+                if code != 0 and suite_ran(code, out):
+                    findings.append(
+                        f"suite excluding {names} is RED -- pre-existing breakage, "
+                        f"fix that first\n```\n{out[-1200:]}\n```"
+                    )
+                elif code != 0:
+                    findings.append(
+                        f"could not run the suite excluding {names}: {suite_cmd!r} "
+                        f"exited {code} and reported no test result, so pre-existing "
+                        f"breakage is neither proven nor ruled out -- fix "
+                        f"`test_suite_without_new` in `.project/pipeline.toml`"
+                        f"\n```\n{out[-1200:]}\n```")
 
     dec = secs.get("Decisions checked", "")
     cited = sorted(set(DEC_ID_RE.findall(dec)))
