@@ -336,8 +336,10 @@ def cmd_ls(args) -> None:
               f"{r.get('class', '?'):<9} {r.get('counters', {})} {mark}")
         last = r.get("last_session")
         if last and args.verbose:
+            cost = (f" cost=${last['cost_usd']:.2f}"
+                    if last.get("cost_usd") is not None else "")
             print(f"{'':<12} last: {last['stage']} log={last['log']} "
-                  f"replay=`claude --resume {last['id']}`")
+                  f"replay=`claude --resume {last['id']}`{cost}")
 
 
 # -- the registry -------------------------------------------------------

@@ -1654,4 +1654,73 @@ def test_the_session_thread_entry_reports_cost_and_tokens():
     msg = entries[-1]
     assert "6.09" in msg or "$6" in msg, (
         f"session thread entry has no trace of the run's cost:\n{msg}")
+    assert "- cost: $6.09" in msg
+    assert ("- tokens: 80,906 out · 0 in · 4,393,384 cache read · 0 cache write"
+            in msg)
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_the_session_entry_names_the_budget_cap_and_the_thinking_tokens():
+    """TICKET-085: the cap and the thinking-token count are both optional
+    parts of the line -- a cap of 0/None omits ` of a $N cap`, and 0 thinking
+    tokens omits `(N thinking)`. This is the case where both are present."""
+    d = project()
+    path = d / ".project/tickets/TICKET-001.md"
+    snap = Ticket.load(path)
+
+    log = d / ".project" / "logs" / "TICKET-001.log"
+    log.parent.mkdir(parents=True, exist_ok=True)
+    (d / ".project/tickets/TICKET-001.result").write_text(
+        "result: ok\nsummary: x\n")
+
+    rec = {"fh": log.open("w"), "prompt": d / "gone.md", "settings": None,
+           "path": path, "tid": "TICKET-001", "stage": "plan-validation",
+           "session": "s1", "log": log, "wt": d, "meta": snap,
+           "before": None, "cap": 10}
+
+    sink = supervisor.terminal_sink(
+        rec, supervisor.event_sink(rec["tid"], rec["stage"], rec["session"],
+                                    lambda *a, **k: None))
+    sink({"kind": "result", "total_cost_usd": 6.089121,
+          "usage": {"output_tokens": 80906, "input_tokens": 74,
+                     "cache_read_input_tokens": 4393384,
+                     "cache_creation_input_tokens": 186837,
+                     "output_tokens_details": {"thinking_tokens": 31412}},
+          "terminal_reason": None})
+
+    supervisor.finish(d, rec)
+    t = Ticket.load(path)
+    entries = [e.text for e in t.thread() if "ran as session" in e.text]
+    msg = entries[-1]
+    assert "- cost: $6.09 of a $10 cap" in msg
+    assert ("- tokens: 80,906 out (31,412 thinking) · 74 in · "
+            "4,393,384 cache read · 186,837 cache write" in msg)
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_the_session_entry_omits_cost_when_no_result_event_arrived():
+    """TICKET-085: an interactive stage emits no `result` event (DEC-077),
+    so its session entry must not gain a zero-dollar line -- that would read
+    as a free run rather than an unmeasured one."""
+    d = project()
+    path = d / ".project/tickets/TICKET-001.md"
+    snap = Ticket.load(path)
+
+    log = d / ".project" / "logs" / "TICKET-001.log"
+    log.parent.mkdir(parents=True, exist_ok=True)
+    (d / ".project/tickets/TICKET-001.result").write_text(
+        "result: ok\nsummary: x\n")
+
+    rec = {"fh": log.open("w"), "prompt": d / "gone.md", "settings": None,
+           "path": path, "tid": "TICKET-001", "stage": "plan-validation",
+           "session": "s1", "log": log, "wt": d, "meta": snap,
+           "before": None, "cap": 10, "cost_usd": None, "usage": {}}
+
+    supervisor.finish(d, rec)
+    t = Ticket.load(path)
+    entries = [e.text for e in t.thread() if "ran as session" in e.text]
+    msg = entries[-1]
+    assert "- replay:" in msg
+    assert "- cost:" not in msg
+    assert "- tokens:" not in msg
     shutil.rmtree(d, ignore_errors=True)

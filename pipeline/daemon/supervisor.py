@@ -277,10 +277,48 @@ def terminal_sink(rec: dict, inner):
     which nothing reads back inside one tick.
     """
     def sink(ev: dict) -> None:
-        if ev.get("kind") == "result" and ev.get("terminal_reason"):
-            rec["terminal_reason"] = ev["terminal_reason"]
+        if ev.get("kind") == "result":
+            if ev.get("terminal_reason"):
+                rec["terminal_reason"] = ev["terminal_reason"]
+            rec["cost_usd"] = ev.get("total_cost_usd")
+            rec["usage"] = ev.get("usage") or {}
         inner(ev)
     return sink
+
+
+def _int(v) -> int:
+    try:
+        return int(v or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def cost_report(rec: dict) -> str:
+    """Render a run's cost and tokens for the session thread entry.
+
+    `""` when no `result` event arrived (an interactive stage, DEC-077):
+    a zero-dollar line there would read as a free run rather than an
+    unmeasured one. Every number is coerced, so a malformed `usage` never
+    raises -- it renders zeros instead.
+    """
+    if rec.get("cost_usd") is None:
+        return ""
+    cost = f"${float(rec['cost_usd']):.2f}"
+    if rec.get("cap"):
+        cost += f" of a ${rec['cap']} cap"
+    usage = rec.get("usage") or {}
+    out = _int(usage.get("output_tokens"))
+    thinking = _int(usage.get("output_tokens_details", {}).get("thinking_tokens")
+                     if isinstance(usage.get("output_tokens_details"), dict) else None)
+    inp = _int(usage.get("input_tokens"))
+    cache_read = _int(usage.get("cache_read_input_tokens"))
+    cache_write = _int(usage.get("cache_creation_input_tokens"))
+    out_part = f"{out:,} out"
+    if thinking:
+        out_part += f" ({thinking:,} thinking)"
+    tokens = (f"{out_part} · {inp:,} in · {cache_read:,} cache read "
+              f"· {cache_write:,} cache write")
+    return f"\n- cost: {cost}\n- tokens: {tokens}"
 
 
 def usage_events(session: str) -> list[dict]:
@@ -467,6 +505,7 @@ def spawn(project: Path, wt: Path, tid: str, stage: str, hcfg: dict,
            "poller": poller, "pipe": None, "reader": None,
            "screen": None, "writer": None,
            "terminal_reason": None, "cap": stage_cap(cfg, hcfg),
+           "cost_usd": None, "usage": {},
            "sink": event_sink(tid, stage, session, emit)}
     rec["sink"] = terminal_sink(rec, rec["sink"])
     if interactive or poller:
@@ -1066,9 +1105,11 @@ def _finish(project: Path, rec: dict, emit=noop) -> str:
 
     t.append(stage, "session", f"`{stage}` ran as session `{session}`\n"
                                f"- replay: `claude --resume {session}`\n"
-                               f"- log: `{log.relative_to(project)}`", session=session)
+                               f"- log: `{log.relative_to(project)}`"
+                               + cost_report(rec), session=session)
     t.extra["last_session"] = {"stage": stage, "id": session,
-                               "log": str(log.relative_to(project))}
+                               "log": str(log.relative_to(project)),
+                               "cost_usd": rec.get("cost_usd")}
 
     if tampered:
         drop_result(project, tid)

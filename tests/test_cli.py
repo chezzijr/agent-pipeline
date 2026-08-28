@@ -287,6 +287,22 @@ def test_ls_says_running_is_unknown_when_no_daemon_answers():
     shutil.rmtree(d)
 
 
+def test_ls_v_prints_the_last_session_cost():
+    """TICKET-085: `-v` names the cost of a ticket's last spawned session,
+    read with `.get` because a ticket written before this change has no
+    `cost_usd` key."""
+    d = Path(tempfile.mkdtemp())
+    cli(d, "new", "t")
+    t = Ticket.load(d / ".project/tickets/TICKET-001.md")
+    t.extra["last_session"] = {"stage": "planning", "id": "s1",
+                                "log": ".project/logs/x.log",
+                                "cost_usd": 6.089121}
+    t.save()
+    r = cli(d, "ls", "-v")
+    assert "cost=$6.09" in r.stdout, r.stdout
+    shutil.rmtree(d)
+
+
 def test_reject_returns_a_plan_with_its_reason():
     d = Path(tempfile.mkdtemp())
     cli(d, "new", "t")

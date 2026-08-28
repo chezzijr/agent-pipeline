@@ -365,13 +365,17 @@ Every spawn gets a session id and a log:
 $ pipeline --project ~/code/myproject ls -v
 TICKET-001   review    bugfix  {'review_loops': 1, ...}
              last: review log=.project/logs/TICKET-001-review-3582ef02.log
-                   replay=`claude --resume 3582ef02-...`
+                   replay=`claude --resume 3582ef02-...` cost=$6.09
 ```
 
 `tail -f` the log while it runs, or `pipeline logs <id> -f` to pretty-print it;
 `claude --resume <id>` to open the session and see what the agent actually did.
 Under the daemon the child's stdout comes back over a pipe, but it is *teed* to
 the same log file -- otherwise both of those stop working.
+
+The cost is that run's own `total_cost_usd` from the harness's `result` event;
+the ticket's `## Thread` session entry carries the same number plus the run's
+token counts.
 
 ## When a ticket escalates
 
