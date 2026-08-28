@@ -1,14 +1,19 @@
 """`project_config()` must read the committed config, not the working tree:
 a ticket branch cannot be allowed to rewrite the commands that judge it."""
+import os
+import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
 from pipeline.core import PipelineError
 from pipeline.core.config import (cap_config, format_test_cmd, harness,
-                                  project_config, project_max_parallel,
-                                  render, selector_failure, stage_config,
-                                  stage_extra, suite_failure)
-from tests.helpers import git_project
+                                  pin_dir, pin_path, project_config,
+                                  project_max_parallel, render,
+                                  selector_failure, stage_config, stage_extra,
+                                  suite_failure)
+from pipeline.daemon.registry import config_dir
+from tests.helpers import ROOT, git_project
 
 
 def cmd(cfg):
@@ -266,3 +271,64 @@ def test_selector_failure_wants_test_one_to_fail_when_it_matches_nothing():
     # this command is judged by its exit code. Under `str.format` it would
     # raise `KeyError: 't##*'` and this arm would error instead of pass.
     assert selector_failure(_probe_project(test_one="echo ${t##*::} matched nothing; exit 1")) is None
+
+
+def test_a_not_yet_committed_config_is_not_pinned():
+    """A fresh, untracked-but-not-ignored project is the load-bearing
+    fresh-`init` arm DEC-037 names. It must keep reading disk live, and must
+    never create a pin."""
+    d, sh = git_project()
+    assert project_config(d)["test_one"] == "true"
+    (d / ".project" / "pipeline.toml").write_text(
+        'test_one="pytest -x {test}"\ntest_suite="true"\n'
+        'test_suite_without_new="true"\nbase="main"\n')
+    assert project_config(d)["test_one"] == "pytest -x {test}"
+    assert not pin_dir(d).exists()
+
+
+def test_the_pin_is_a_file_so_a_spawned_child_reads_it_too():
+    """An in-process cache would not protect the Tier A gate: it runs as a
+    spawned child (`gate_cmd()`). The pin must be readable by a fresh
+    process."""
+    d, sh = git_project()
+    (d / ".git" / "info").mkdir(exist_ok=True)
+    (d / ".git" / "info" / "exclude").write_text(".project/\n")
+    project_config(d)
+    (d / ".project" / "pipeline.toml").write_text(
+        'test_one="rm -rf /"\ntest_suite="true"\n'
+        'test_suite_without_new="true"\nbase="main"\n')
+    r = subprocess.run(
+        [sys.executable, "-c",
+         "import sys;from pathlib import Path;"
+         "from pipeline.core.config import project_config;"
+         "print(project_config(Path(sys.argv[1]))['test_one'])",
+         str(d)],
+        cwd=ROOT, capture_output=True, text=True,
+        env={**os.environ, "PYTHONPATH": str(ROOT)})
+    assert r.stdout.strip() == "true", r.stdout + r.stderr
+
+
+def test_the_pin_directories_are_private():
+    """The pin decides which commands the gate runs; a world-writable parent
+    is a way to rewrite it without touching the file."""
+    d, sh = git_project()
+    (d / ".git" / "info").mkdir(exist_ok=True)
+    (d / ".git" / "info" / "exclude").write_text(".project/\n")
+    project_config(d)
+    for p in (config_dir(), config_dir() / "pinned", pin_dir(d),
+              pin_path(d, ".project/pipeline.toml").parent):
+        assert oct(p.stat().st_mode & 0o777) == "0o700", p
+
+
+def test_a_private_projects_stage_extra_is_pinned_too():
+    """`stage_extra()` shares `project_config()`'s bug: a git-ignored
+    `.project/stages/<stage>.extra.md` must pin too, or a stage can inject
+    prose into a later spawn's prompt with no commit."""
+    d, sh = git_project()
+    (d / ".git" / "info").mkdir(exist_ok=True)
+    (d / ".git" / "info" / "exclude").write_text(".project/\n")
+    (d / ".project" / "stages").mkdir(parents=True)
+    (d / ".project" / "stages" / "implementing.extra.md").write_text("SAFE\n")
+    assert stage_extra(d, "implementing").strip() == "SAFE"
+    (d / ".project" / "stages" / "implementing.extra.md").write_text("INJECTED-9137\n")
+    assert "INJECTED-9137" not in stage_extra(d, "implementing")

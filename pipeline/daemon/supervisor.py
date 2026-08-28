@@ -31,9 +31,9 @@ from pipeline.core.ticket import (Ticket, all_tickets, drop_result,
                                   result_file, stage_view, ticket_path,
                                   tickets_dir, validate_meta)
 from pipeline.core.worktree import (base_ref, dirty_snapshot, drop_worktree,
-                                    ensure_worktree, project_env, run_cmd,
-                                    strip_settings_sources, tree_snapshot,
-                                    worktree)
+                                    ensure_worktree, git_ignored, project_env,
+                                    run_cmd, strip_settings_sources,
+                                    tree_snapshot, worktree)
 from pipeline.daemon import registry
 from pipeline.daemon.server import Poller
 from pipeline.daemon.store import noop
@@ -154,7 +154,7 @@ def advance(project: Path, t: Ticket, result: str, note: str, emit=noop,
     if nxt in CLEANUP_STAGES:
         code, head = run_cmd("git rev-parse --abbrev-ref HEAD", project)
         base = str(project_config(project).get("base", "main"))
-        ignored = run_cmd("git check-ignore -q .project", project)[0] == 0
+        ignored = git_ignored(project, ".project")
         if ignored:
             # A shared repo where not everyone runs the pipeline: `.project/`
             # is excluded (`.gitignore`, or `.git/info/exclude` for one clone

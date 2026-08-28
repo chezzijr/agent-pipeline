@@ -4,9 +4,11 @@ The stage prompts, hooks, harnesses, templates and the file-ticket skill sit
 INSIDE the package: located from the repo root they are simply gone after
 `uv tool install .`.
 """
+import hashlib
 import json
 import re
 import shlex
+import shutil
 import sys
 import tempfile
 import tomllib
@@ -14,8 +16,12 @@ from pathlib import Path
 
 from pipeline.core import PipelineError
 from pipeline.core.machine import USD_SCALED, cap_for
-from pipeline.core.ticket import split_frontmatter
-from pipeline.core.worktree import head_file, run_cmd
+from pipeline.core.ticket import split_frontmatter, write_atomic
+from pipeline.core.worktree import git_ignored, head_file, run_cmd
+# pipeline/daemon/__init__.py is a docstring only, and registry imports only
+# pipeline.core and pipeline.core.ticket, neither of which imports
+# pipeline.core.config -- so this is not an import cycle.
+from pipeline.daemon.registry import config_dir
 
 PKG = Path(__file__).resolve().parent.parent
 STAGES_DIR = PKG / "stages"
@@ -82,6 +88,47 @@ def is_readonly(stage: str, project: Path | None = None) -> bool:
     return not stage_config(stage, project).get("write", False)
 
 
+def pin_dir(project: Path) -> Path:
+    """Where a project's config is pinned when git will never have it
+    (`pipeline init --private`) -- one directory per project, named by a hash
+    of its path so the pin lives outside every repo and every ticket branch."""
+    return config_dir() / "pinned" / hashlib.sha256(str(project).encode()).hexdigest()[:16]
+
+
+def pin_path(project: Path, rel: str) -> Path:
+    return pin_dir(project) / rel
+
+
+def _pin_mkdir(pin: Path) -> None:
+    """`mkdir(parents=True, mode=0o700)` applies the mode to the leaf only, so
+    `pinned/` and the per-project hash directory would otherwise take the
+    umask. The pin decides which commands the gate runs; a world-writable
+    parent is a way to rewrite it without touching the file."""
+    pin.parent.mkdir(parents=True, exist_ok=True)
+    d = pin.parent
+    while True:
+        d.chmod(0o700)
+        if d == config_dir():
+            break
+        d = d.parent
+
+
+def pinned_text(project: Path, rel: str) -> str | None:
+    """The pinned copy of `rel`, refreshed from disk on first read. `None`
+    when `rel` does not exist on disk and nothing was pinned yet."""
+    pin = pin_path(project, rel)
+    if pin.is_file():
+        return pin.read_text()
+    src = project / rel
+    if not src.is_file():
+        return None
+    _pin_mkdir(pin)
+    write_atomic(pin, src.read_text())
+    # names the project the hash stands for, for a human reading the directory
+    write_atomic(pin_dir(project) / "project", str(project) + "\n")
+    return pin.read_text()
+
+
 def project_config(project: Path) -> dict:
     """The project's config as HEAD has it, not as the working tree has it.
 
@@ -94,12 +141,17 @@ def project_config(project: Path) -> dict:
     inert, and a committed one is in the ticket's diff, where `review` sees
     it and `machine.FENCED` parks it at `awaiting-merge`.
 
-    The disk fallback covers a project whose config git does not have:
-    freshly `pipeline init`-ed and not yet committed, or `.project/` excluded
-    from git (`pipeline init --private`). A ticket branch cannot reach it --
-    only a commit on the main checkout can take the file out of HEAD.
+    The disk fallback covers a project whose config git does not have yet:
+    freshly `pipeline init`-ed and not yet committed. A config git will
+    NEVER have -- `.project/` excluded from git (`pipeline init --private`) --
+    is pinned outside the repo on first read instead, under
+    `config_dir()/pinned/`; only `pipeline config --sync` adopts a later
+    edit. A ticket branch cannot reach either -- only a commit, or a sync,
+    on the main checkout can change what this returns.
     """
     text = head_file(project, ".project/pipeline.toml")
+    if text is None and git_ignored(project, ".project/pipeline.toml"):
+        text = pinned_text(project, ".project/pipeline.toml")
     if text is None:
         cfg = project / ".project" / "pipeline.toml"
         if not cfg.is_file():
@@ -322,6 +374,8 @@ def stage_extra(project: Path | None, stage: str) -> str:
         return ""
     rel = f".project/stages/{stage}.extra.md"
     text = head_file(project, rel)
+    if text is None and git_ignored(project, rel):
+        text = pinned_text(project, rel)
     if text is not None:
         return text
     f = project / rel
