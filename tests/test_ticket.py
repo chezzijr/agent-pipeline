@@ -112,6 +112,25 @@ def test_test_file_holds_one_test_or_a_list():
     shutil.rmtree(d)
 
 
+def test_loose_result_reads_a_list_test_file():
+    """The loose parser runs whenever a colon in `summary:` breaks YAML. A
+    two-test triage must survive it in both YAML list spellings. A bare
+    `files_declared:` scalar line stays dropped exactly as it is today:
+    read as a string it would reach the frontmatter, where validate_meta()
+    iterates it one character at a time."""
+    flow = T.loose_result(
+        "result: ok\nsummary: reproduced: two paths\n"
+        "test_file: [a.py::t, b.py::u]\nfiles_declared:\n- x.py\n")
+    assert flow["test_file"] == ["a.py::t", "b.py::u"]
+    assert flow["files_declared"] == ["x.py"]
+    block = T.loose_result(
+        "result: ok\nsummary: reproduced: two paths\n"
+        "test_file:\n- a.py::t\n- b.py::u\n")
+    assert block["test_file"] == ["a.py::t", "b.py::u"]
+    assert T.loose_result("result: ok\ntest_file: a.py::t")["test_file"] == "a.py::t"
+    assert "files_declared" not in T.loose_result("result: ok\nfiles_declared: x.py")
+
+
 def test_a_result_verdict_survives_a_crash_before_it_is_applied():
     d = project()
     T.result_file(d, "TICKET-001").write_text("result: ok\nsummary: x\n")

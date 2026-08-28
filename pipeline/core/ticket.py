@@ -210,6 +210,22 @@ def result_file(project: Path, tid: str) -> Path:
 
 SIDECAR_KEYS = ("result", "summary", "test_file")
 
+# The two keys a sidecar may write as a YAML list. This tuple gates the
+# `- item` collector only; the `key: value` store condition below still
+# consults SIDECAR_KEYS alone. `files_declared` must never be stored from a
+# bare scalar line: as a string it reaches the frontmatter, where
+# validate_meta() iterates it one character at a time and conflict_holder()
+# builds a set of characters out of it.
+BLOCK_LIST_KEYS = ("files_declared", "test_file")
+
+
+def _flow_list(v: str) -> list[str] | None:
+    """`[a, b]` to `["a", "b"]`; anything else to None. The flow form is
+    what an agent writes on one line, and this parser is line-based."""
+    if not (v.startswith("[") and v.endswith("]")):
+        return None
+    return [i.strip().strip("'" + '"') for i in v[1:-1].split(",") if i.strip()]
+
 
 def loose_result(text: str) -> dict:
     """The sidecar when YAML will not read it.
@@ -226,24 +242,28 @@ def loose_result(text: str) -> dict:
     `files_declared`. Nothing here is trusted -- `apply_claims()` and
     `validate_meta()` check every value exactly as they do for the YAML path,
     which is what makes a looser parser safe rather than a second front door.
+    `test_file` is now also read as a list, from a `- item` block or from the
+    one-line `[a, b]` flow form.
     """
     data: dict = {}
-    files: list[str] = []
-    in_files = False
+    items: dict[str, list[str]] = {}
+    current = None
     for line in text.splitlines():
         if line.startswith("- ") or line.startswith("  - "):
-            if in_files:
-                files.append(line.split("- ", 1)[1].strip())
+            if current:
+                items.setdefault(current, []).append(line.split("- ", 1)[1].strip())
             continue
         key, sep, rest = line.partition(":")
         if not sep:
             continue
         key = key.strip()
-        in_files = key == "files_declared"
+        current = key if key in BLOCK_LIST_KEYS else None
         if key in SIDECAR_KEYS and key not in data:
             data[key] = rest.strip()
-    if files:
-        data["files_declared"] = files
+    data.update(items)
+    flow = _flow_list(data["test_file"]) if isinstance(data.get("test_file"), str) else None
+    if flow is not None:
+        data["test_file"] = flow
     return data
 
 
