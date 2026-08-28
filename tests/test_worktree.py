@@ -169,6 +169,17 @@ def test_head_file_reads_the_commit_not_the_working_tree():
     assert W.head_file(Path(tempfile.mkdtemp()), "f.py") is None  # not a repo
 
 
+def test_git_ignored_separates_never_from_not_yet():
+    """head_file() returns None for both a not-yet-committed file and a file
+    git will never have. git_ignored() tells them apart."""
+    d, sh = git_project()
+    assert not W.git_ignored(d, ".project/pipeline.toml")
+    (d / ".git" / "info").mkdir(exist_ok=True)
+    (d / ".git" / "info" / "exclude").write_text(".project/\n")
+    assert W.git_ignored(d, ".project/pipeline.toml")
+    assert not W.git_ignored(Path(tempfile.mkdtemp()), ".project/pipeline.toml")  # not a repo
+
+
 def test_the_worktree_ticket_copy_goes_stale_the_moment_a_stage_records_progress():
     """`ensure_worktree` checks out the branch at cut time. `Ticket.save()`
     (main checkout) records a stage's work without committing until merge, so

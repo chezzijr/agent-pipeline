@@ -142,6 +142,17 @@ def head_file(project: Path, rel: str) -> str | None:
     return p.stdout if p.returncode == 0 else None
 
 
+def git_ignored(project: Path, rel: str) -> bool:
+    """Whether git will NEVER have `rel` -- excluded by `.gitignore` or by the
+    `.git/info/exclude` line `pipeline init --private` writes -- as opposed to
+    `head_file()` returning None for "git does not have it yet". `check-ignore
+    -q` exits 0 ignored, 1 not ignored, 128 outside a repo, so a non-repo
+    reads as not ignored."""
+    if not project.is_dir():
+        return False
+    return run_cmd(f"git check-ignore -q -- {shlex.quote(rel)}", project)[0] == 0
+
+
 def tree_snapshot(project: Path) -> str:
     """What a read-only stage must not change. `.project/` is excluded: writing
     to the ticket and the .result sidecar is every stage's job, including the
