@@ -34,6 +34,28 @@ x
 ## Thread
 """
 
+APPROVABLE_FULL = """---
+id: TICKET-001
+stage: awaiting-approval
+class: bugfix
+branch: ticket/001
+test_file: test_thing.py::test_broken
+files_declared: [thing.py]
+counters: {}
+lease: {holder: null, expires: null}
+---
+
+## Summary
+x
+## Plan
+1. do it
+## Acceptance criteria
+widget moved.
+## Rollback
+revert c0ffee.
+## Thread
+"""
+
 
 class FakeClient:
     """The only reason `client` is a constructor argument.
@@ -266,6 +288,85 @@ def test_approve_rewrites_the_ticket_file_with_no_daemon_op():
             await pilot.pause()
             assert Ticket.find(d, "TICKET-001").stage == "revalidating"
             assert fake.sent == ["ls"]            # the refresh, and nothing else
+
+    asyncio.run(go())
+
+
+def test_awaiting_approval_shows_the_plan_not_the_validation_log():
+    """TICKET-073: the approval gate asks "is this plan right?", so the pane
+    a ticket at `awaiting-approval` opens on must contain its `## Plan` text,
+    not just the plan-validation stream."""
+    async def go():
+        d = make_project(APPROVABLE)
+        fake = FakeClient([row(d, "TICKET-001", "awaiting-approval")])
+        app = PipelineApp(client=fake)
+        async with app.run_test() as pilot:
+            app.query_one(Tree).focus()
+            await select(app, pilot, d, "TICKET-001")
+
+            log = app.query_one("#log", RichLog)
+
+            def text(strip):
+                return "".join(seg.text for seg in strip)
+
+            rendered = "\n".join(text(s) for s in log.lines)
+            assert "1. do it" in rendered, rendered
+
+    asyncio.run(go())
+
+
+def test_the_approval_pane_shows_rollback_and_the_log_below_it():
+    """The gate needs the whole plan, not just `## Plan` -- and it still
+    needs the plan-validation findings to reject on, so both must be in
+    the pane, plan first."""
+    async def go():
+        d = make_project(APPROVABLE_FULL)
+        logs = d / ".project" / "logs"
+        logs.mkdir(parents=True)
+        (logs / "TICKET-001-plan-validation.log").write_bytes(
+            b"\x1b[H\x1b[2Jseen-in-log\n")
+        fake = FakeClient([row(d, "TICKET-001", "awaiting-approval")])
+        app = PipelineApp(client=fake)
+        async with app.run_test() as pilot:
+            app.query_one(Tree).focus()
+            await select(app, pilot, d, "TICKET-001")
+
+            log = app.query_one("#log", RichLog)
+
+            def text(strip):
+                return "".join(seg.text for seg in strip)
+
+            rendered = "\n".join(text(s) for s in log.lines)
+            for needle in ("## Rollback", "revert c0ffee.", "widget moved.",
+                           "-- stage log --", "seen-in-log"):
+                assert needle in rendered, rendered
+
+    asyncio.run(go())
+
+
+def test_a_running_stage_pane_shows_the_log_without_the_plan():
+    """A stage that is not `awaiting-approval` has no gate to inform, so
+    the pane is the log alone -- the plan branch must not fire for it."""
+    async def go():
+        d = make_project(APPROVABLE_FULL)
+        logs = d / ".project" / "logs"
+        logs.mkdir(parents=True)
+        (logs / "TICKET-001-plan-validation.log").write_bytes(
+            b"\x1b[H\x1b[2Jseen-in-log\n")
+        fake = FakeClient([row(d, "TICKET-001", "implementing")])
+        app = PipelineApp(client=fake)
+        async with app.run_test() as pilot:
+            app.query_one(Tree).focus()
+            await select(app, pilot, d, "TICKET-001")
+
+            log = app.query_one("#log", RichLog)
+
+            def text(strip):
+                return "".join(seg.text for seg in strip)
+
+            rendered = "\n".join(text(s) for s in log.lines)
+            assert "seen-in-log" in rendered, rendered
+            assert "1. do it" not in rendered, rendered
 
     asyncio.run(go())
 

@@ -195,3 +195,33 @@ def exclude_project_dir(project: Path) -> str | None:
     f.write_text(body + ("" if body.endswith("\n") or not body else "\n")
                  + f"{EXCLUDE_LINE}\n")
     return str(f)
+
+
+MIRROR_MODE = 0o444
+
+
+def mirror_ticket(live: Path, text: str) -> Path | None:
+    """Write `text` into the ticket's own worktree, read-only.
+
+    Called only by `Ticket.save()`, so invariant 5 keeps one writer: this
+    mirrors the same write, it does not add a second one. The
+    `--skip-worktree` mark runs in the worktree's OWN index, never the main
+    checkout's, before the write -- so it also repairs a worktree an earlier
+    stage already dirtied. A non-zero rc there means the path is untracked in
+    that worktree or its index is locked; returning None fails toward a stale
+    mirror rather than toward a dirty worktree.
+    """
+    if live.parent.name != "tickets" or live.parents[1].name != ".project":
+        return None
+    rel = ".project/tickets/" + live.name
+    wt = live.parents[2] / ".worktrees" / live.stem
+    dest = wt / rel
+    if not dest.is_file():
+        return None
+    if run_cmd(f"git update-index --skip-worktree -- {shlex.quote(rel)}", wt)[0]:
+        return None
+    tmp = dest.with_name(dest.name + ".tmp")
+    tmp.write_text(text)
+    os.chmod(tmp, MIRROR_MODE)
+    os.replace(tmp, dest)
+    return dest

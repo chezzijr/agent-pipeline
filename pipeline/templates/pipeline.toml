@@ -13,7 +13,9 @@ test_suite_without_new  = "pytest --deselect {test}"
 #     `base` to prove the bug is not already fixed there;
 #   * `<name>` must appear in `test_one`'s output, or an errored test reads as
 #     a successful reproduction;
-#   * `test_suite_without_new` must run everything BUT that test.
+#   * `test_suite_without_new` must run everything BUT that test. A red run
+#     must exit 1 or 101, or print a test count, or the gate reports "could
+#     not run" instead of pre-existing breakage.
 # Each of {test}, {path} and {name} is shlex.quote'd and substituted; every
 # other brace -- ${t##*::}, awk '{print $1}' -- reaches the shell as written.
 #
@@ -31,6 +33,12 @@ base                    = "main"
 # [stages.review]
 # model  = "haiku"
 # skills = []
+# scale_usd = true
+#
+# review, quick-review and holistic-review grow their max_usd with the
+# plan's declared files and steps, up to twice the stage's own value. A
+# max_usd set here pins the cap instead, unless scale_usd = true is set
+# alongside it.
 #
 # Prose that adds to a stage's instructions, rather than its settings, goes
 # in .project/stages/<name>.extra.md instead -- appended after the packaged

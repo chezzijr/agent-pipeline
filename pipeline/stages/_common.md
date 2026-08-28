@@ -11,6 +11,8 @@ it is lost.
    Read it before doing anything. Open the ticket file itself only for
    an entry the view says it omitted, and read only that range --
    grep the file for `^### ` to get the line number.
+   Use the absolute ticket path your instructions name; the copy inside your
+   worktree is a read-only mirror of it.
 2. Do only your stage's job. Do not fix things you notice outside it; note them
    in `## Thread` instead.
 3. Never edit the YAML frontmatter. The dispatcher owns it, and `stage` in
@@ -29,7 +31,9 @@ it is lost.
    checkout the dispatcher runs from. If a path you are about to edit is not
    under your working directory and is not one of those two files, stop: you
    are in the wrong tree.
-6. Finish by writing the result file **at the exact absolute path given in
+   The one path under your working directory you must not write is its own
+   `.project/tickets/` copy -- it is read-only, and a write there is lost work.
+6. Write the result file **at the exact absolute path given in
    your instructions** (your working directory is a git worktree, not the
    project root, so a relative path lands in the wrong tree):
 
@@ -39,6 +43,11 @@ summary: one line, what you did or why you stopped
 files_declared: []  # optional; files this ticket will touch
 test_file: null     # optional; triage only
 ```
+
+Write it as soon as your stage's work is done -- before you append your
+`## Thread` entry and rewrite `## Summary`. A stage killed at its spending cap
+loses whatever it had not written yet, and the sidecar is the one thing the
+dispatcher cannot reconstruct.
 
 This sidecar is your only channel for anything that belongs in the frontmatter.
 

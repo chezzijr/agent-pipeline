@@ -66,13 +66,14 @@ pipeline --project ~/code/myproject new "cache leaks on evict"
 pipeline --project ~/code/myproject run       # dispatcher loop, no daemon; interactive stages run headless
 
 pipeline --project ~/code/myproject ls
-pipeline --project ~/code/myproject plan TICKET-001    # the plan and its acceptance criteria, nothing else
+pipeline --project ~/code/myproject plan TICKET-001    # the plan, its acceptance criteria and its rollback, nothing else
 pipeline --project ~/code/myproject approve TICKET-001   # -> revalidating, or -> merging from awaiting-merge
 pipeline --project ~/code/myproject reject  TICKET-001 "ignores cache invalidation"
 pipeline --project ~/code/myproject resume  TICKET-001 \
     --stage planning --reset plan_validation_attempts
 pipeline --project ~/code/myproject resume  TICKET-001 \
     --stage planning --grant plan_validation_attempts   # hand back one spent attempt, not the whole budget
+pipeline --project ~/code/myproject resume  TICKET-001 --stage planning --note "the escalation was a flaky test"
 ```
 
 `init` also installs `.claude/skills/file-ticket/SKILL.md` -- the protocol a
@@ -126,7 +127,7 @@ working after you close the terminal, and it records what happened to an event
 database under your state directory (see *Where it keeps things*).
 
 ```sh
-pipeline register ~/code/myproject   # one path per line in the registry file
+pipeline register ~/code/myproject   # runs its test_suite and probes test_one first
 pipeline start                       # spawns pipelined, detached; interactive stages need `pipeline tui` attached
 pipeline status                      # is it running, and how many projects
 pipeline ls                          # every registered project's tickets
@@ -139,6 +140,14 @@ pipeline unregister ~/code/myproject
 `.project/` and the daemon would then tick a ticket's own checkout as a
 second project. `register`/`unregister` also refuse when `PIPELINE_STAGE` is
 set, because the registry is operator state.
+
+`register` also refuses a project whose test commands are wrong, because
+every ticket filed against it would die at the gate instead. `test_suite`
+must run at all: the shell must find the command, and the runner must run
+something. `test_one` must exit non-zero when its selector matches no test,
+which is the one thing `gate()` cannot tell from a runner's output. A suite
+that runs and reports failures still registers. `pipeline register --force
+<path>` skips both checks, which is what a slow suite wants.
 
 `pipelined` itself stays a raw foreground process, so `systemd --user`, `launchd`
 or tmux can supervise it; `pipeline start` is just a convenience wrapper. There is
@@ -208,7 +217,10 @@ fails if either stops saying it.
 
 An interactive session also ends on its `.result` sidecar, not on `/exit`: a
 REPL does not exit when the agent reports a verdict, so the supervisor sends it
-SIGTERM once the sidecar lands and reaps it like any other child.
+SIGTERM once the sidecar lands and reaps it like any other child. That is also
+why an interactive stage writes its sidecar LAST while every other stage
+writes it first -- the sidecar is the interactive exit condition, and writing
+it early would end the session mid-thread-entry.
 
 ```
 -> {"id":7,"op":"attach","ticket":"TICKET-003"}      # "project" optional, a filter
@@ -249,6 +261,10 @@ whether a stage is running, so those rows report `running`/`mode` as unknown
 rather than idle, and the pane keeps the last answer the daemon gave for
 them; `pipeline ls` prints `-- no daemon: running/mode unknown for these
 rows` once above such a listing.
+
+A ticket parked at `awaiting-approval` opens on its plan -- `## Plan`,
+`## Acceptance criteria` and `## Rollback`, the same three sections
+`pipeline plan` prints -- with `-- stage log --` and the stage log below it.
 
 Select a ticket running an **interactive** stage and the right pane becomes
 that stage's live terminal instead: it `attach`es on the subscription's
@@ -371,6 +387,7 @@ Then one of three:
 | The reason is | Do |
 |---|---|
 | a flake -- crashed harness, expired lease, no sidecar | `pipeline resume TICKET-017 --stage plan-validation --reset no_result` |
+| the stage hit its `--max-budget-usd` cap (`budget_kills`) | raise that stage's `max_usd` in `pipeline/stages/<name>.md`, then `pipeline resume TICKET-017 --stage review --reset budget_kills` |
 | real, but the stage deserves another go with the thread it has now | `pipeline resume TICKET-017 --stage planning --grant plan_validation_attempts` |
 | the ticket itself is wrong | `pipeline reject TICKET-017 "why"` |
 
@@ -378,13 +395,20 @@ Then one of three:
 `--grant counter=N`) and cannot return more than was spent. Naming the same
 counter in both is an error, not a merge.
 
+`--note` attaches your reasoning to the resume. It lands in `## Thread`
+attributed to you, as a kind the stage view never omits, so the stage you
+resume to reads it. `pipeline answer` refuses outside `needs-input`, which is
+why the note rides on `resume`.
+
 The bound that was hit lives in the dispatcher, never in a stage prompt:
 `BOUNDS[class][counter]` in `pipeline/core/machine.py`, which is 2 for `bugfix`
 and `feature` and 3 for `refactor` on `review_loops` and
 `plan_validation_attempts`. `plan_validation_attempts` is the only one that
 grows with the plan -- one more attempt per 8 steps or 4 declared files, never
 past 5. `lease_expiries` and `no_result` are the dispatcher's own counters and
-stay at 2 whatever the class.
+stay at 2 whatever the class. `budget_kills` is bounded at one: a stage
+killed at its cap escalates on the first kill, because the same prompt
+against the same tree spends the same cap and stops at the same point.
 
 A Tier A failure whose findings are all structural -- a missing section, a
 plan line that is not a numbered step, a step citing no declared file --
@@ -474,6 +498,13 @@ the same stage files by default. A project can override one in two ways:
   **shallow** onto the packaged frontmatter: a key you set replaces the
   packaged one outright, it does not extend it -- a `skills` list you give
   replaces the packaged list, not appends to it.
+
+  `review`, `quick-review` and `holistic-review` are spawned with `max_usd`
+  grown by one dollar per 4 declared files or per 8 plan steps, whichever is
+  larger, capped at twice the stage's own number. A project's own `max_usd`
+  pins the cap and is never scaled past unless the table also sets
+  `scale_usd = true`. `scale_usd = false` turns scaling off for a stage that
+  has it by default.
 - **Prose**, in `.project/stages/<name>.extra.md` -- free text appended after
   the packaged prompt and before the ticket view. It can only add
   instructions, never remove or relax one: there is no frontmatter in an

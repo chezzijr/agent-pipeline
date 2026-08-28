@@ -4,8 +4,82 @@ import tempfile
 from pathlib import Path
 
 from pipeline.core import PipelineError
-from pipeline.core.config import format_test_cmd, project_config, stage_extra
+from pipeline.core.config import cap_config, format_test_cmd, harness, project_config, render, selector_failure, stage_config, stage_extra, suite_failure
 from tests.helpers import git_project
+
+
+def cmd(cfg):
+    return render(harness("claude-code"), cfg, tid="TICKET-001", project=Path("/tmp"),
+                  ticket=Path("/tmp/t.md"), result_file=Path("/tmp/t.result"),
+                  session="s", prompt=Path("/tmp/t.md"))
+
+
+def test_render_cap_does_not_scale_with_diff_size():
+    """review's cap must grow with the plan it has to read the way
+    bound_for() already grows plan_validation_attempts with plan size
+    (DEC-047). Today it does not: render() computes the cap from static
+    frontmatter/harness config alone, so a 15-file, 40-step plan gets the
+    same cap as an empty one."""
+    hcfg = harness("claude-code")
+    cfg = stage_config("review")
+    prompt = Path("/tmp/t.md")
+
+    baseline = render(hcfg, cfg, tid="TICKET-001", project=Path("/tmp"),
+                       ticket=Path("/tmp/t.md"), result_file=Path("/tmp/t.result"),
+                       session="s", prompt=prompt)
+    assert "--max-budget-usd 4" in baseline
+
+    scaled_cfg = {**cfg, "counters": {"plan_files": 15, "plan_steps": 40}}
+    scaled = render(hcfg, scaled_cfg, tid="TICKET-001", project=Path("/tmp"),
+                     ticket=Path("/tmp/t.md"), result_file=Path("/tmp/t.result"),
+                     session="s", prompt=prompt)
+    assert "--max-budget-usd 4" not in scaled, (
+        "expected the cap to grow with plan_files/plan_steps the way "
+        "bound_for() scales plan_validation_attempts, but render() emitted "
+        "the same --max-budget-usd 4 for a 15-file, 40-step plan as for "
+        "one with no counters at all")
+
+
+def test_a_project_max_usd_override_is_not_scaled_past():
+    """A project's own `max_usd` pins the cap: TICKET-069's direction rule
+    applies to money too, so a computed cap never exceeds what the operator
+    asked for unless the operator also asks for scaling."""
+    d, sh = git_project()
+    with open(d / ".project" / "pipeline.toml", "a") as f:
+        f.write("[stages.review]\nmax_usd = 2\n")
+    sh("git add -A && git commit -qm config")
+    cfg = cap_config("review", stage_config("review", d), d,
+                      {"plan_files": 15, "plan_steps": 40})
+    assert "counters" not in cfg, "an operator own max_usd was scaled past"
+    assert "--max-budget-usd 2" in cmd(cfg)
+
+
+def test_a_project_can_ask_for_scaling_on_top_of_its_own_cap():
+    """`scale_usd = true` alongside a project's own `max_usd` asks for
+    scaling on top of that number instead of pinning it."""
+    d, sh = git_project()
+    with open(d / ".project" / "pipeline.toml", "a") as f:
+        f.write("[stages.review]\nmax_usd = 6\nscale_usd = true\n")
+    sh("git add -A && git commit -qm config")
+    cfg = cap_config("review", stage_config("review", d), d,
+                      {"plan_files": 15, "plan_steps": 40})
+    assert "--max-budget-usd 11" in cmd(cfg)
+
+
+def test_the_project_decides_which_stages_scale_their_cap():
+    """Only the stages in `USD_SCALED` scale by default, and a project can
+    opt a scaled stage back out with `scale_usd = false`."""
+    d, _ = git_project()
+    counters = {"plan_files": 15, "plan_steps": 40}
+    assert "counters" in cap_config("review", stage_config("review", d), d, counters)
+    assert "counters" not in cap_config("implementing", stage_config("implementing", d), d, counters)
+    assert "--max-budget-usd 8" in cmd(cap_config("implementing", stage_config("implementing", d), d, counters))
+
+    d2, sh2 = git_project()
+    with open(d2 / ".project" / "pipeline.toml", "a") as f:
+        f.write("[stages.review]\nscale_usd = false\n")
+    sh2("git add -A && git commit -qm config")
+    assert "counters" not in cap_config("review", stage_config("review", d2), d2, counters)
 
 
 def test_an_uncommitted_edit_to_pipeline_toml_does_not_change_project_config():
@@ -75,3 +149,46 @@ def test_format_test_cmd_leaves_other_braces_untouched():
     cmd = """awk '{print $1}' && cargo test -- --skip "${t##*::}" {name}"""
     assert format_test_cmd(cmd, "tests/f.rs::t_a") == (
         """awk '{print $1}' && cargo test -- --skip "${t##*::}" t_a""")
+
+
+def _probe_project(test_one="false", test_suite="true"):
+    """A throwaway project. It is not a git repo, so `project_config()`
+    takes its disk fallback (DEC-037)."""
+    d = Path(tempfile.mkdtemp())
+    (d / ".project").mkdir()
+    (d / ".project" / "pipeline.toml").write_text(
+        'test_one = "%s"\ntest_suite = "%s"\n'
+        'test_suite_without_new = "true"\n' % (test_one, test_suite))
+    return d
+
+
+def test_suite_failure_tells_a_broken_command_from_a_red_suite():
+    """A suite that runs and fails is the normal state of a project with an
+    open bug and must register. Only a suite that cannot run is refused."""
+    missing = suite_failure(_probe_project(test_suite="pipeline-068-nonexistent-command-xyz"))
+    assert missing and "pipeline-068-nonexistent-command-xyz" in missing
+    assert "exit 127" in missing
+    nothing = suite_failure(_probe_project(test_suite="echo no tests ran; exit 5"))
+    assert nothing and "ran no tests" in nothing
+    assert suite_failure(_probe_project(test_suite="echo 1 failed; exit 1")) is None
+    assert suite_failure(_probe_project(test_suite="true")) is None
+    # DEC-067: `test_suite` has never been `str.format`ed, so a literal
+    # brace must reach the shell instead of raising
+    assert suite_failure(_probe_project(test_suite="echo ${t##*::} ok")) is None
+
+
+def test_selector_failure_wants_test_one_to_fail_when_it_matches_nothing():
+    """`gate()` cannot tell `the test passed` from `the selector matched
+    nothing` by reading output: a runner may name a test only when it
+    fails. The project's own command knows its runner and can tell."""
+    passes = selector_failure(_probe_project(test_one="true"))
+    assert passes and "exited 0" in passes
+    assert "pipeline_register_probe_no_such_test" in passes
+    missing = selector_failure(_probe_project(test_one="pipeline-068-nonexistent-command-xyz"))
+    assert missing and "exit 127" in missing
+    assert selector_failure(_probe_project(test_one="false")) is None
+    assert selector_failure(_probe_project(test_one="echo no test matched {test}; exit 1")) is None
+    # DEC-067: `format_test_cmd()` leaves every other brace verbatim, so
+    # this command is judged by its exit code. Under `str.format` it would
+    # raise `KeyError: 't##*'` and this arm would error instead of pass.
+    assert selector_failure(_probe_project(test_one="echo ${t##*::} matched nothing; exit 1")) is None

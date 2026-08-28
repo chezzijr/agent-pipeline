@@ -113,7 +113,8 @@ What makes that work: a one-line title, the mechanism, a runnable reproduction, 
 expected behaviour stated as something a test can check. If the user gave an exact error
 string, include it — triage records it as `expect: <text>` and the gate greps the real
 test output for it, which is what stops a test that fails for an unrelated reason from
-passing as a reproduction.
+passing as a reproduction. Give the invariant part of that string -- not a `/tmp` path, a
+pid, or a truncated tail, which the gate refuses because they cannot recur.
 
 **Do not touch the frontmatter beyond `class`.** `stage`, `branch`, `counters` and
 `lease` belong to the dispatcher, and a ticket whose control fields look edited is
@@ -135,7 +136,11 @@ pipeline projects                # is this repo registered
 `pipeline status` **exits 1 when no daemon is running** — that is its answer, not a
 failure. Read the line it prints, not the exit code.
 
-- Not registered → `pipeline register .` from the repo root
+- Not registered → `pipeline register .` from the repo root. It runs this
+  project's `test_suite` once and probes `test_one` with a selector that
+  matches nothing, then refuses when the suite cannot run at all or when
+  `test_one` exits 0 on that probe; fix `.project/pipeline.toml` (the
+  `pipeline-config` skill teaches how) or pass `--force` for a slow suite.
 - Daemon down → `pipeline run` (this project, in your terminal; `--once` drains the
   queue and exits) or `pipeline start` (detached, every registered project).
   **They differ where it matters:** `planning` is `mode: interactive`, so under the

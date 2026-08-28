@@ -70,7 +70,11 @@ Fill in these sections:
   plain unindented wrap reads as prose and fails the step outright. A step
   that says "investigate X" is a planning failure: do the investigation now.
   Prose paragraphs instead of numbered steps fail Tier A outright.
-- `## Acceptance criteria` -- each one falsifiable and mapped to a named test.
+- `## Acceptance criteria` -- each one falsifiable: mapped to a named test, or
+  naming a command in backticks together with the output or exit status
+  running it must produce, as in `` - `grep -c foo docs/x.md` prints `0` ``. A
+  backticked identifier alone is not a command: the span needs a word and at
+  least one argument.
   A criterion that wraps must indent its continuation lines; an unindented
   line reads as a criterion of its own and is checked alone.
 - `## Rollback` -- what to revert if this ships and breaks.

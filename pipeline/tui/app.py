@@ -32,10 +32,11 @@ from textual.app import App, ComposeResult, SuspendNotSupported
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Footer, RichLog, Static, Tree
 
-from pipeline.cli.main import cmd_answer, cmd_approve, cmd_reject, render
+from pipeline.cli.main import (cmd_answer, cmd_approve, cmd_reject, plan_text,
+                                render)
 from pipeline.core import PipelineError
 from pipeline.core.machine import HUMAN_GATES, TERMINAL
-from pipeline.core.ticket import ticket_path
+from pipeline.core.ticket import Ticket, ticket_path
 from pipeline.daemon import registry
 from pipeline.daemon.server import PTY_INPUT, ticket_rows
 from pipeline.pty.host import COLS, GEOM_OSC, ROWS, Screen, last_geometry
@@ -169,6 +170,17 @@ def tail_log(project: str, tid: str) -> tuple[list[str], int]:
         return [ln for ev in StreamReader().feed(data) if (ln := render(ev))], 0
     except OSError as e:
         return [f"(log unreadable: {e})"], 0
+
+
+def plan_lines(project: str, tid: str) -> list[str]:
+    """The plan an `awaiting-approval` gate asks about, so the pane opens
+    on it rather than the stage log. Must not raise: `_show` runs on every
+    tree highlight.
+    """
+    try:
+        return plan_text(Ticket.find(project, tid)).splitlines()
+    except (PipelineError, OSError) as e:
+        return [f"(plan unreadable: {e})"]
 
 
 class PtyPane(Static):
@@ -451,6 +463,10 @@ class PipelineApp(App):
         self._detach()
         self.query_one("#pty", PtyPane).display = False
         log.display = True
+        if row.get("stage") == "awaiting-approval":
+            for line in plan_lines(key[0], key[1]):
+                log.write(line)
+            log.write("-- stage log --")
         lines, cols = tail_log(key[0], key[1])
         # a PTY dump renders at the width it was drawn at, so a narrower pane clips and scrolls; stream-json is prose (cols 0) and wraps
         for line in lines:

@@ -8,6 +8,35 @@ from pathlib import Path
 
 from helpers import git_project
 from pipeline.core import worktree as W
+from pipeline.core.ticket import Ticket, stage_view
+
+TICKET_TEXT = """---
+id: TICKET-001
+stage: new
+class: bugfix
+branch: ticket/001
+test_file: null
+files_declared: []
+counters: {}
+lease: {holder: null, expires: null}
+---
+
+## Summary
+x
+## Reproduction
+
+## Digest
+
+## Decisions checked
+
+## Plan
+
+## Acceptance criteria
+
+## Rollback
+
+## Thread
+"""
 
 
 def test_recreating_a_worktree_never_resets_the_branch():
@@ -138,3 +167,73 @@ def test_head_file_reads_the_commit_not_the_working_tree():
     sh("git add -A && git commit -qm commit-config")
     assert 'test_one="true"' in W.head_file(d, ".project/pipeline.toml")
     assert W.head_file(Path(tempfile.mkdtemp()), "f.py") is None  # not a repo
+
+
+def test_the_worktree_ticket_copy_goes_stale_the_moment_a_stage_records_progress():
+    """`ensure_worktree` checks out the branch at cut time. `Ticket.save()`
+    (main checkout) records a stage's work without committing until merge, so
+    the worktree's own `.project/tickets/<id>.md` freezes at `## Reproduction`
+    empty while the view a later stage is handed already has it filled in --
+    the TICKET-067 incident (see TICKET-083 Summary)."""
+    d, sh = git_project()
+    (d / ".project" / "tickets" / "TICKET-001.md").write_text(TICKET_TEXT)
+    sh("git add -A && git commit -qm file-ticket")
+    meta = {"id": "TICKET-001", "branch": "ticket/001"}
+    cfg = {"base": "main"}
+    wt = W.ensure_worktree(d, meta, cfg)
+
+    t = Ticket.find(d, "TICKET-001")
+    t.body = t.body.replace("## Reproduction\n\n", "## Reproduction\ntest fails: KeyError\n")
+    t.save()
+
+    view = stage_view(Ticket.find(d, "TICKET-001"), "planning")
+    worktree_copy = (wt / ".project" / "tickets" / "TICKET-001.md").read_text()
+
+    assert "KeyError" in view
+    assert "KeyError" in worktree_copy, (
+        "the worktree's own ticket file contradicts the view a stage is "
+        "handed -- it is still the branch-cut snapshot")
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_the_ticket_mirror_is_read_only_and_never_enters_the_branch_diff():
+    """`Ticket.save()` mirrors the live ticket into the worktree at 0444,
+    marked `--skip-worktree`, so the mirror never shows up in `git status`,
+    never enters `implementing`'s own commit, and never blocks `merging`'s
+    rebase (TICKET-083)."""
+    d, sh = git_project()
+    (d / ".project" / "tickets" / "TICKET-001.md").write_text(TICKET_TEXT)
+    sh("git add -A && git commit -qm file-ticket")
+    meta = {"id": "TICKET-001", "branch": "ticket/001"}
+    cfg = {"base": "main"}
+    wt = W.ensure_worktree(d, meta, cfg)
+
+    t = Ticket.find(d, "TICKET-001")
+    t.body = t.body.replace("## Digest", "## Digest\nmirrored")
+    t.save()
+
+    mirror = wt / ".project" / "tickets" / "TICKET-001.md"
+
+    def wsh(cmd):
+        return subprocess.run(cmd, shell=True, cwd=wt, capture_output=True, text=True)
+
+    assert "mirrored" in mirror.read_text()
+    assert mirror.stat().st_mode & 0o222 == 0
+    assert wsh("git status --porcelain").stdout == ""
+
+    (wt / "new.py").write_text("work")
+    wsh("git add -A && git commit -qm work")
+    assert "mirrored" not in wsh("git show HEAD:.project/tickets/TICKET-001.md").stdout
+
+    assert wsh("git rebase main").returncode == 0
+    assert wsh("git status --porcelain").stdout == ""
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_mirror_ticket_is_a_no_op_without_a_worktree():
+    """No `.worktrees/` for this project, or a path that is not a ticket
+    path: `mirror_ticket()` returns None rather than guessing a destination."""
+    d, sh = git_project()
+    assert W.mirror_ticket(d / ".project" / "tickets" / "TICKET-001.md", "x") is None
+    assert W.mirror_ticket(d / "f.py", "x") is None
+    shutil.rmtree(d, ignore_errors=True)

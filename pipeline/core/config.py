@@ -13,8 +13,9 @@ import tomllib
 from pathlib import Path
 
 from pipeline.core import PipelineError
+from pipeline.core.machine import USD_SCALED, cap_for
 from pipeline.core.ticket import split_frontmatter
-from pipeline.core.worktree import head_file
+from pipeline.core.worktree import head_file, run_cmd
 
 PKG = Path(__file__).resolve().parent.parent
 STAGES_DIR = PKG / "stages"
@@ -59,6 +60,18 @@ def stage_config(stage: str, project: Path | None = None) -> dict:
     """
     meta, _ = split_frontmatter(STAGES_DIR / f"{stage}.md")
     return {**meta, **project_stage_config(project, stage)}
+
+
+def cap_config(stage: str, cfg: dict, project: Path | None, counters: dict) -> dict:
+    """`cfg`, with `counters` attached when `stage` should scale its dollar
+    cap. A computed cap never exceeds the operator's own `max_usd` unless the
+    operator also sets `scale_usd = true` -- the same direction as the
+    TICKET-069 rule."""
+    override = project_stage_config(project, stage)
+    want = override.get("scale_usd")
+    if want is None:
+        want = stage in USD_SCALED and "max_usd" not in override
+    return {**cfg, "counters": counters} if want else cfg
 
 
 def agent_stages() -> list[str]:
@@ -109,6 +122,89 @@ def format_test_cmd(template: str, test: str) -> str:
     """
     parts = {"test": test, "path": test.split("::")[0], "name": test.split("::")[-1]}
     return TEST_PLACEHOLDER_RE.sub(lambda m: shlex.quote(parts[m.group(1)]), template)
+
+
+# `suite_failure`, not `test_suite_failure`, and `project_test_cmd`, not
+# `test_command`: pytest collects every module-level name matching
+# `test*`, including one a test module imported, and would run these as
+# tests it cannot supply `project` for -- `fixture 'project' not found`.
+SHELL_CANNOT_RUN = {126: "the shell found it but could not execute it",
+                    127: "the shell could not find it"}
+# `pytest` exits 5 and prints this when it collected nothing -- what the
+# packaged default `test_suite = "pytest"` does in a repo that is not a
+# Python one. A collection error prints it too, and exits 2.
+NO_TESTS_RE = re.compile(r"no tests ran|no tests were run|collected 0 items")
+
+
+def project_test_cmd(project: Path, key: str) -> str:
+    """The project's `key` command. Raises `PipelineError` when the config
+    has no usable one; `project_config()` raises before that for a project
+    with no config at all, naming `pipeline init`."""
+    cmd = project_config(project).get(key)
+    if not isinstance(cmd, str) or not cmd.strip():
+        raise PipelineError(f"{project}: `.project/pipeline.toml` has no `{key}` -- "
+                            f"the dispatcher would have no command to run")
+    return cmd
+
+
+def suite_failure(project: Path) -> str | None:
+    """`None` when the project's `test_suite` can run; the refusal message
+    when it cannot run at all.
+
+    A suite that ran and reported failures returns `None`: that is the
+    normal state of a project with an open bug, and it is what a ticket is
+    filed against. Only two things count as cannot-run -- the shell's own
+    126 and 127, and a non-zero exit whose output says nothing ran.
+
+    Substituted with `format_test_cmd(cmd, "")`, matching
+    `supervisor.py`'s `t.test_file or ""` for a ticket with no test file.
+    """
+    cmd = format_test_cmd(project_test_cmd(project, "test_suite"), "")
+    code, out = run_cmd(cmd, project)
+    reason = SHELL_CANNOT_RUN.get(code)
+    if reason is None and code != 0 and NO_TESTS_RE.search(out):
+        reason = "it ran no tests"
+    if reason is None:
+        return None
+    return (f"{project}: `test_suite` cannot run -- `{cmd}`: {reason} "
+            f"(exit {code})\n{out.strip()[-1200:]}\n"
+            f"fix `test_suite` in {project}/.project/pipeline.toml, or "
+            f"`pipeline register --force {project}` to register anyway")
+
+
+# The selector `selector_failure()` probes `test_one` with: a path and a
+# name no project has. A runner that reports success for this cannot tell
+# `gate()` that a real selector matched nothing either.
+PROBE_TEST = ("pipeline_register_probe_no_such_file.py"
+              "::pipeline_register_probe_no_such_test")
+
+
+def selector_failure(project: Path) -> str | None:
+    """`None` when the project's `test_one` exits non-zero for a selector
+    that matches no test; the refusal message when it does not.
+
+    `gate()` cannot tell `the test passed` from `the selector matched
+    nothing` by reading output -- `pytest` prints `1 passed` and never the
+    node name. The project's command knows its own runner and can tell, so
+    the requirement is checked here, once, at `register`.
+
+    Substituted with `format_test_cmd()`, the one substitution the four
+    dispatcher call sites use (DEC-067). It quotes `{test}`, `{path}` and
+    `{name}` itself and never raises on any other brace.
+    """
+    probe = format_test_cmd(project_test_cmd(project, "test_one"), PROBE_TEST)
+    code, out = run_cmd(probe, project)
+    reason = SHELL_CANNOT_RUN.get(code)
+    if reason is None and code == 0:
+        reason = "it exited 0 -- `gate()` would read that as `the test PASSES`"
+    if reason is None:
+        return None
+    return (f"{project}: `test_one` must exit non-zero when its selector "
+            f"matches no test -- probed with `{PROBE_TEST}`, ran `{probe}`: "
+            f"{reason} (exit {code})\n{out.strip()[-1200:]}\n"
+            f"make `test_one` fail when its filter matches nothing (the "
+            f"`pipeline-config` skill shows how), or "
+            f"`pipeline register --force {project}` to register anyway")
 
 
 def harness(name: str = "claude-code") -> dict:
@@ -211,7 +307,7 @@ def stage_extra(project: Path | None, stage: str) -> str:
 
 
 def compose_prompt(stage: str, hcfg: dict | None = None, view: str = "",
-                   project: Path | None = None) -> Path:
+                   project: Path | None = None, interactive: bool = False) -> Path:
     """_common.md + this stage's body, frontmatter stripped, as one file.
 
     A stage's `skills:` only reaches the prompt when the harness declares the
@@ -232,6 +328,13 @@ def compose_prompt(stage: str, hcfg: dict | None = None, view: str = "",
         text += ("\n\n---\n\n# This project's additions to this stage\n\n"
                  f"From `.project/stages/{stage}.extra.md`. These instructions "
                  "add to the rules above, and never relax them.\n\n" + extra)
+    if interactive:
+        text += ("\n\n---\n\n# This session runs on a terminal\n\n"
+                 "Write the result file LAST: after your `## Thread` entry "
+                 "and your `## Summary` rewrite. The dispatcher ends an "
+                 "interactive session as soon as the sidecar appears, so "
+                 "anything you have not written by then is lost. This "
+                 "reverses rule 6's ordering and nothing else.")
     if view:
         text += ("\n\n---\n\n# The ticket\n\nThis is a bounded view of "
                  "the ticket named in your instructions -- the ticket's "
@@ -241,6 +344,19 @@ def compose_prompt(stage: str, hcfg: dict | None = None, view: str = "",
     f.write(text)
     f.close()
     return Path(f.name)
+
+
+def stage_cap(cfg: dict, hcfg: dict):
+    """The dollar cap a stage spawns under: its own frontmatter, then the
+    harness default, then 5. One definition, because `_finish()` names the
+    cap a budget-killed stage hit and it must be the number `render()`
+    passed.
+
+    `cfg["counters"]` is the plan size the cap scales by. Its absence means
+    no scaling. The scaling lives here, rather than at the `render()` call
+    site, so `rec["cap"]` in `pipeline/daemon/supervisor.py` names the same
+    number the rendered flag does (DEC-077)."""
+    return cap_for(cfg.get("max_usd", hcfg.get("max_usd", 5)), cfg.get("counters") or {})
 
 
 def render(hcfg: dict, cfg: dict, *, tid: str, project: Path, ticket: Path,
@@ -302,7 +418,7 @@ def render(hcfg: dict, cfg: dict, *, tid: str, project: Path, ticket: Path,
         skills_flag=("" if (cfg.get("skills") and hcfg.get("skill_tool"))
                      else hcfg.get("no_skills_flag", "")),
         tools=_tools(hcfg, cfg),
-        cap=cfg.get("max_usd", hcfg.get("max_usd", 5)),
+        cap=stage_cap(cfg, hcfg),
         project=shlex.quote(str(project)),
         ticket=ticket_q,
         result_file=result_q,

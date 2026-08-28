@@ -67,6 +67,15 @@ def test_the_composed_prompt_carries_the_stage_view():
     assert "VIEW-MARKER-9137" not in plain and "# The ticket" not in plain
 
 
+def test_an_interactive_prompt_reverses_the_sidecar_ordering():
+    default = C.compose_prompt("planning").read_text()
+    assert "before you append your" in default
+    assert "runs on a terminal" not in default
+
+    inter = C.compose_prompt("planning", None, "", None, interactive=True).read_text()
+    assert "Write the result file LAST" in inter
+
+
 def test_every_stage_named_by_the_state_machine_has_a_prompt():
     # `counters` and `klass` are part of the table, not decoration:
     # `holistic-review` needs a non-bugfix class AND `review_loops > 0` -- it
