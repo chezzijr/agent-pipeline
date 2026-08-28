@@ -2,7 +2,7 @@
 # pytest collects the assert-based suite fine -- verified, node ids work.
 test_one               = "uv run --group dev pytest -x {test}"
 test_suite             = "uv run --group dev pytest && ./pipeline/hooks/test_dangerous_commands.py"
-test_suite_without_new = "uv run --group dev pytest --deselect {test}"
+test_suite_without_new = "uv run --group dev pytest {test:--deselect }"
 base                   = "main"
 
 # Every entry below is an argv prefix. `approve`, `reject`, `resume`, `answer`,

@@ -14,17 +14,24 @@ yourself before you write anything.
 
 ## What `{test}` is
 
-It is the ticket's whole `test_file` value: `<path>::<name>`, e.g.
-`tests/repro.rs::test_add_is_wrong`. The gate substitutes it with
-`str.format` after `shlex.quote`.
+`test_file` holds one test, `<path>::<name>` (e.g.
+`tests/repro.rs::test_add_is_wrong`), or a list of them, for a bug that needs
+more than one failing test to reproduce. `{test}`, `{path}` and `{name}` are
+substituted with a regex, not `str.format`, after `shlex.quote`. For a single
+test each is a bare value. For a list, a bare placeholder is every value
+space-joined; `{test:<prefix>}` repeats `<prefix>` before each value, which is
+the only way a flag that takes one value at a time (like pytest's
+`--deselect`) can exclude more than one test in a single run; `{test:}` is the
+space-joined form written out, for a runner that takes several values after
+one flag.
 
 Your three commands must satisfy exactly this:
 
 | Key | Must do | Gate checks |
 |---|---|---|
-| `test_one` | run **only** that one test | exits non-zero **and** `the name` appears in the output; exits non-zero when the selector matches NO test |
+| `test_one` | run **only** that one test, once per listed test | exits non-zero **and** `the name` appears in the output; exits non-zero when the selector matches NO test |
 | `test_suite` | run everything | `verifying` passes only on exit 0 |
-| `test_suite_without_new` | run everything **except** that test | non-zero **and** a reported test result means pre-existing breakage |
+| `test_suite_without_new` | run everything **except** every listed test, in one run | non-zero **and** a reported test result means pre-existing breakage |
 
 Three traps behind that table:
 
@@ -56,6 +63,9 @@ test_suite             = "cargo test"
 test_suite_without_new = "cargo test -- --skip {name}"
 ```
 
+`--skip` takes one value at a time, so a two-test ticket needs
+`cargo test -- {name:--skip }` instead.
+
 ## Prove it before you claim it works
 
 Pick a test that already exists and currently **fails** (write a throwaway
@@ -66,20 +76,33 @@ and `.format` the gate uses:
 python3 - <<'PY'
 import re, shlex, subprocess, tomllib, pathlib
 cfg = tomllib.loads(pathlib.Path(".project/pipeline.toml").read_text())
-test = "tests/repro.rs::test_add_is_wrong"          # <- a real failing test here
-name = test.split("::")[-1]
-for k in ("test_one", "test_suite", "test_suite_without_new"):
-    c = re.sub(r"\{(test|path|name)\}", lambda m: shlex.quote({"test": test, "path": test.split("::")[0], "name": name}[m.group(1)]), cfg[k])
+tests = ["tests/repro.rs::test_add_is_wrong"]     # <- your real failing test(s)
+RE = re.compile(r"\{(test|path|name)(?::([^{}]*))?\}")
+def fill(template, ts):
+    def sub(m):
+        parts = [{"test": t, "path": t.split("::")[0], "name": t.split("::")[-1]}[m.group(1)] for t in ts]
+        return " ".join((m.group(2) or "") + shlex.quote(v) for v in dict.fromkeys(parts))
+    return RE.sub(sub, template)
+def run(c):
     p = subprocess.run(c, shell=True, capture_output=True, text=True)
-    out = p.stdout + p.stderr
-    print(k, "| rc =", p.returncode, "| name in output =", name in out)
+    return p.returncode, p.stdout + p.stderr
+for t in tests:                                   # test_one: one run per test
+    rc, out = run(fill(cfg["test_one"], [t]))
+    print("test_one", t, "| rc =", rc, "| name in output =", t.split("::")[-1] in out)
+for k in ("test_suite", "test_suite_without_new"):        # one run, all tests
+    rc, out = run(fill(cfg[k], tests))
+    print(k, "| rc =", rc, "| names in output =", [t.split("::")[-1] in out for t in tests])
 PY
 ```
 
-Expect, with a red test: `test_one` non-zero **and** name in output;
-`test_suite` non-zero; `test_suite_without_new` **zero**. Anything else is a
-broken config, not a broken pipeline. Show the operator this output. Then run
-`test_one` once more with a name no test has: it must be non-zero there too.
+This regex and its `sub` mirror `format_tests_cmd()` in
+`pipeline/core/config.py` and must be kept in step with it.
+
+Expect, with a red test: every `test_one` run non-zero **and** its own name in
+output; `test_suite` non-zero; `test_suite_without_new` **zero** and printing
+none of the names. Anything else is a broken config, not a broken pipeline.
+Show the operator this output. Then run `test_one` once more with a name no
+test has: it must be non-zero there too.
 
 ## Then commit it
 

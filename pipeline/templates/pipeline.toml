@@ -1,5 +1,5 @@
 # How to run this project's tests. `{test}` is substituted with the ticket's
-# `test_file` frontmatter value.
+# `test_file` frontmatter value -- one test, or a list.
 # The dispatcher reads this file from git HEAD, so an edit to a committed
 # config takes effect once it is committed. Not yet committed, it is read
 # from disk as-is. Excluded by `init --private` -- git will never have it --
@@ -7,7 +7,7 @@
 # adopts a later edit.
 test_one                = "pytest -x {test}"
 test_suite              = "pytest"
-test_suite_without_new  = "pytest --deselect {test}"
+test_suite_without_new  = "pytest {test:--deselect }"
 # `{test}` is the ticket's whole `test_file` value -- `<path>::<name>`, e.g.
 # `tests/repro.rs::test_add_is_wrong`. The gate needs three things from these
 # commands, so a non-pytest project splits the value itself:
@@ -21,10 +21,20 @@ test_suite_without_new  = "pytest --deselect {test}"
 # Each of {test}, {path} and {name} is shlex.quote'd and substituted; every
 # other brace -- ${t##*::}, awk '{print $1}' -- reaches the shell as written.
 #
-# Cargo, verified end to end against `cargo test`:
+# `test_file` may hold a list -- a bug needing more than one failing test to
+# reproduce. `test_one` runs once PER test in the list; `test_suite_without_new`
+# runs once for ALL of them. A bare `{test}`, `{path}` or `{name}` substitutes
+# every value, space-joined. `{test:<prefix>}` repeats `<prefix>` before each
+# value -- the only way a flag that takes one value at a time (like pytest's
+# `--deselect`) can exclude more than one test in a single run. `{test:}` is
+# the space-joined form written out, for a runner that takes several values
+# after one flag.
+#
+# Cargo, verified end to end against `cargo test`. `--skip` takes one value at
+# a time, so a two-test ticket needs `{name:--skip }`:
 # test_one               = "cargo test {name}"
 # test_suite             = "cargo test"
-# test_suite_without_new = "cargo test -- --skip {name}"
+# test_suite_without_new = "cargo test -- {name:--skip }"
 
 # The branch tickets are cut from, and the one Tier A re-runs {test} against.
 base                    = "main"

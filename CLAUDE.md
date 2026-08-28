@@ -289,6 +289,11 @@ still worth it: it prints one line per case, and the failure names the case.
   spend. An interactive stage emits no `result` event, so it is never
   classified this way -- and it writes its `.result` LAST, because
   `end_interactive()` SIGTERMs on the sidecar.
+- **`test_file` holds one test or a list.** `test_one` runs once per listed
+  test, so the name-in-output check stays meaningful for each; only
+  `test_suite_without_new` runs once for all of them, and `{test:--deselect }`
+  is how a flag that takes one value at a time (like pytest's `--deselect`)
+  excludes them all in that single run.
 
 ## Conventions
 

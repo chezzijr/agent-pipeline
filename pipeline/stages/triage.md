@@ -53,6 +53,11 @@ Put the test's id in your result file as `test_file:` (e.g.
 the frontmatter -- you must not edit frontmatter yourself. Every later stage
 depends on this field, so a triage that omits it has not finished.
 
+A bug that needs more than one failing test to reproduce writes `test_file`
+as a list -- one test or a list, e.g.
+`test_file: [tests/test_a.py::test_first, tests/test_b.py::test_second]`.
+Every listed test must fail before the fix.
+
 `result`:
 - `ok` -- reproduced, failing test committed
 - `chore` -- reproduced, failing test committed, AND the fix is small: you

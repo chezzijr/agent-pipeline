@@ -41,7 +41,7 @@ it is lost.
 result: ok          # see your stage's list of allowed values
 summary: one line, what you did or why you stopped
 files_declared: []  # optional; files this ticket will touch
-test_file: null     # optional; triage only
+test_file: null     # optional; triage only; one test or a list
 ```
 
 Write it as soon as your stage's work is done -- before you append your
