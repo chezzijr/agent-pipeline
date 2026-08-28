@@ -714,6 +714,49 @@ def test_the_base_run_covers_every_listed_test():
     shutil.rmtree(d, ignore_errors=True)
 
 
+def test_the_gate_runs_and_excludes_every_listed_test():
+    """TICKET-066: with two reproduction tests the gate runs `test_one`
+    for each and excludes BOTH from `test_suite_without_new` -- the second
+    used to come back as pre-existing breakage."""
+    d = project(FIXTURE.replace(
+        "test_file: test_thing.py::test_broken",
+        "test_file: [test_thing.py::test_broken, test_thing2.py::test_broken2]"))
+    (d / "test_thing2.py").write_text("")
+    (d / ".project" / "pipeline.toml").write_text(
+        'test_one = "echo {name}; exit 1"\n'
+        'test_suite = "true"\n'
+        'test_suite_without_new = "echo {test:--deselect } | '
+        'grep -q -- \'--deselect test_thing2.py::test_broken2\'"\n')
+    ok, failures = gate(d, "TICKET-001")
+    assert ok, failures
+    # `gate()` returns only the findings that do NOT start with `ok:`, so
+    # the `ok:` lines are read off the thread entry it wrote and saved --
+    # the same way the substituted-command test reads it.
+    text = (d / ".project/tickets/TICKET-001.md").read_text()
+    for one in ("test_thing.py::test_broken", "test_thing2.py::test_broken2"):
+        assert f"ok: `{one}` fails as required" in text, text
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_a_bare_test_placeholder_is_refused_for_a_multi_test_ticket():
+    """`pytest --deselect a b` deselects `a` and SELECTS `b`. With two
+    tests a bare `{test}` runs the wrong suite, so the gate refuses it and
+    names the fix. `{test:}` is the escape hatch for a runner that does
+    take several values after one flag."""
+    d = project(FIXTURE.replace(
+        "test_file: test_thing.py::test_broken",
+        "test_file: [test_thing.py::test_broken, test_thing2.py::test_broken2]"))
+    (d / "test_thing2.py").write_text("")
+    (d / ".project" / "pipeline.toml").write_text(
+        'test_one = "echo {name}; exit 1"\n'
+        'test_suite = "true"\n'
+        'test_suite_without_new = "true --deselect {test}"\n')
+    ok, failures = gate(d, "TICKET-001")
+    assert not ok
+    assert any("{test:" in f for f in failures), failures
+    shutil.rmtree(d, ignore_errors=True)
+
+
 def test_a_ticket_promoted_from_quick_review_meets_a_gate_it_cannot_pass():
     """`triage` can route a small ticket onto the cheap route: `chore` sets
     `cheap_route` and sends it straight to `implementing`, skipping

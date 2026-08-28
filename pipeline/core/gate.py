@@ -4,7 +4,9 @@ import shutil
 import tempfile
 from pathlib import Path
 
-from pipeline.core.config import NO_TESTS_RE, format_test_cmd, project_config
+from pipeline.core.config import (NO_TESTS_RE, format_test_cmd,
+                                  format_tests_cmd, project_config,
+                                  selector_parts)
 from pipeline.core.ticket import (FENCE_RE, Ticket, _fenced, active_decisions,
                                   decisions_dir, ticket_path)
 from pipeline.core.worktree import base_checkout, base_ref, run_cmd
@@ -368,14 +370,21 @@ def gate(project: Path, tid: str, workdir: Path | None = None) -> tuple[bool, li
             f"{UNMATCHABLE_MARK}: {bad} -- trim it to the part of the failure "
             f"that is the same on every run. Got: {expect!r}")
 
-    test = t.test_file
-    if not test:
+    tests = t.tests
+    if not tests:
         findings.append("no `test_file` recorded in frontmatter")
     else:
-        test_path = wd / test.split("::")[0]
-        if not test_path.is_file():
-            findings.append(f"test file {test_path} does not exist")
-        else:
+        runnable = []
+        for test in tests:
+            test_path = wd / test.split("::")[0]
+            if not test_path.is_file():
+                findings.append(f"test file {test_path} does not exist")
+            else:
+                runnable.append(test)
+        # `reproduced`, not `failed`: `gate()` binds that name below for
+        # the findings that decide the verdict.
+        reproduced: list[tuple[str, str]] = []
+        for test in runnable:
             code, out = run_cmd(format_test_cmd(cfg["test_one"], test), wd)
             node = test.split("::")[-1]
             if code == 0:
@@ -395,7 +404,18 @@ def gate(project: Path, tid: str, workdir: Path | None = None) -> tuple[bool, li
                 findings.append(
                     f"`{test}` exited non-zero but its name never appears in the "
                     f"output -- it errored rather than failed\n```\n{out[-1200:]}\n```")
-            elif expect and expect not in out and bad:
+            else:
+                reproduced.append((test, out))
+        # `expect:` is ONE line of the ticket, and two tests covering two code
+        # paths fail with two different strings, so it must appear in at least
+        # one of them -- see `## Decisions`. The per-test guarantee above is
+        # the strong one and is unchanged: every listed test exits non-zero
+        # AND prints its own node name.
+        matched = not expect or any(expect in o for _, o in reproduced)
+        for test, out in reproduced:
+            if matched:
+                findings.append(f"ok: `{test}` fails as required\n```\n{out[-1200:]}\n```")
+            elif bad:
                 # step 4 already reported why `expect` cannot recur -- a second,
                 # substantive finding here would make the list read as mixed and
                 # charge `plan_validation_attempts` instead of the structural
@@ -403,7 +423,7 @@ def gate(project: Path, tid: str, workdir: Path | None = None) -> tuple[bool, li
                 findings.append(
                     f"ok: `{test}` fails; its output is not checked against an "
                     f"`expect:` that cannot recur\n```\n{out[-1200:]}\n```")
-            elif expect and expect not in out and ESCAPE_RE.search(expect):
+            elif ESCAPE_RE.search(expect):
                 # a literal backslash-`n` in `expect` is undecidable on its own:
                 # pytest reprs a string holding a real newline the same way, so
                 # this fires only once the grep has already missed -- see
@@ -413,7 +433,7 @@ def gate(project: Path, tid: str, workdir: Path | None = None) -> tuple[bool, li
                     f"where the run's output holds a control character, and "
                     f"`{test}`'s output does not contain it either way -- trim "
                     f"it to the part before the escape. Got: {expect!r}")
-            elif expect and expect not in out:
+            else:
                 # a red test proves nothing if it is red for a different reason
                 # than the one reported -- that looks like evidence but isn't.
                 # `expect` is body text an agent wrote, not frontmatter -- it
@@ -423,19 +443,20 @@ def gate(project: Path, tid: str, workdir: Path | None = None) -> tuple[bool, li
                 findings.append(
                     f"`{test}` fails, but its output does not mention the expected "
                     f"string {expect!r}\n```\n{out[-1200:]}\n```")
-            else:
-                findings.append(f"ok: `{test}` fails as required\n```\n{out[-1200:]}\n```")
-                findings += _base_findings(project, cfg, wd, [test])
-            suite_cmd = format_test_cmd(cfg["test_suite_without_new"], test)
+        if matched and reproduced:
+            findings += _base_findings(project, cfg, wd, [x for x, _ in reproduced])
+        if runnable:
+            names = " ".join(f"`{x}`" for x in runnable)
+            suite_cmd = format_tests_cmd(cfg["test_suite_without_new"], runnable)
             code, out = run_cmd(suite_cmd, wd)
             if code != 0 and suite_ran(code, out):
                 findings.append(
-                    f"suite excluding `{test}` is RED -- pre-existing breakage, "
+                    f"suite excluding {names} is RED -- pre-existing breakage, "
                     f"fix that first\n```\n{out[-1200:]}\n```"
                 )
             elif code != 0:
                 findings.append(
-                    f"could not run the suite excluding `{test}`: {suite_cmd!r} "
+                    f"could not run the suite excluding {names}: {suite_cmd!r} "
                     f"exited {code} and reported no test result, so pre-existing "
                     f"breakage is neither proven nor ruled out -- fix "
                     f"`test_suite_without_new` in `.project/pipeline.toml`"
