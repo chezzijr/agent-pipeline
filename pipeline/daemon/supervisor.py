@@ -14,10 +14,11 @@ from pathlib import Path
 
 from pipeline import __version__
 from pipeline.core import PipelineError
-from pipeline.core.config import (compose_prompt, format_test_cmd, harness,
-                                  is_readonly, mcp_config, mcp_servers,
+from pipeline.core.config import (cap_config, compose_prompt, format_test_cmd,
+                                  harness, is_readonly, mcp_config, mcp_servers,
                                   project_config, project_max_parallel,
-                                  readonly_allow, render, stage_config,
+                                  readonly_allow, render, stage_cap,
+                                  stage_config,
                                   stage_settings)
 from pipeline.core.fence import fenced_touches
 from pipeline.core.gate import gate, plan_steps, structural_only
@@ -268,6 +269,20 @@ def event_sink(tid: str, stage: str, session: str, emit):
     return sink
 
 
+def terminal_sink(rec: dict, inner):
+    """Wrap a sink to keep the harness's own reason for stopping on `rec`.
+
+    The harness names why it stopped on its `result` event, the child then
+    exits like any other failure, and `event_sink()` writes to the event log,
+    which nothing reads back inside one tick.
+    """
+    def sink(ev: dict) -> None:
+        if ev.get("kind") == "result" and ev.get("terminal_reason"):
+            rec["terminal_reason"] = ev["terminal_reason"]
+        inner(ev)
+    return sink
+
+
 def usage_events(session: str) -> list[dict]:
     """One interactive stage's token usage, summed per model, off its session
     transcript.
@@ -380,18 +395,26 @@ def spawn(project: Path, wt: Path, tid: str, stage: str, hcfg: dict,
     logs = project / ".project" / "logs"
     logs.mkdir(parents=True, exist_ok=True)
     log = logs / f"{tid}-{stage}-{session[:8]}.log"
+    counters: dict = {}
     try:
-        view = stage_view(Ticket.find(project, tid), stage)
+        t = Ticket.find(project, tid)
+        counters, view = t.counters, stage_view(t, stage)
     except PipelineError:
         # Total: `spawn()` is called directly with no ticket on disk
         # (tests/test_pty.py:393). No view means the agent reads the file,
         # which is exactly what it did before this existed.
         view = ""
-    prompt = compose_prompt(stage, hcfg, view, project)
+    prompt = compose_prompt(stage, hcfg, view, project, interactive=interactive)
     settings = stage_settings(stage, cfg)
     servers = mcp_servers(project, cfg)
     mcp = mcp_config(servers)
     allow = readonly_allow(project)
+    # A review cap scales with the plan its diff came from, the way
+    # `bound_for()` scales an attempt budget (DEC-047). The counters ride
+    # the ticket load the view already pays for. This rebind must precede
+    # the `stage_cap(cfg, hcfg)` call below so `rec["cap"]` carries the
+    # scaled number.
+    cfg = cap_config(stage, cfg, project, counters)
     cmd = render(hcfg, cfg, tid=tid, project=project,
                 ticket=ticket_path(project, tid),
                 result_file=tickets_dir(project) / f"{tid}.result",
@@ -443,7 +466,9 @@ def spawn(project: Path, wt: Path, tid: str, stage: str, hcfg: dict,
            "log": log, "stage": stage, "wt": wt,
            "poller": poller, "pipe": None, "reader": None,
            "screen": None, "writer": None,
+           "terminal_reason": None, "cap": stage_cap(cfg, hcfg),
            "sink": event_sink(tid, stage, session, emit)}
+    rec["sink"] = terminal_sink(rec, rec["sink"])
     if interactive or poller:
         # `Screen` is shaped like `StreamReader`, so pump() tees the raw bytes
         # to the log and feeds this with no PTY branch of its own.
@@ -1060,6 +1085,18 @@ def _finish(project: Path, rec: dict, emit=noop) -> str:
         return "wrote-in-readonly"
 
     if res is None:
+        # A budget kill is not a crash: the same prompt against the same
+        # tree spends the same cap and stops at the same point, so a respawn
+        # buys nothing. The bound is one, and there is no second attempt to
+        # charge against.
+        if rec.get("terminal_reason") == "budget_exhausted":
+            t.counters["budget_kills"] = t.counters.get("budget_kills", 0) + 1
+            cap = rec.get("cap") or "?"
+            escalate(t, f"`{stage}` was killed at its ${cap} budget cap "
+                        f"(--max-budget-usd) before it wrote a .result "
+                        f"sidecar; a respawn spends the same cap and stops "
+                        f"at the same point", emit)
+            return "budget-exhausted"
         # L4: a harness that dies before writing a result must not respawn
         # forever. Same budget as every other bounded loop.
         n = t.counters.get("no_result", 0) + 1

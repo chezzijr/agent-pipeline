@@ -68,6 +68,18 @@ def test_stream_fixture_parses_and_never_raises():
     assert res["usage"]["input_tokens"] == 22110 and res["modelUsage"]
 
 
+def test_a_budget_kill_names_itself_on_the_result_event():
+    line = (b'{"type":"result","subtype":"error_max_budget_usd","is_error":true,'
+            b'"terminal_reason":"budget_exhausted","total_cost_usd":5.01,'
+            b'"num_turns":41,"usage":{},"session_id":"s1"}\n')
+    ev = StreamReader().feed(line)[0]
+    assert ev["kind"] == "result"
+    assert ev["terminal_reason"] == "budget_exhausted"
+    assert ev["subtype"] == "error_max_budget_usd"
+
+    assert events()[11]["terminal_reason"] is None
+
+
 def test_malformed_never_raises():
     """A harness upgrade must not kill the supervisor and strand every lease."""
     hostile = [

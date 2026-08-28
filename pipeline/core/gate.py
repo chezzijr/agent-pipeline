@@ -4,7 +4,7 @@ import shutil
 import tempfile
 from pathlib import Path
 
-from pipeline.core.config import format_test_cmd, project_config
+from pipeline.core.config import NO_TESTS_RE, format_test_cmd, project_config
 from pipeline.core.ticket import (FENCE_RE, Ticket, _fenced, active_decisions,
                                   decisions_dir, ticket_path)
 from pipeline.core.worktree import base_checkout, base_ref, run_cmd
@@ -244,6 +244,35 @@ def _base_findings(project: Path, cfg: dict, wd: Path, test: str,
             f"already fixed upstream\n```\n{out[-1200:]}\n```"]
 
 
+# `test_suite_without_new` exiting non-zero is pre-existing breakage only when
+# the run produced evidence it ran. A shell syntax error exits 2 with no test
+# result and used to read as breakage in the project's own tests (TICKET-074).
+# pytest, go test, jest, unittest and rspec exit 1 on a failing test; cargo
+# exits 101. The regex is the fallback for a runner that exits with its own
+# failure count -- mocha exits 3 on three failures.
+SUITE_FAILED_CODES = (1, 101)
+SUITE_RAN_RE = re.compile(
+    r"\b\d+\s+(?:failed|failing|passed|passing|errors?|skipped)\b"
+    r"|\bran\s+\d+\s+tests?\b"
+    r"|\btest result:"
+    r"|^(?:---\s+)?FAIL\b", re.M | re.I)
+
+
+def suite_ran(code: int, out: str) -> bool:
+    """True when a non-zero suite run produced evidence it ran tests.
+
+    False is the safe answer: it makes `gate()` report "could not run"
+    instead of asserting breakage nobody observed.
+
+    `NO_TESTS_RE` (DEC-068) vetoes first. `pytest`'s collection error exits 2
+    printing `collected 0 items / 1 error`, and `1 error` matches the count
+    regex, so without the veto a suite that collected nothing reads as red.
+    """
+    if NO_TESTS_RE.search(out):
+        return False
+    return code in SUITE_FAILED_CODES or bool(SUITE_RAN_RE.search(out))
+
+
 def gate(project: Path, tid: str, workdir: Path | None = None) -> tuple[bool, list[str]]:
     """Tier A checks, run in the ticket's checkout. Returns (passed, findings)."""
     path = ticket_path(project, tid)
@@ -347,12 +376,20 @@ def gate(project: Path, tid: str, workdir: Path | None = None) -> tuple[bool, li
             else:
                 findings.append(f"ok: `{test}` fails as required\n```\n{out[-1200:]}\n```")
                 findings += _base_findings(project, cfg, wd, test, node)
-            code, out = run_cmd(format_test_cmd(cfg["test_suite_without_new"], test), wd)
-            if code != 0:
+            suite_cmd = format_test_cmd(cfg["test_suite_without_new"], test)
+            code, out = run_cmd(suite_cmd, wd)
+            if code != 0 and suite_ran(code, out):
                 findings.append(
                     f"suite excluding `{test}` is RED -- pre-existing breakage, "
                     f"fix that first\n```\n{out[-1200:]}\n```"
                 )
+            elif code != 0:
+                findings.append(
+                    f"could not run the suite excluding `{test}`: {suite_cmd!r} "
+                    f"exited {code} and reported no test result, so pre-existing "
+                    f"breakage is neither proven nor ruled out -- fix "
+                    f"`test_suite_without_new` in `.project/pipeline.toml`"
+                    f"\n```\n{out[-1200:]}\n```")
 
     dec = secs.get("Decisions checked", "")
     cited = sorted(set(DEC_ID_RE.findall(dec)))

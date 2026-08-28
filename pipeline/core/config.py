@@ -13,6 +13,7 @@ import tomllib
 from pathlib import Path
 
 from pipeline.core import PipelineError
+from pipeline.core.machine import USD_SCALED, cap_for
 from pipeline.core.ticket import split_frontmatter
 from pipeline.core.worktree import head_file, run_cmd
 
@@ -59,6 +60,18 @@ def stage_config(stage: str, project: Path | None = None) -> dict:
     """
     meta, _ = split_frontmatter(STAGES_DIR / f"{stage}.md")
     return {**meta, **project_stage_config(project, stage)}
+
+
+def cap_config(stage: str, cfg: dict, project: Path | None, counters: dict) -> dict:
+    """`cfg`, with `counters` attached when `stage` should scale its dollar
+    cap. A computed cap never exceeds the operator's own `max_usd` unless the
+    operator also sets `scale_usd = true` -- the same direction as the
+    TICKET-069 rule."""
+    override = project_stage_config(project, stage)
+    want = override.get("scale_usd")
+    if want is None:
+        want = stage in USD_SCALED and "max_usd" not in override
+    return {**cfg, "counters": counters} if want else cfg
 
 
 def agent_stages() -> list[str]:
@@ -316,7 +329,7 @@ def stage_extra(project: Path | None, stage: str) -> str:
 
 
 def compose_prompt(stage: str, hcfg: dict | None = None, view: str = "",
-                   project: Path | None = None) -> Path:
+                   project: Path | None = None, interactive: bool = False) -> Path:
     """_common.md + this stage's body, frontmatter stripped, as one file.
 
     A stage's `skills:` only reaches the prompt when the harness declares the
@@ -337,6 +350,13 @@ def compose_prompt(stage: str, hcfg: dict | None = None, view: str = "",
         text += ("\n\n---\n\n# This project's additions to this stage\n\n"
                  f"From `.project/stages/{stage}.extra.md`. These instructions "
                  "add to the rules above, and never relax them.\n\n" + extra)
+    if interactive:
+        text += ("\n\n---\n\n# This session runs on a terminal\n\n"
+                 "Write the result file LAST: after your `## Thread` entry "
+                 "and your `## Summary` rewrite. The dispatcher ends an "
+                 "interactive session as soon as the sidecar appears, so "
+                 "anything you have not written by then is lost. This "
+                 "reverses rule 6's ordering and nothing else.")
     if view:
         text += ("\n\n---\n\n# The ticket\n\nThis is a bounded view of "
                  "the ticket named in your instructions -- the ticket's "
@@ -346,6 +366,19 @@ def compose_prompt(stage: str, hcfg: dict | None = None, view: str = "",
     f.write(text)
     f.close()
     return Path(f.name)
+
+
+def stage_cap(cfg: dict, hcfg: dict):
+    """The dollar cap a stage spawns under: its own frontmatter, then the
+    harness default, then 5. One definition, because `_finish()` names the
+    cap a budget-killed stage hit and it must be the number `render()`
+    passed.
+
+    `cfg["counters"]` is the plan size the cap scales by. Its absence means
+    no scaling. The scaling lives here, rather than at the `render()` call
+    site, so `rec["cap"]` in `pipeline/daemon/supervisor.py` names the same
+    number the rendered flag does (DEC-077)."""
+    return cap_for(cfg.get("max_usd", hcfg.get("max_usd", 5)), cfg.get("counters") or {})
 
 
 def render(hcfg: dict, cfg: dict, *, tid: str, project: Path, ticket: Path,
@@ -407,7 +440,7 @@ def render(hcfg: dict, cfg: dict, *, tid: str, project: Path, ticket: Path,
         skills_flag=("" if (cfg.get("skills") and hcfg.get("skill_tool"))
                      else hcfg.get("no_skills_flag", "")),
         tools=_tools(hcfg, cfg),
-        cap=cfg.get("max_usd", hcfg.get("max_usd", 5)),
+        cap=stage_cap(cfg, hcfg),
         project=shlex.quote(str(project)),
         ticket=ticket_q,
         result_file=result_q,

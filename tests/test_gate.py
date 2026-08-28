@@ -215,6 +215,52 @@ def test_gate_blocks_a_test_that_errors_instead_of_failing():
     shutil.rmtree(d)
 
 
+def test_gate_distinguishes_a_suite_that_could_not_run_from_pre_existing_breakage():
+    """A syntax error in the suite command exits non-zero without running any
+    test -- TICKET-074. `gate()` must not report that as pre-existing
+    breakage in the project's own tests."""
+    d = project()
+    (d / ".project" / "pipeline.toml").write_text(
+        'test_one = "echo test_broken; exit 1"\n'
+        'test_suite = "true"\n'
+        'test_suite_without_new = "sh -c \'if ; then\'"\n')
+    ok, failures = gate(d, "TICKET-001")
+    assert not ok
+    assert not any("RED -- pre-existing breakage" in f for f in failures), failures
+    shutil.rmtree(d)
+
+
+def test_gate_reports_a_suite_that_ran_and_failed_as_pre_existing_breakage():
+    """Exit 1 with NO output is a red suite, not a broken command -- it is
+    what `! test -f broken` does in tests/test_dispatch.py."""
+    d = project()
+    (d / ".project" / "pipeline.toml").write_text(
+        'test_one = "echo test_broken; exit 1"\n'
+        'test_suite = "true"\n'
+        'test_suite_without_new = "exit 1"\n')
+    ok, failures = gate(d, "TICKET-001")
+    assert not ok
+    assert any("RED -- pre-existing breakage" in f for f in failures), failures
+    shutil.rmtree(d)
+
+
+def test_gate_names_the_exit_code_when_the_suite_command_could_not_run():
+    d = project()
+    (d / ".project" / "pipeline.toml").write_text(
+        'test_one = "echo test_broken; exit 1"\n'
+        'test_suite = "true"\n'
+        'test_suite_without_new = "echo boom >&2; exit 127"\n')
+    ok, failures = gate(d, "TICKET-001")
+    assert not ok
+    hits = [f for f in failures if "could not run the suite" in f]
+    assert len(hits) == 1, failures
+    assert "exited 127" in hits[0], hits[0]
+    # the fence is deduped out of the returned finding, not out of the file
+    entry = (d / ".project" / "tickets" / "TICKET-001.md").read_text()
+    assert "boom" in entry, entry
+    shutil.rmtree(d)
+
+
 def test_gate_blocks_empty_files_declared():
     d = project(FIXTURE.replace("files_declared: [thing.py]", "files_declared: []"))
     ok, failures = gate(d, "TICKET-001")

@@ -217,7 +217,10 @@ fails if either stops saying it.
 
 An interactive session also ends on its `.result` sidecar, not on `/exit`: a
 REPL does not exit when the agent reports a verdict, so the supervisor sends it
-SIGTERM once the sidecar lands and reaps it like any other child.
+SIGTERM once the sidecar lands and reaps it like any other child. That is also
+why an interactive stage writes its sidecar LAST while every other stage
+writes it first -- the sidecar is the interactive exit condition, and writing
+it early would end the session mid-thread-entry.
 
 ```
 -> {"id":7,"op":"attach","ticket":"TICKET-003"}      # "project" optional, a filter
@@ -394,6 +397,7 @@ Then one of three:
 | The reason is | Do |
 |---|---|
 | a flake -- crashed harness, expired lease, no sidecar | `pipeline resume TICKET-017 --stage plan-validation --reset no_result` |
+| the stage hit its `--max-budget-usd` cap (`budget_kills`) | raise that stage's `max_usd` in `pipeline/stages/<name>.md`, then `pipeline resume TICKET-017 --stage review --reset budget_kills` |
 | real, but the stage deserves another go with the thread it has now | `pipeline resume TICKET-017 --stage planning --grant plan_validation_attempts` |
 | the ticket itself is wrong | `pipeline reject TICKET-017 "why"` |
 
@@ -412,7 +416,9 @@ and `feature` and 3 for `refactor` on `review_loops` and
 `plan_validation_attempts`. `plan_validation_attempts` is the only one that
 grows with the plan -- one more attempt per 8 steps or 4 declared files, never
 past 5. `lease_expiries` and `no_result` are the dispatcher's own counters and
-stay at 2 whatever the class.
+stay at 2 whatever the class. `budget_kills` is bounded at one: a stage
+killed at its cap escalates on the first kill, because the same prompt
+against the same tree spends the same cap and stops at the same point.
 
 A Tier A failure whose findings are all structural -- a missing section, a
 plan line that is not a numbered step, a step citing no declared file --
@@ -502,6 +508,13 @@ the same stage files by default. A project can override one in two ways:
   **shallow** onto the packaged frontmatter: a key you set replaces the
   packaged one outright, it does not extend it -- a `skills` list you give
   replaces the packaged list, not appends to it.
+
+  `review`, `quick-review` and `holistic-review` are spawned with `max_usd`
+  grown by one dollar per 4 declared files or per 8 plan steps, whichever is
+  larger, capped at twice the stage's own number. A project's own `max_usd`
+  pins the cap and is never scaled past unless the table also sets
+  `scale_usd = true`. `scale_usd = false` turns scaling off for a stage that
+  has it by default.
 - **Prose**, in `.project/stages/<name>.extra.md` -- free text appended after
   the packaged prompt and before the ticket view. It can only add
   instructions, never remove or relax one: there is no frontmatter in an
