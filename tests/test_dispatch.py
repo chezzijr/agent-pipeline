@@ -1617,3 +1617,41 @@ def test_the_stream_sink_records_the_terminal_reason_on_the_child():
     sink({"kind": "result", "terminal_reason": "budget_exhausted"})
     assert rec["terminal_reason"] == "budget_exhausted"
     assert len(seen) == 3
+
+
+def test_the_session_thread_entry_reports_cost_and_tokens():
+    """TICKET-085: `pipeline/stream/events.py` normalises `total_cost_usd` and
+    `usage` off the harness's `result` event, and `terminal_sink()` forwards
+    every event to the inner sink -- but nothing carries either number onto
+    `rec`, so the session entry `_finish()` appends to `## Thread` never
+    mentions cost or tokens.
+    """
+    d = project()
+    path = d / ".project/tickets/TICKET-001.md"
+    snap = Ticket.load(path)
+
+    log = d / ".project" / "logs" / "TICKET-001.log"
+    log.parent.mkdir(parents=True, exist_ok=True)
+    (d / ".project/tickets/TICKET-001.result").write_text(
+        "result: ok\nsummary: x\n")
+
+    rec = {"fh": log.open("w"), "prompt": d / "gone.md", "settings": None,
+           "path": path, "tid": "TICKET-001", "stage": "plan-validation",
+           "session": "s1", "log": log, "wt": d, "meta": snap,
+           "before": None}
+
+    sink = supervisor.terminal_sink(
+        rec, supervisor.event_sink(rec["tid"], rec["stage"], rec["session"],
+                                    lambda *a, **k: None))
+    sink({"kind": "result", "total_cost_usd": 6.089121,
+          "usage": {"output_tokens": 80906, "cache_read_input_tokens": 4393384},
+          "terminal_reason": None})
+
+    supervisor.finish(d, rec)
+    t = Ticket.load(path)
+    entries = [e.text for e in t.thread() if "ran as session" in e.text]
+    assert entries, f"no session entry found: {[e.text for e in t.thread()]}"
+    msg = entries[-1]
+    assert "6.09" in msg or "$6" in msg, (
+        f"session thread entry has no trace of the run's cost:\n{msg}")
+    shutil.rmtree(d, ignore_errors=True)
