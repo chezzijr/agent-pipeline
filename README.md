@@ -85,8 +85,10 @@ customised one keeps its version.
 
 Once `.project/` is committed, `pipeline.toml` is read from git `HEAD`, so an
 edit takes effect at the next commit -- a ticket working on a branch must not
-be able to change the commands that judge it. Until it is committed (and under
-`--private`, which never commits it) the file on disk is read as-is.
+be able to change the commands that judge it. Before the first commit the file
+on disk is read as-is. Under `--private`, which never commits it, the file is
+pinned outside the repo on first read instead, and `pipeline config --sync` is
+the only way to adopt a later edit.
 
 Without installing it, `uv run python -m pipeline …` runs the same CLI.
 

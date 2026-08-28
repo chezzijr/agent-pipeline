@@ -1,8 +1,10 @@
 # How to run this project's tests. `{test}` is substituted with the ticket's
 # `test_file` frontmatter value.
 # The dispatcher reads this file from git HEAD, so an edit to a committed
-# config takes effect once it is committed. A config git does not have --
-# not yet committed, or excluded by `init --private` -- is read from disk.
+# config takes effect once it is committed. Not yet committed, it is read
+# from disk as-is. Excluded by `init --private` -- git will never have it --
+# it is pinned outside the repo on first read; `pipeline config --sync`
+# adopts a later edit.
 test_one                = "pytest -x {test}"
 test_suite              = "pytest"
 test_suite_without_new  = "pytest --deselect {test}"

@@ -86,6 +86,8 @@ broken config, not a broken pipeline. Show the operator this output. Then run
 The dispatcher reads this file from **git HEAD**
 (`git show HEAD:./.project/pipeline.toml`), so an uncommitted edit is inert.
 This is deliberate: it stops a stage rewriting the commands the gate trusts.
+If `.project/` is git-ignored here there is nothing to commit: run
+`pipeline config --sync` instead, and say so to the operator.
 
 `base` must name the branch tickets are cut from, and the main checkout must be
 parked on it while the dispatcher runs, or `merging` refuses to land.

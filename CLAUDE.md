@@ -122,10 +122,13 @@ still worth it: it prints one line per case, and the failure names the case.
   to the ticket is every stage's job. The guard's path rule blocks a file tool
   there, and Bash still reaches it, which is why `project_config()` reads HEAD
   (`git show HEAD:./.project/pipeline.toml`), so an
-  uncommitted edit is inert; it falls back to disk only when git has no copy at
-  all. A committed edit lands in the ticket's diff, and
-  `.project/pipeline.toml` is in `machine.FENCED`, so it parks at
-  `awaiting-merge`.
+  uncommitted edit is inert; it falls back to disk only when git does not have
+  the file YET (a fresh, uncommitted `pipeline init`). Where `.project/` is
+  git-ignored (`init --private`) git will NEVER have the file, so
+  `project_config()` pins a copy under `config_dir()/pinned/` on first read
+  instead -- `pipeline config --sync` is the only way to adopt a later edit. A
+  committed edit lands in the ticket's diff, and `.project/pipeline.toml` is in
+  `machine.FENCED`, so it parks at `awaiting-merge`.
 - **`-j` is already per project, not machine-wide.** `serve()` passes
   `states[key]`, one inflight dict per project, so `max_parallel` in
   `.project/pipeline.toml` only lowers it -- neither number bounds the
