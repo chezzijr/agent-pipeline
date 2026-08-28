@@ -248,6 +248,13 @@ still worth it: it prints one line per case, and the failure names the case.
   argv-prefix list matched per shell segment. It never overrides
   `always_rules()` or the redirection rule, and `tables()` in the guard's own
   test file pops the variable so `BLOCKED_READONLY` still means default deny.
+- **The registry refuses a git worktree, and refuses a stage.**
+  `is_worktree()` in `pipeline/daemon/registry.py` reads the `.git` *file*'s
+  `gitdir:` pointer; `register()` raises and `projects()` skips, so a line
+  written before the fix goes inert without an unregister. `register()`/
+  `unregister()` also refuse when `PIPELINE_STAGE` is set -- a guardrail, not
+  a boundary, since the registry lives outside the worktree, the ticket's
+  diff and `machine.FENCED` (TICKET-072).
 
 ## Conventions
 

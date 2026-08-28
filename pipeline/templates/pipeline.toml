@@ -14,13 +14,13 @@ test_suite_without_new  = "pytest --deselect {test}"
 #   * `<name>` must appear in `test_one`'s output, or an errored test reads as
 #     a successful reproduction;
 #   * `test_suite_without_new` must run everything BUT that test.
-# The value is `shlex.quote`d, then substituted with `str.format`, so a literal
-# `{` or `}` anywhere in a command is a KeyError -- use `$(...)`, never `${...}`.
+# Each of {test}, {path} and {name} is shlex.quote'd and substituted; every
+# other brace -- ${t##*::}, awk '{print $1}' -- reaches the shell as written.
 #
 # Cargo, verified end to end against `cargo test`:
-# test_one               = "cargo test \"$(echo {test} | sed 's/.*:://')\""
+# test_one               = "cargo test {name}"
 # test_suite             = "cargo test"
-# test_suite_without_new = "cargo test -- --skip \"$(echo {test} | sed 's/.*:://')\""
+# test_suite_without_new = "cargo test -- --skip {name}"
 
 # The branch tickets are cut from, and the one Tier A re-runs {test} against.
 base                    = "main"

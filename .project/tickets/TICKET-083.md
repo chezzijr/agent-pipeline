@@ -35,6 +35,24 @@ It charged `blocked_count`, sent the ticket back to `plan-validation`, and
 threw away a spawn. The plan was fine. The prompt was fine. The file was a
 snapshot from before any of the work.
 
+**It does not stop at a wasted spawn.** The same agent appended its objection
+to that file -- the natural place to record a finding -- and
+`.project/tickets/TICKET-067.md` is TRACKED, so the worktree was left dirty.
+The next stage could not rebase:
+
+    error: cannot rebase: You have unstaged changes.
+    error: Please commit or stash them.
+    fatal: no rebase in progress
+
+`revalidating` failed and the ticket escalated with an approved, valid plan
+and no code written. One stale file, three consequences: a blocked spawn, a
+charged counter, and an escalation nothing in the ticket explains.
+
+That second effect constrains the fix. Telling the stage "the file is a
+snapshot, ignore it" (option 1 below) does not stop an agent writing a finding
+into the nearest ticket-shaped file, and any write to a tracked path under
+`.project/` in a worktree breaks the next rebase the same way.
+
 `pipeline/stages/_common.md` rule 4 already tells a stage to read the bounded
 view rather than the ticket file, and that rule exists to save tokens. It does
 not say the file is stale, so a stage that opens it -- to check the view it

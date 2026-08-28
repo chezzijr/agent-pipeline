@@ -12,3 +12,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 # symlink rather than on the code. Resolve the root once, for every test and
 # every subprocess they spawn.
 os.environ["TMPDIR"] = tempfile.tempdir = str(Path(tempfile.gettempdir()).resolve())
+
+# A stage's Bash runs this suite with PIPELINE_STAGE set, and
+# registry.register()/unregister() refuse the operator's registry under that
+# name. A test process is not a stage.
+os.environ.pop("PIPELINE_STAGE", None)

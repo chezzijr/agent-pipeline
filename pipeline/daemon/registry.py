@@ -45,6 +45,10 @@ def projects() -> list[Path]:
     absolute path to an existing `.project/` is returned. Without that,
     `lock()`'s `mkdir(parents=True)` would happily scaffold a `.project/` at
     whatever a typo named, and `serve()` would then tick it.
+
+    A worktree line written before `register()` refused one -- as this
+    project's own registry once held -- goes inert here without an
+    unregister.
     """
     out: list[Path] = []
     for line in _raw():
@@ -52,15 +56,48 @@ def projects() -> list[Path]:
         if not line:
             continue
         q = Path(line)
-        if q.is_absolute() and (q / ".project").is_dir() and q not in out:
+        if q.is_absolute() and (q / ".project").is_dir() and not is_worktree(q) and q not in out:
             out.append(q)
     return out
 
 
+def is_worktree(project: Path) -> bool:
+    """True if `project` is a linked git worktree, not a main checkout.
+
+    `git worktree add` copies `.project/` along with everything else, so a
+    worktree passes every other check `register()` makes. A linked worktree's
+    `.git` is a *file* holding `gitdir: <common>/worktrees/<name>`; a main
+    checkout's `.git` is a directory, and a submodule's pointer names
+    `modules`, not `worktrees`.
+    """
+    try:
+        text = (Path(project) / ".git").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    text = text.strip()
+    if not text.startswith("gitdir:"):
+        return False
+    return Path(text.split(":", 1)[1].strip()).parent.name == "worktrees"
+
+
 def register(project: Path) -> Path:
+    """Register `project` with the daemon.
+
+    Refuses when `PIPELINE_STAGE` is set: a guardrail against a stage
+    exploring this command, not a boundary -- the registry file lives outside
+    the worktree, the ticket's diff and `machine.FENCED`, so nothing else
+    would catch a stage that unset the variable or wrote the file directly.
+    """
+    stage = os.environ.get("PIPELINE_STAGE")
+    if stage:
+        raise PipelineError(f"the registry is operator state: the {stage} stage cannot register {project}")
     project = Path(project).resolve()
     if not (project / ".project").is_dir():
         raise PipelineError(f"{project} has no .project/ -- run `pipeline init` first")
+    if is_worktree(project):
+        raise PipelineError(
+            f"{project} is a git worktree, not a project -- register the main checkout instead"
+        )
     if "\n" in str(project) or "#" in str(project):
         # one path per line, `#` comments: a path carrying either would inject
         # a second entry or silently truncate this one
@@ -74,7 +111,14 @@ def register(project: Path) -> Path:
 def unregister(project: Path) -> bool:
     """Drops the line, not the filtered entry: a project whose directory has
     since been deleted no longer shows up in `projects()` and must still be
-    removable."""
+    removable.
+
+    Refuses when `PIPELINE_STAGE` is set, for the same reason `register()`
+    does: a guardrail, not a boundary.
+    """
+    stage = os.environ.get("PIPELINE_STAGE")
+    if stage:
+        raise PipelineError(f"the registry is operator state: the {stage} stage cannot unregister {project}")
     project = Path(project).resolve()
     keep = [l for l in _raw() if Path(l.split("#", 1)[0].strip() or "/dev/null")
             != project]

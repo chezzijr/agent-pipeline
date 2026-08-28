@@ -135,6 +135,11 @@ pipeline stop
 pipeline unregister ~/code/myproject
 ```
 
+`register` refuses a git worktree, because `git worktree add` copies
+`.project/` and the daemon would then tick a ticket's own checkout as a
+second project. `register`/`unregister` also refuse when `PIPELINE_STAGE` is
+set, because the registry is operator state.
+
 `pipelined` itself stays a raw foreground process, so `systemd --user`, `launchd`
 or tmux can supervise it; `pipeline start` is just a convenience wrapper. There is
 no pidfile: the daemon socket is the liveness check and `ping` returns the pid.

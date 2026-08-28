@@ -34,18 +34,16 @@ Two traps behind that table:
   exits non-zero, and without the name check it reads as a successful
   reproduction.
 
-**Never write a literal `{` or `}` in a command.** `str.format` raises
-`KeyError: 't##*'` on `${t##*::}`. Use `$(...)`:
+`{test}` is the whole `<path>::<name>` value; `{path}` and `{name}` are its
+two halves. All three are `shlex.quote`d and substituted; every other brace
+reaches the shell unchanged.
 
 ```toml
 # cargo
-test_one               = "cargo test \"$(echo {test} | sed 's/.*:://')\""
+test_one               = "cargo test {name}"
 test_suite             = "cargo test"
-test_suite_without_new = "cargo test -- --skip \"$(echo {test} | sed 's/.*:://')\""
+test_suite_without_new = "cargo test -- --skip {name}"
 ```
-
-A runner whose selector is the file (`pytest`, `jest <path>`) can drop the
-`sed` and pass `{test}` straight through.
 
 ## Prove it before you claim it works
 
@@ -55,12 +53,12 @@ and `.format` the gate uses:
 
 ```sh
 python3 - <<'PY'
-import shlex, subprocess, tomllib, pathlib
+import re, shlex, subprocess, tomllib, pathlib
 cfg = tomllib.loads(pathlib.Path(".project/pipeline.toml").read_text())
 test = "tests/repro.rs::test_add_is_wrong"          # <- a real failing test here
 name = test.split("::")[-1]
 for k in ("test_one", "test_suite", "test_suite_without_new"):
-    c = cfg[k].format(test=shlex.quote(test))
+    c = re.sub(r"\{(test|path|name)\}", lambda m: shlex.quote({"test": test, "path": test.split("::")[0], "name": name}[m.group(1)]), cfg[k])
     p = subprocess.run(c, shell=True, capture_output=True, text=True)
     out = p.stdout + p.stderr
     print(k, "| rc =", p.returncode, "| name in output =", name in out)

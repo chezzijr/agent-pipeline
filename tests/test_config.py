@@ -4,7 +4,7 @@ import tempfile
 from pathlib import Path
 
 from pipeline.core import PipelineError
-from pipeline.core.config import project_config, stage_extra
+from pipeline.core.config import format_test_cmd, project_config, stage_extra
 from tests.helpers import git_project
 
 
@@ -58,3 +58,20 @@ def test_an_uncommitted_stage_extra_must_not_reach_stage_extra():
     (d / ".project" / "stages" / "implementing.extra.md").write_text("INJECTED-9137\n")
 
     assert "INJECTED-9137" not in stage_extra(d, "implementing")
+
+
+def test_format_test_cmd_substitutes_test_path_and_name():
+    test = "tests/test_gate.py::test_broken"
+    assert format_test_cmd("pytest -x {test}", test) == "pytest -x tests/test_gate.py::test_broken"
+    assert format_test_cmd("cargo test {name}", test) == "cargo test test_broken"
+    assert format_test_cmd("jest {path}", test) == "jest tests/test_gate.py"
+    assert format_test_cmd("pytest {path} -k {name}", "tests/a b.py::t x") == (
+        "pytest 'tests/a b.py' -k 't x'")
+
+
+def test_format_test_cmd_leaves_other_braces_untouched():
+    """`test_suite` was never `.format()`ed, and `str.format` raised
+    `KeyError: 't##*'` on `${t##*::}` -- both must keep working."""
+    cmd = """awk '{print $1}' && cargo test -- --skip "${t##*::}" {name}"""
+    assert format_test_cmd(cmd, "tests/f.rs::t_a") == (
+        """awk '{print $1}' && cargo test -- --skip "${t##*::}" t_a""")

@@ -14,9 +14,10 @@ from pathlib import Path
 
 from pipeline import __version__
 from pipeline.core import PipelineError
-from pipeline.core.config import (compose_prompt, harness, is_readonly,
-                                  mcp_config, mcp_servers, project_config,
-                                  readonly_allow, render, stage_config,
+from pipeline.core.config import (compose_prompt, format_test_cmd, harness,
+                                  is_readonly, mcp_config, mcp_servers,
+                                  project_config, readonly_allow, render,
+                                  stage_config,
                                   stage_settings)
 from pipeline.core.fence import fenced_touches
 from pipeline.core.gate import gate, plan_steps, structural_only
@@ -721,7 +722,7 @@ def start(project: Path, path: Path, hcfg: dict, inflight: dict,
         return True, rec
 
     if stage == "verifying":
-        return child(cfg["test_suite"], "suite")
+        return child(format_test_cmd(cfg["test_suite"], t.test_file or ""), "suite")
 
     if stage == "merging":
         if any(r.get("kind") == "merge" for r in inflight.values()):
