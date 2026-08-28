@@ -7,8 +7,9 @@ import tempfile
 from pathlib import Path
 
 from pipeline.core import PipelineError
-from pipeline.core.config import (cap_config, format_test_cmd, harness,
-                                  pin_dir, pin_path, project_config,
+from pipeline.core.config import (cap_config, format_test_cmd,
+                                  format_tests_cmd, harness, pin_dir,
+                                  pin_path, project_config,
                                   project_max_parallel, render,
                                   selector_failure, stage_config, stage_extra,
                                   suite_failure)
@@ -228,6 +229,25 @@ def test_format_test_cmd_leaves_other_braces_untouched():
     cmd = """awk '{print $1}' && cargo test -- --skip "${t##*::}" {name}"""
     assert format_test_cmd(cmd, "tests/f.rs::t_a") == (
         """awk '{print $1}' && cargo test -- --skip "${t##*::}" t_a""")
+
+
+def test_format_tests_cmd_substitutes_one_test_or_many():
+    """TICKET-066: `test_file` may hold a list. A bare placeholder joins
+    the values with spaces; `{test:<prefix>}` repeats the prefix before
+    each, which is the only way `pytest --deselect` excludes more than one
+    test in a single run. `format_test_cmd` is unchanged for one test."""
+    a, b = "a.py::t", "b.py::u"
+    assert format_tests_cmd("pytest -x {test}", [a]) == "pytest -x a.py::t"
+    assert format_tests_cmd("pytest -x {test}", [a, b]) == "pytest -x a.py::t b.py::u"
+    assert format_tests_cmd("pytest {test:--deselect }", [a, b]) == (
+        "pytest --deselect a.py::t --deselect b.py::u")
+    assert format_tests_cmd("pytest {test:}", [a, b]) == "pytest a.py::t b.py::u"
+    assert format_tests_cmd("pytest --ignore {path}", [a, "a.py::u"]) == (
+        "pytest --ignore a.py")
+    assert format_tests_cmd("pytest -x {test}", ["a.py::t[1]"]) == "pytest -x 'a.py::t[1]'"
+    assert format_tests_cmd("""awk '{print $1}' {name}""", [a]) == """awk '{print $1}' t"""
+    assert format_test_cmd("pytest -x {test}", a) == "pytest -x a.py::t"
+    assert format_test_cmd("pytest {test}", "") == "pytest ''"
 
 
 def _probe_project(test_one="false", test_suite="true"):

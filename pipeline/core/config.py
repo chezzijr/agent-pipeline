@@ -182,20 +182,42 @@ def sync_pins(project: Path) -> list[Path]:
     return removed
 
 
-TEST_PLACEHOLDER_RE = re.compile(r"\{(test|path|name)\}")
+TEST_PLACEHOLDER_RE = re.compile(r"\{(test|path|name)(?::([^{}]*))?\}")
+
+
+def selector_parts(test: str) -> dict:
+    """One `<path>::<name>` test id split into the three placeholder values.
+
+    Not named `test_parts`: pytest collects any module-level `test*` name a
+    test module imported and runs it as a test with a missing fixture."""
+    return {"test": test, "path": test.split("::")[0], "name": test.split("::")[-1]}
+
+
+def format_tests_cmd(template: str, tests: list) -> str:
+    """Substitute `{test}`, `{path}` and `{name}` for a ticket's whole list.
+
+    A bare `{test}` is every test, space-joined. `{test:<prefix>}` repeats
+    `<prefix>` before each one: `pytest --deselect` takes a single value at
+    a time, so excluding two tests in one run needs two flags. `{test:}` is
+    the space-joined form written out, for a runner that does take several
+    values after one flag.
+
+    Values are `shlex.quote`d and de-duplicated first-seen-first, so two
+    tests in one file yield one `{path}`. Every other brace passes through
+    verbatim, which is DEC-067 and why this is a regex, not `str.format`.
+    """
+    def sub(m):
+        prefix = m.group(2) or ""
+        vals = dict.fromkeys(selector_parts(t)[m.group(1)] for t in tests)
+        return " ".join(prefix + shlex.quote(v) for v in vals)
+    return TEST_PLACEHOLDER_RE.sub(sub, template)
 
 
 def format_test_cmd(template: str, test: str) -> str:
-    """Substitute `{test}`, `{path}` and `{name}` in a project test command.
-
-    `test` is the ticket's whole `test_file` value (`<path>::<name>`), and
-    every substitution is `shlex.quote`d, exactly as the single `{test}`
-    was. Only these three names are touched: `str.format` raised
-    `KeyError: 't##*'` on a literal `${t##*::}`, and `test_suite` was never
-    formatted at all, so any other brace must reach the shell as written.
-    """
-    parts = {"test": test, "path": test.split("::")[0], "name": test.split("::")[-1]}
-    return TEST_PLACEHOLDER_RE.sub(lambda m: shlex.quote(parts[m.group(1)]), template)
+    """`format_tests_cmd()` for the call sites that hold exactly one test:
+    `test_one`, which runs once per test, and `test_suite`. Behaviour is
+    unchanged, `test=""` substituting `''` included."""
+    return format_tests_cmd(template, [test])
 
 
 # `suite_failure`, not `test_suite_failure`, and `project_test_cmd`, not
