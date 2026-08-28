@@ -22,17 +22,23 @@ Your three commands must satisfy exactly this:
 
 | Key | Must do | Gate checks |
 |---|---|---|
-| `test_one` | run **only** that one test | exits non-zero **and** `<name>` appears in the output |
+| `test_one` | run **only** that one test | exits non-zero **and** `the name` appears in the output; exits non-zero when the selector matches NO test |
 | `test_suite` | run everything | `verifying` passes only on exit 0 |
 | `test_suite_without_new` | run everything **except** that test | red here means pre-existing breakage |
 
-Two traps behind that table:
+Three traps behind that table:
 
 - `<path>` must be a real file. The gate copies it onto a checkout of `base`
   and re-runs `test_one` there, to prove the bug is not already fixed upstream.
 - `<name>` must reach the output. A compile error or a missing dependency also
   exits non-zero, and without the name check it reads as a successful
   reproduction.
+- A selector that matches **no** test must still exit non-zero. A runner that
+  treats the selector as a filter may exit 0 and print `0 filtered out`, and
+  the gate would read that as `the reproduction PASSES`. Wrap the runner when
+  it cannot -- a `run-test.sh` that prints `FILTER MATCHED NO TEST -- refusing
+  to report success` and exits 1. `pipeline register` probes exactly this and
+  refuses a config that fails it.
 
 `{test}` is the whole `<path>::<name>` value; `{path}` and `{name}` are its
 two halves. All three are `shlex.quote`d and substituted; every other brace
@@ -67,7 +73,8 @@ PY
 
 Expect, with a red test: `test_one` non-zero **and** name in output;
 `test_suite` non-zero; `test_suite_without_new` **zero**. Anything else is a
-broken config, not a broken pipeline. Show the operator this output.
+broken config, not a broken pipeline. Show the operator this output. Then run
+`test_one` once more with a name no test has: it must be non-zero there too.
 
 ## Then commit it
 

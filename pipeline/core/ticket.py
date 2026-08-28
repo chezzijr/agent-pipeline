@@ -15,6 +15,7 @@ import yaml
 
 from pipeline.core import PipelineError
 from pipeline.core.machine import KNOWN_STAGES
+from pipeline.core.worktree import mirror_ticket
 
 LEASE_MINUTES = 30
 TS_FMT = "%Y-%m-%d %H:%M:%SZ"
@@ -559,7 +560,12 @@ class Ticket:
         bad = self.errors() if validate else []
         if bad:
             raise PipelineError(f"{self.path}: refusing to write: " + "; ".join(bad))
-        write_atomic(self.path, render(self.frontmatter(), self.body))
+        text = render(self.frontmatter(), self.body)
+        write_atomic(self.path, text)
+        # invariant 5 keeps ONE writer, not one destination: the worktree's
+        # copy is a branch-cut snapshot that would otherwise contradict the
+        # view the next stage is handed (TICKET-083).
+        mirror_ticket(self.path, text)
 
     # -- body -------------------------------------------------------------
     def sections(self) -> dict[str, str]:

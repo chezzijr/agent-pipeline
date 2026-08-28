@@ -80,13 +80,12 @@ def is_worktree(project: Path) -> bool:
     return Path(text.split(":", 1)[1].strip()).parent.name == "worktrees"
 
 
-def register(project: Path) -> Path:
-    """Register `project` with the daemon.
-
-    Refuses when `PIPELINE_STAGE` is set: a guardrail against a stage
-    exploring this command, not a boundary -- the registry file lives outside
-    the worktree, the ticket's diff and `machine.FENCED`, so nothing else
-    would catch a stage that unset the variable or wrote the file directly.
+def check(project: Path) -> Path:
+    """The resolved path, or `PipelineError`: every refusal `register()`
+    makes before it writes. Split out so `cmd_register()` can refuse before
+    it spawns the project's test commands -- a stage running
+    `pipeline register .` must still get the `PIPELINE_STAGE` error
+    (DEC-072), not a suite run first.
     """
     stage = os.environ.get("PIPELINE_STAGE")
     if stage:
@@ -102,6 +101,18 @@ def register(project: Path) -> Path:
         # one path per line, `#` comments: a path carrying either would inject
         # a second entry or silently truncate this one
         raise PipelineError(f"{project!r} cannot be registered: newline or '#'")
+    return project
+
+
+def register(project: Path) -> Path:
+    """Register `project` with the daemon.
+
+    Refuses when `PIPELINE_STAGE` is set: a guardrail against a stage
+    exploring this command, not a boundary -- the registry file lives outside
+    the worktree, the ticket's diff and `machine.FENCED`, so nothing else
+    would catch a stage that unset the variable or wrote the file directly.
+    """
+    project = check(project)
     if project in projects():
         return project
     _write(_raw() + [str(project)])

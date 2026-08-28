@@ -1,6 +1,7 @@
 """Tier A gate -- deterministic, no LLM judgment anywhere in the path."""
 import re
 import shutil
+import tempfile
 from pathlib import Path
 
 from pipeline.core.config import format_test_cmd, project_config
@@ -59,6 +60,25 @@ CRIT_OUTCOME_RE = re.compile(
 CRIT_RULE = ("name a test, or name a command in backticks together with the "
              "output or exit status running it must produce")
 
+# Each regex refuses one shape of token that cannot recur by construction --
+# not every value that merely looks unstable. No bare-integer (pid) rule:
+# TICKET-076's reported pid sits inside a temp path already caught below, and
+# a standalone integer is as likely a count, a line number or an exit status.
+_TMP_DIRS = ["/tmp", "/var/tmp", "/var/folders", "/private/var/folders",
+             tempfile.gettempdir()]
+TMP_PATH_RE = re.compile(
+    r"(?:%s)/\S+" % "|".join(
+        sorted({re.escape(d.rstrip("/")) for d in _TMP_DIRS}, key=len, reverse=True)))
+# ` at 0x` is the CPython repr shape (`<Foo object at 0x7f...>`); anchoring on
+# it keeps a literal constant like `0xdeadbeef` legal.
+HEX_ADDR_RE = re.compile(r"\bat 0x[0-9a-fA-F]{4,}")
+# Anchored at the end: an ellipsis is only the truncation marker a reporter
+# added when it appears where the string stops, not wherever it appears.
+ELLIPSIS_RE = re.compile(r"(?:\.\.\.|…)['\")\]}]*\s*$")
+ESCAPE_RE = re.compile(r"\\[nrt]")
+
+UNMATCHABLE_MARK = "`## Reproduction` `expect:` cannot recur"
+
 # An allowlist, not a blocklist: a finding whose opener is not listed here
 # reads as substantive, which is what every finding did before this ticket.
 # `startswith`, never `in` -- a substantive finding can carry a fenced block
@@ -76,7 +96,25 @@ STRUCTURAL_MARKS = (
     "plan line names no declared file",
     "plan step names no declared file",
     "acceptance criterion names no test",
+    UNMATCHABLE_MARK,  # DEC-065: a new structural finding needs its own mark
 )
+
+
+def unmatchable(expect: str) -> str | None:
+    """Why `expect` can never match a second run's output, or `None` if it
+    might. Only tokens that cannot recur by construction are listed here --
+    see the comment above `_TMP_DIRS` for why there is no bare-integer rule."""
+    m = TMP_PATH_RE.search(expect)
+    if m:
+        return (f"{m.group(0)!r} is a path under the system temp dir, and "
+                 f"every one of those is minted fresh per run")
+    m = HEX_ADDR_RE.search(expect)
+    if m:
+        return f"{m.group(0)!r} is an object address, and it changes every run"
+    if ELLIPSIS_RE.search(expect):
+        return ("it ends with an ellipsis, which is the truncation marker of "
+                 "whatever printed the failure, not text the run emits")
+    return None
 
 
 def structural_only(failures: list[str]) -> bool:
@@ -249,6 +287,11 @@ def gate(project: Path, tid: str, workdir: Path | None = None) -> tuple[bool, li
     if repro.strip() and not expect:
         findings.append(
             "`## Reproduction` has no `expect:` line recording the expected failure string")
+    bad = unmatchable(expect) if expect else None
+    if bad:
+        findings.append(
+            f"{UNMATCHABLE_MARK}: {bad} -- trim it to the part of the failure "
+            f"that is the same on every run. Got: {expect!r}")
 
     test = t.test_file
     if not test:
@@ -273,6 +316,24 @@ def gate(project: Path, tid: str, workdir: Path | None = None) -> tuple[bool, li
                 findings.append(
                     f"`{test}` exited non-zero but its name never appears in the "
                     f"output -- it errored rather than failed\n```\n{out[-1200:]}\n```")
+            elif expect and expect not in out and bad:
+                # step 4 already reported why `expect` cannot recur -- a second,
+                # substantive finding here would make the list read as mixed and
+                # charge `plan_validation_attempts` instead of the structural
+                # counter (DEC-065).
+                findings.append(
+                    f"ok: `{test}` fails; its output is not checked against an "
+                    f"`expect:` that cannot recur\n```\n{out[-1200:]}\n```")
+            elif expect and expect not in out and ESCAPE_RE.search(expect):
+                # a literal backslash-`n` in `expect` is undecidable on its own:
+                # pytest reprs a string holding a real newline the same way, so
+                # this fires only once the grep has already missed -- see
+                # `## Decisions`.
+                findings.append(
+                    f"{UNMATCHABLE_MARK}: it holds a literal backslash escape "
+                    f"where the run's output holds a control character, and "
+                    f"`{test}`'s output does not contain it either way -- trim "
+                    f"it to the part before the escape. Got: {expect!r}")
             elif expect and expect not in out:
                 # a red test proves nothing if it is red for a different reason
                 # than the one reported -- that looks like evidence but isn't.

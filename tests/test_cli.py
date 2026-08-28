@@ -9,7 +9,7 @@ import tempfile
 from pathlib import Path
 
 from helpers import ROOT, project
-from pipeline.core.ticket import Ticket
+from pipeline.core.ticket import Ticket, stage_view
 
 
 # Every `pipeline` process writes its events to $XDG_STATE_HOME/pipeline. With
@@ -135,6 +135,52 @@ def test_resume_refuses_reset_and_grant_on_one_counter():
     assert t.counters["plan_validation_attempts"] == 2
     assert t.stage == "planning"
     shutil.rmtree(d)
+
+
+def test_resume_records_an_operator_note():
+    """`answer` refuses outside `needs-input`, so an escalated ticket being
+    resumed has nowhere for the operator's reasoning to go. `resume` should
+    accept `--note` the way `answer` accepts its text, and the note must
+    survive as a kind the stage view never omits."""
+    d = Path(tempfile.mkdtemp())
+    cli(d, "new", "t")
+    env = {"USER": "operator-marker"}
+    r = cli(d, "resume", "TICKET-001", "--stage", "planning",
+            "--note", "granted because the escalation was a flaky test", env=env)
+    assert r.returncode == 0, r.stderr
+    t = Ticket.load(d / ".project/tickets/TICKET-001.md")
+    e = [e for e in t.thread() if e.kind == "answer"][-1]
+    assert "granted because the escalation was a flaky test" in e.text, e.text
+    assert "operator-marker" in e.text, e.text
+    for i in range(9):
+        t.append("planning", "note", f"filler {i}")
+    t.save()
+    view = stage_view(Ticket.load(t.path), "planning")
+    assert "granted because the escalation was a flaky test" in view, view
+
+
+def test_resume_note_is_optional_and_may_not_be_empty():
+    d = Path(tempfile.mkdtemp())
+    cli(d, "new", "t")
+    r = cli(d, "resume", "TICKET-001", "--stage", "planning", "--note", "   ")
+    assert r.returncode != 0, r.stdout
+    assert "a note needs text" in r.stderr, r.stderr
+    t = Ticket.load(d / ".project/tickets/TICKET-001.md")
+    assert t.stage == "new"
+
+    r = cli(d, "resume", "TICKET-001", "--stage", "planning")
+    assert r.returncode == 0, r.stderr
+    t = Ticket.load(d / ".project/tickets/TICKET-001.md")
+    assert [e for e in t.thread() if e.kind == "answer"] == []
+    shutil.rmtree(d)
+
+
+def test_resume_help_and_readme_name_the_note_flag():
+    r = subprocess.run([sys.executable, "-m", "pipeline", "resume", "--help"],
+                        cwd=ROOT, capture_output=True, text=True)
+    assert "--note" in r.stdout, r.stdout
+    readme = (Path(ROOT) / "README.md").read_text()
+    assert "resume  TICKET-001 --stage planning --note" in readme, readme
 
 
 def test_start_and_run_help_explain_the_interactive_stage_difference():
@@ -484,3 +530,77 @@ def test_gate_writes_its_findings_where_the_dispatcher_asked():
     assert len(data["findings"]) == 1
     assert not any("```" in f for f in data["findings"])
     shutil.rmtree(d)
+
+
+def test_register_refuses_a_project_whose_test_suite_cannot_run():
+    """A project scaffolded with the packaged defaults (e.g. `test_suite =
+    "pytest"` against a repo pytest is not installed for) registers clean
+    today, and every ticket filed against it fails at the gate instead.
+    `register` must run `test_suite` once and refuse when the command itself
+    cannot run -- not when it runs and reports failures."""
+    d = Path(tempfile.mkdtemp())
+    (d / ".project").mkdir()
+    (d / ".project" / "pipeline.toml").write_text(
+        'test_one = "true"\n'
+        'test_suite = "pipeline-068-nonexistent-command-xyz"\n'
+        'test_suite_without_new = "true"\n')
+    r = cli(d, "register", str(d), env={"XDG_CONFIG_HOME": str(tempfile.mkdtemp())})
+    assert r.returncode != 0, r.stdout + r.stderr
+    assert "pipeline-068-nonexistent-command-xyz" in r.stdout + r.stderr
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def register_project(test_one="false", test_suite="true", config=True):
+    """A throwaway project for `pipeline register`. Not named `test_*`:
+    pytest would collect it."""
+    d = Path(tempfile.mkdtemp()).resolve()
+    (d / ".project").mkdir()
+    if config:
+        (d / ".project" / "pipeline.toml").write_text(
+            'test_one = "%s"\ntest_suite = "%s"\n'
+            'test_suite_without_new = "true"\n' % (test_one, test_suite))
+    return d
+
+
+def test_register_accepts_a_project_whose_test_suite_runs_and_fails():
+    """A red suite is the normal state of a project with an open bug."""
+    d = register_project(test_suite="echo 1 failed; exit 1")
+    r = cli(d, "register", str(d), env={"XDG_CONFIG_HOME": str(tempfile.mkdtemp())})
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert f"registered {d}" in r.stdout
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_register_refuses_a_test_one_that_exits_0_on_a_selector_matching_nothing():
+    """`gate()` would read that exit 0 as `the reproduction PASSES`."""
+    d = register_project(test_one="true")
+    r = cli(d, "register", str(d), env={"XDG_CONFIG_HOME": str(tempfile.mkdtemp())})
+    assert r.returncode != 0, r.stdout + r.stderr
+    assert "test_one" in r.stdout + r.stderr
+    assert "pipeline_register_probe_no_such_test" in r.stdout + r.stderr
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_register_refuses_a_project_directory_with_no_pipeline_toml():
+    """`register` accepted a bare `.project/` before this ticket. Both
+    checks read the config, so it refuses one now -- intended, pinned here,
+    and `--force` still registers it."""
+    d = register_project(config=False)
+    r = cli(d, "register", str(d), env={"XDG_CONFIG_HOME": str(tempfile.mkdtemp())})
+    assert r.returncode != 0, r.stdout + r.stderr
+    assert "pipeline init" in r.stdout + r.stderr
+    forced = cli(d, "register", "--force", str(d),
+                 env={"XDG_CONFIG_HOME": str(tempfile.mkdtemp())})
+    assert forced.returncode == 0, forced.stdout + forced.stderr
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_register_force_skips_both_test_command_checks():
+    """`--force` is what a slow suite wants: register without running it."""
+    d = register_project(test_one="true",
+                         test_suite="pipeline-068-nonexistent-command-xyz")
+    r = cli(d, "register", "--force", str(d),
+            env={"XDG_CONFIG_HOME": str(tempfile.mkdtemp())})
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert f"registered {d}" in r.stdout
+    shutil.rmtree(d, ignore_errors=True)

@@ -73,6 +73,7 @@ pipeline --project ~/code/myproject resume  TICKET-001 \
     --stage planning --reset plan_validation_attempts
 pipeline --project ~/code/myproject resume  TICKET-001 \
     --stage planning --grant plan_validation_attempts   # hand back one spent attempt, not the whole budget
+pipeline --project ~/code/myproject resume  TICKET-001 --stage planning --note "the escalation was a flaky test"
 ```
 
 `init` also installs `.claude/skills/file-ticket/SKILL.md` -- the protocol a
@@ -126,7 +127,7 @@ working after you close the terminal, and it records what happened to an event
 database under your state directory (see *Where it keeps things*).
 
 ```sh
-pipeline register ~/code/myproject   # one path per line in the registry file
+pipeline register ~/code/myproject   # runs its test_suite and probes test_one first
 pipeline start                       # spawns pipelined, detached; interactive stages need `pipeline tui` attached
 pipeline status                      # is it running, and how many projects
 pipeline ls                          # every registered project's tickets
@@ -139,6 +140,14 @@ pipeline unregister ~/code/myproject
 `.project/` and the daemon would then tick a ticket's own checkout as a
 second project. `register`/`unregister` also refuse when `PIPELINE_STAGE` is
 set, because the registry is operator state.
+
+`register` also refuses a project whose test commands are wrong, because
+every ticket filed against it would die at the gate instead. `test_suite`
+must run at all: the shell must find the command, and the runner must run
+something. `test_one` must exit non-zero when its selector matches no test,
+which is the one thing `gate()` cannot tell from a runner's output. A suite
+that runs and reports failures still registers. `pipeline register --force
+<path>` skips both checks, which is what a slow suite wants.
 
 `pipelined` itself stays a raw foreground process, so `systemd --user`, `launchd`
 or tmux can supervise it; `pipeline start` is just a convenience wrapper. There is
@@ -391,6 +400,11 @@ Then one of three:
 `--reset` zeroes a counter; `--grant` hands back one spent attempt (`N` with
 `--grant counter=N`) and cannot return more than was spent. Naming the same
 counter in both is an error, not a merge.
+
+`--note` attaches your reasoning to the resume. It lands in `## Thread`
+attributed to you, as a kind the stage view never omits, so the stage you
+resume to reads it. `pipeline answer` refuses outside `needs-input`, which is
+why the note rides on `resume`.
 
 The bound that was hit lives in the dispatcher, never in a stage prompt:
 `BOUNDS[class][counter]` in `pipeline/core/machine.py`, which is 2 for `bugfix`

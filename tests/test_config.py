@@ -5,7 +5,8 @@ from pathlib import Path
 
 from pipeline.core import PipelineError
 from pipeline.core.config import (format_test_cmd, project_config,
-                                  project_max_parallel, stage_extra)
+                                  project_max_parallel, selector_failure,
+                                  stage_extra, suite_failure)
 from tests.helpers import git_project
 
 
@@ -120,3 +121,46 @@ def test_format_test_cmd_leaves_other_braces_untouched():
     cmd = """awk '{print $1}' && cargo test -- --skip "${t##*::}" {name}"""
     assert format_test_cmd(cmd, "tests/f.rs::t_a") == (
         """awk '{print $1}' && cargo test -- --skip "${t##*::}" t_a""")
+
+
+def _probe_project(test_one="false", test_suite="true"):
+    """A throwaway project. It is not a git repo, so `project_config()`
+    takes its disk fallback (DEC-037)."""
+    d = Path(tempfile.mkdtemp())
+    (d / ".project").mkdir()
+    (d / ".project" / "pipeline.toml").write_text(
+        'test_one = "%s"\ntest_suite = "%s"\n'
+        'test_suite_without_new = "true"\n' % (test_one, test_suite))
+    return d
+
+
+def test_suite_failure_tells_a_broken_command_from_a_red_suite():
+    """A suite that runs and fails is the normal state of a project with an
+    open bug and must register. Only a suite that cannot run is refused."""
+    missing = suite_failure(_probe_project(test_suite="pipeline-068-nonexistent-command-xyz"))
+    assert missing and "pipeline-068-nonexistent-command-xyz" in missing
+    assert "exit 127" in missing
+    nothing = suite_failure(_probe_project(test_suite="echo no tests ran; exit 5"))
+    assert nothing and "ran no tests" in nothing
+    assert suite_failure(_probe_project(test_suite="echo 1 failed; exit 1")) is None
+    assert suite_failure(_probe_project(test_suite="true")) is None
+    # DEC-067: `test_suite` has never been `str.format`ed, so a literal
+    # brace must reach the shell instead of raising
+    assert suite_failure(_probe_project(test_suite="echo ${t##*::} ok")) is None
+
+
+def test_selector_failure_wants_test_one_to_fail_when_it_matches_nothing():
+    """`gate()` cannot tell `the test passed` from `the selector matched
+    nothing` by reading output: a runner may name a test only when it
+    fails. The project's own command knows its runner and can tell."""
+    passes = selector_failure(_probe_project(test_one="true"))
+    assert passes and "exited 0" in passes
+    assert "pipeline_register_probe_no_such_test" in passes
+    missing = selector_failure(_probe_project(test_one="pipeline-068-nonexistent-command-xyz"))
+    assert missing and "exit 127" in missing
+    assert selector_failure(_probe_project(test_one="false")) is None
+    assert selector_failure(_probe_project(test_one="echo no test matched {test}; exit 1")) is None
+    # DEC-067: `format_test_cmd()` leaves every other brace verbatim, so
+    # this command is judged by its exit code. Under `str.format` it would
+    # raise `KeyError: 't##*'` and this arm would error instead of pass.
+    assert selector_failure(_probe_project(test_one="echo ${t##*::} matched nothing; exit 1")) is None

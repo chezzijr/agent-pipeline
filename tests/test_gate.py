@@ -418,6 +418,70 @@ def test_gate_passes_a_failure_that_matches_the_reported_one():
     shutil.rmtree(d)
 
 
+def test_expect_naming_a_temp_path_is_refused_as_unmatchable():
+    """An `expect:` copied verbatim from triage's own run can carry a fresh
+    `mkdtemp` path. That path cannot recur in any later run, so an expect
+    that names one must be refused, not passed just because it happens to
+    match on this one run (TICKET-076)."""
+    tmp = tempfile.mkdtemp()
+    d = project(FIXTURE.replace("expect: test_broken", f"expect: registered {tmp}"))
+    (d / ".project" / "pipeline.toml").write_text(
+        f'test_one = "echo test_broken: registered {tmp}; exit 1"\n'
+        'test_suite = "true"\ntest_suite_without_new = "true"\n')
+    ok, failures = gate(d, "TICKET-001")
+    assert not ok, (
+        "gate passed an `expect:` string that names a temp path -- it "
+        "cannot match a second run")
+    assert any("cannot recur" in f for f in failures), failures
+    shutil.rmtree(d, ignore_errors=True)
+    shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_expect_ending_in_a_truncation_ellipsis_is_refused():
+    """A trailing `...` is a reporter's truncation marker, not text any run
+    emits (TICKET-076)."""
+    d = project(FIXTURE.replace(
+        "expect: test_broken",
+        'expect: got: [CheckError { message: "no method", ...'))
+    (d / ".project" / "pipeline.toml").write_text(
+        "test_one = \"echo 'test_broken: got: [CheckError { message: no method, ...'; exit 1\"\n"
+        'test_suite = "true"\ntest_suite_without_new = "true"\n')
+    ok, failures = gate(d, "TICKET-001")
+    assert not ok
+    assert any("cannot recur" in f for f in failures), failures
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_expect_holding_a_doubled_escape_is_reported_as_structural():
+    """`expect` holds the two characters `\\` and `n` where the real output
+    holds a newline, so the grep can never match (TICKET-076)."""
+    d = project(FIXTURE.replace(
+        "expect: test_broken",
+        r"expect: AssertionError: a thing\n(no log yet)"))
+    (d / ".project" / "pipeline.toml").write_text(
+        "test_one = \"echo test_broken: AssertionError: a thing; echo '(no log yet)'; exit 1\"\n"
+        'test_suite = "true"\ntest_suite_without_new = "true"\n')
+    ok, failures = gate(d, "TICKET-001")
+    assert not ok
+    assert any(f.startswith("`## Reproduction` `expect:` cannot recur") for f in failures), failures
+    assert not any("does not mention" in f for f in failures), failures
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_expect_naming_a_project_path_is_not_refused():
+    """A path under the project, not the system temp dir, is stable and must
+    still gate green (TICKET-076)."""
+    d = project(FIXTURE.replace(
+        "expect: test_broken",
+        "expect: no such file: .project/pipeline.toml"))
+    (d / ".project" / "pipeline.toml").write_text(
+        'test_one = "echo test_broken: no such file: .project/pipeline.toml; exit 1"\n'
+        'test_suite = "true"\ntest_suite_without_new = "true"\n')
+    ok, failures = gate(d, "TICKET-001")
+    assert ok, failures
+    shutil.rmtree(d, ignore_errors=True)
+
+
 def test_expect_containing_a_backtick_does_not_corrupt_the_thread_entry():
     """`expect:` is unvalidated body text an agent wrote -- a backtick in it
     must not break out of the markdown fence the finding is written into."""
