@@ -256,15 +256,16 @@ def _base_findings(project: Path, cfg: dict, wd: Path, test: str,
         shutil.copy2(wd / rel, dst)
         code, out = run_cmd(
             format_test_cmd(cfg["test_one"], test), base_wt)
-    if code == 0 and node in out:
-        return [f"`{test}` PASSES on base `{base}` -- it fails only on this "
-                f"branch, so it is not a reproduction: either the bug is "
-                f"already fixed on base, or the test is red for a reason "
-                f"base does not have\n```\n{out[-1200:]}\n```"]
     if code == 0:
-        return [f"`{test}` exited 0 on base `{base}` but its name never "
-                f"appears in the output -- the selector matched nothing, so "
-                f"base proves nothing\n```\n{out[-1200:]}\n```"]
+        # The branch run's ambiguity (TICKET-071), on base: the bug is already
+        # fixed there, or the test is red for a reason base does not have, or
+        # the selector matched no test. Base proves nothing either way.
+        return [f"`{test}` exited 0 on base `{base}`, so base proves nothing. "
+                f"Either it PASSES there -- the bug is already fixed on base, "
+                f"or the test is red for a reason base does not have -- or "
+                f"`test_one` matched no test at all; a runner that names a "
+                f"node only on failure makes the two identical here"
+                f"\n```\n{out[-1200:]}\n```"]
     if node not in out:
         # same trap as the branch run: an import error exits non-zero too,
         # and here that reads as a successful reproduction
@@ -363,13 +364,17 @@ def gate(project: Path, tid: str, workdir: Path | None = None) -> tuple[bool, li
         else:
             code, out = run_cmd(format_test_cmd(cfg["test_one"], test), wd)
             node = test.split("::")[-1]
-            if code == 0 and node in out:
-                findings.append(f"`{test}` PASSES -- it must fail before implementation")
-            elif code == 0:
+            if code == 0:
+                # Exit 0 has two causes and no portable signal separates them: a
+                # runner names a node only when the test FAILS (pytest prints a dot
+                # and a count), so a real pass and a selector that matched no test
+                # look identical -- TICKET-071, which inverted TICKET-064's split.
+                # Both are a gate failure; the fence is what tells a human which.
                 findings.append(
-                    f"`{test}` exited 0 but its name never appears in the "
-                    f"output -- the selector matched nothing, not a passing "
-                    f"test\n```\n{out[-1200:]}\n```")
+                    f"`{test}` exited 0 -- it must fail before implementation. Either "
+                    f"it PASSES, or `test_one` matched no test at all; a runner that "
+                    f"names a node only on failure makes the two identical here. Read "
+                    f"the output to tell them apart\n```\n{out[-1200:]}\n```")
             elif node not in out:
                 # a missing dependency or an import error exits non-zero too, and
                 # looks exactly like a failing test unless you check for the name

@@ -591,6 +591,99 @@ def test_a_ticket_that_raises_in_start_does_not_take_the_tick_down():
     shutil.rmtree(d, ignore_errors=True)
 
 
+def test_a_project_max_parallel_caps_ticket_concurrency():
+    """`.project/pipeline.toml` can lower the daemon's `-j` for one project.
+    Two triage-stage tickets, `max_parallel = 1` in the project config, one
+    `tick()` at the CLI's default `-j 3` -- only one should start."""
+    d, sh = git_project()
+    (d / ".project" / "pipeline.toml").write_text(
+        'test_one="true"\ntest_suite="true"\ntest_suite_without_new="true"\n'
+        'base="main"\nmax_parallel = 1\n')
+    sh("git add -A && git commit -qm 'lower max_parallel'")
+    for n, fname in (("001", "thing.py"), ("002", "other.py")):
+        (d / f".project/tickets/TICKET-{n}.md").write_text(
+            FIXTURE.replace("stage: plan-validation", "stage: triage")
+            .replace("id: TICKET-001", f"id: TICKET-{n}")
+            .replace("branch: ticket/001", f"branch: ticket/{n}")
+            .replace("files_declared: [thing.py]", f"files_declared: [{fname}]"))
+
+    inflight = {}
+    supervisor.tick(d, harness("fake"), inflight, 3)
+    assert len(inflight) == 1, \
+        f"project max_parallel=1 should cap this project at 1, got {len(inflight)}"
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_a_project_cannot_raise_the_daemons_max_parallel():
+    """A project `max_parallel = 5` must never widen the daemon's own `-j 1`
+    -- the config a ticket branch can reach must only lower the ceiling."""
+    d, sh = git_project()
+    (d / ".project" / "pipeline.toml").write_text(
+        'test_one="true"\ntest_suite="true"\ntest_suite_without_new="true"\n'
+        'base="main"\nmax_parallel = 5\n')
+    sh("git add -A && git commit -qm 'raise max_parallel'")
+    for n, fname in (("001", "thing.py"), ("002", "other.py")):
+        (d / f".project/tickets/TICKET-{n}.md").write_text(
+            FIXTURE.replace("stage: plan-validation", "stage: triage")
+            .replace("id: TICKET-001", f"id: TICKET-{n}")
+            .replace("branch: ticket/001", f"branch: ticket/{n}")
+            .replace("files_declared: [thing.py]", f"files_declared: [{fname}]"))
+
+    inflight = {}
+    supervisor.tick(d, harness("fake"), inflight, 1)
+    assert len(inflight) == 1, \
+        f"the daemon -j 1 must win over the project 5, got {len(inflight)}"
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_a_bad_project_max_parallel_never_leaves_tick(capsys):
+    """A committed `max_parallel = 0` must not raise out of `tick()` -- it
+    reaches `run()`'s bare `tick()` call, which does not wrap it, and a raise
+    there would SIGTERM every inflight child via `shut_down()`."""
+    d, sh = git_project()
+    (d / ".project" / "pipeline.toml").write_text(
+        'test_one="true"\ntest_suite="true"\ntest_suite_without_new="true"\n'
+        'base="main"\nmax_parallel = 0\n')
+    sh("git add -A && git commit -qm 'zero max_parallel'")
+    for n, fname in (("001", "thing.py"), ("002", "other.py")):
+        (d / f".project/tickets/TICKET-{n}.md").write_text(
+            FIXTURE.replace("stage: plan-validation", "stage: triage")
+            .replace("id: TICKET-001", f"id: TICKET-{n}")
+            .replace("branch: ticket/001", f"branch: ticket/{n}")
+            .replace("files_declared: [thing.py]", f"files_declared: [{fname}]"))
+
+    inflight = {}
+    supervisor.tick(d, harness("fake"), inflight, 3)
+    assert len(inflight) == 2, \
+        f"a bad max_parallel must leave -j 3 standing, got {len(inflight)}"
+    assert "ignoring max_parallel" in capsys.readouterr().out
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_a_malformed_project_pipeline_toml_never_leaves_tick(capsys):
+    """A committed `.project/pipeline.toml` that fails to parse must not raise
+    out of `tick()` -- `project_config()` raises `tomllib.TOMLDecodeError`
+    (a `ValueError`, not a `PipelineError`), and `run()`'s bare `tick()` call
+    does not wrap it, so an unhandled raise would SIGTERM every inflight
+    child via `shut_down()`."""
+    d, sh = git_project()
+    (d / ".project" / "pipeline.toml").write_text('[[[bad')
+    sh("git add -A && git commit -qm 'break pipeline.toml'")
+    for n, fname in (("001", "thing.py"), ("002", "other.py")):
+        (d / f".project/tickets/TICKET-{n}.md").write_text(
+            FIXTURE.replace("stage: plan-validation", "stage: triage")
+            .replace("id: TICKET-001", f"id: TICKET-{n}")
+            .replace("branch: ticket/001", f"branch: ticket/{n}")
+            .replace("files_declared: [thing.py]", f"files_declared: [{fname}]"))
+
+    inflight = {}
+    supervisor.tick(d, harness("fake"), inflight, 3)  # must not raise
+    out = capsys.readouterr().out
+    assert "ignoring max_parallel" in out
+    assert "start failed" in out
+    shutil.rmtree(d, ignore_errors=True)
+
+
 def test_two_tickets_never_merge_in_the_same_tick():
     """Both would `git merge base` against the same base; the first
     `--ff-only` to land moves base, and the second -- a fully verified,
@@ -1061,6 +1154,25 @@ def test_a_project_override_reaches_the_spawned_command_and_prompt():
     assert "EXTRA-MARKER-4471" in recorded["text"]
 
 
+def test_spawn_threads_the_tickets_counters_into_the_review_cap():
+    """A review spawn's cap grows with the plan it has to read, and
+    `rec["cap"]` -- the number `_finish()` names in a budget-kill escalation
+    -- must carry the same scaled number `render()` used."""
+    d = project(FIXTURE.replace("stage: plan-validation", "stage: review")
+                .replace("counters: {}", "counters: {plan_files: 15, plan_steps: 40}"))
+    rec = supervisor.spawn(d, d, "TICKET-001", "review", harness("fake"))
+    rec["proc"].wait()
+    supervisor.close_child(rec)
+    assert rec["cap"] == 8, \
+        "spawn() did not scale the 4 dollar review cap by the ticket plan size"
+
+    d2 = project()
+    rec2 = supervisor.spawn(d2, d2, "TICKET-001", "review", harness("fake"))
+    rec2["proc"].wait()
+    supervisor.close_child(rec2)
+    assert rec2["cap"] == 4, "an empty counters map must not scale the cap"
+
+
 def test_a_ticket_held_at_merging_is_rebased_before_the_merge_is_attempted():
     """TICKET-045: `revalidating` rebases a ticket onto base once, right after
     approval. Nothing rebases it again. `files_conflict` and `start()`'s merge
@@ -1328,7 +1440,7 @@ def test_structural_only_classifies_a_gate_finding():
     from pipeline.core.gate import structural_only
 
     structural = "plan line is not a numbered step -- the plan reads as prose: 'x'"
-    substantive = ("`t.py::x` PASSES -- it must fail before implementation\n"
+    substantive = ("`t.py::x` exited 0 -- it must fail before implementation\n"
                    "```\nplan line is not a numbered step\n```")
     assert structural_only([structural]) is True
     assert structural_only([substantive]) is False

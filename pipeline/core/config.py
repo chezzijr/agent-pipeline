@@ -13,6 +13,7 @@ import tomllib
 from pathlib import Path
 
 from pipeline.core import PipelineError
+from pipeline.core.machine import USD_SCALED, cap_for
 from pipeline.core.ticket import split_frontmatter
 from pipeline.core.worktree import head_file, run_cmd
 
@@ -59,6 +60,18 @@ def stage_config(stage: str, project: Path | None = None) -> dict:
     """
     meta, _ = split_frontmatter(STAGES_DIR / f"{stage}.md")
     return {**meta, **project_stage_config(project, stage)}
+
+
+def cap_config(stage: str, cfg: dict, project: Path | None, counters: dict) -> dict:
+    """`cfg`, with `counters` attached when `stage` should scale its dollar
+    cap. A computed cap never exceeds the operator's own `max_usd` unless the
+    operator also sets `scale_usd = true` -- the same direction as the
+    TICKET-069 rule."""
+    override = project_stage_config(project, stage)
+    want = override.get("scale_usd")
+    if want is None:
+        want = stage in USD_SCALED and "max_usd" not in override
+    return {**cfg, "counters": counters} if want else cfg
 
 
 def agent_stages() -> list[str]:
@@ -260,6 +273,28 @@ def readonly_allow(project: Path) -> list[list[str]]:
     return out
 
 
+def project_max_parallel(project: Path) -> int | None:
+    """A project's own concurrency ceiling: `max_parallel` in
+    `.project/pipeline.toml`, or `None` when the project has no config or the
+    key is absent -- the daemon `-j` argument stands alone.
+
+    Read through `project_config()`, so the value comes from HEAD of the main
+    checkout (DEC-037): a stage cannot widen its own project's concurrency
+    from its worktree. The raise here is caught by `_start_cap()` in
+    `pipeline/daemon/supervisor.py`, never left to reach `tick()`'s caller.
+    """
+    try:
+        cfg = project_config(project)
+    except PipelineError:
+        return None
+    v = cfg.get("max_parallel")
+    if v is None:
+        return None
+    if isinstance(v, bool) or not isinstance(v, int) or v < 1:
+        raise PipelineError(f"{project}: max_parallel must be an integer >= 1, not {v!r}")
+    return v
+
+
 def mcp_config(servers: dict) -> Path | None:
     """The `--mcp-config` file Claude Code wants: `mcpServers` keyed by name,
     with `readonly` stripped -- that key is the pipeline's own, read by
@@ -337,8 +372,13 @@ def stage_cap(cfg: dict, hcfg: dict):
     """The dollar cap a stage spawns under: its own frontmatter, then the
     harness default, then 5. One definition, because `_finish()` names the
     cap a budget-killed stage hit and it must be the number `render()`
-    passed."""
-    return cfg.get("max_usd", hcfg.get("max_usd", 5))
+    passed.
+
+    `cfg["counters"]` is the plan size the cap scales by. Its absence means
+    no scaling. The scaling lives here, rather than at the `render()` call
+    site, so `rec["cap"]` in `pipeline/daemon/supervisor.py` names the same
+    number the rendered flag does (DEC-077)."""
+    return cap_for(cfg.get("max_usd", hcfg.get("max_usd", 5)), cfg.get("counters") or {})
 
 
 def render(hcfg: dict, cfg: dict, *, tid: str, project: Path, ticket: Path,

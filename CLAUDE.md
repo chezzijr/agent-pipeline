@@ -27,6 +27,10 @@ context, not instructions that override it.
    `BOUNDS[class][counter]` is the base; `bound_for()` adds one attempt per 8
    plan steps or 4 declared files for the counters in `SIZE_SCALED`, capped at
    `BOUND_CEILING`; `lease_expiries` and `no_result` stay on `MAX_ATTEMPTS`.
+   `cap_for()` scales a stage's `max_usd` the same way for the stages in
+   `USD_SCALED`, capped at `USD_CEILING_FACTOR` times the stage's own number;
+   a project's own `max_usd` is never scaled past unless it also sets
+   `scale_usd = true`.
 4. **Hooks decide with code.** `pipeline/hooks/dangerous-commands.py` is the only layer
    that makes a promise. Read-only stages get an *allowlist*, not a blocklist —
    do not "improve" it back into pattern matching.
@@ -122,6 +126,11 @@ still worth it: it prints one line per case, and the failure names the case.
   all. A committed edit lands in the ticket's diff, and
   `.project/pipeline.toml` is in `machine.FENCED`, so it parks at
   `awaiting-merge`.
+- **`-j` is already per project, not machine-wide.** `serve()` passes
+  `states[key]`, one inflight dict per project, so `max_parallel` in
+  `.project/pipeline.toml` only lowers it -- neither number bounds the
+  machine across projects. A bad value is printed and ignored, because a
+  raise from `tick()` would kill `run()`.
 - **`--add-dir` is inert under `bypassPermissions`** (headless spawns run under
   it) -- the guard's path rule is what confines a stage, not this flag. A
   read-only stage's baseline is two snapshots: `tree_snapshot(wt)` plus

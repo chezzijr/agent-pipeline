@@ -4,8 +4,85 @@ import tempfile
 from pathlib import Path
 
 from pipeline.core import PipelineError
-from pipeline.core.config import format_test_cmd, project_config, selector_failure, stage_extra, suite_failure
+from pipeline.core.config import (cap_config, format_test_cmd, harness,
+                                  project_config, project_max_parallel,
+                                  render, selector_failure, stage_config,
+                                  stage_extra, suite_failure)
 from tests.helpers import git_project
+
+
+def cmd(cfg):
+    return render(harness("claude-code"), cfg, tid="TICKET-001", project=Path("/tmp"),
+                  ticket=Path("/tmp/t.md"), result_file=Path("/tmp/t.result"),
+                  session="s", prompt=Path("/tmp/t.md"))
+
+
+def test_render_cap_does_not_scale_with_diff_size():
+    """review's cap must grow with the plan it has to read the way
+    bound_for() already grows plan_validation_attempts with plan size
+    (DEC-047). Today it does not: render() computes the cap from static
+    frontmatter/harness config alone, so a 15-file, 40-step plan gets the
+    same cap as an empty one."""
+    hcfg = harness("claude-code")
+    cfg = stage_config("review")
+    prompt = Path("/tmp/t.md")
+
+    baseline = render(hcfg, cfg, tid="TICKET-001", project=Path("/tmp"),
+                       ticket=Path("/tmp/t.md"), result_file=Path("/tmp/t.result"),
+                       session="s", prompt=prompt)
+    assert "--max-budget-usd 4" in baseline
+
+    scaled_cfg = {**cfg, "counters": {"plan_files": 15, "plan_steps": 40}}
+    scaled = render(hcfg, scaled_cfg, tid="TICKET-001", project=Path("/tmp"),
+                     ticket=Path("/tmp/t.md"), result_file=Path("/tmp/t.result"),
+                     session="s", prompt=prompt)
+    assert "--max-budget-usd 4" not in scaled, (
+        "expected the cap to grow with plan_files/plan_steps the way "
+        "bound_for() scales plan_validation_attempts, but render() emitted "
+        "the same --max-budget-usd 4 for a 15-file, 40-step plan as for "
+        "one with no counters at all")
+
+
+def test_a_project_max_usd_override_is_not_scaled_past():
+    """A project's own `max_usd` pins the cap: TICKET-069's direction rule
+    applies to money too, so a computed cap never exceeds what the operator
+    asked for unless the operator also asks for scaling."""
+    d, sh = git_project()
+    with open(d / ".project" / "pipeline.toml", "a") as f:
+        f.write("[stages.review]\nmax_usd = 2\n")
+    sh("git add -A && git commit -qm config")
+    cfg = cap_config("review", stage_config("review", d), d,
+                      {"plan_files": 15, "plan_steps": 40})
+    assert "counters" not in cfg, "an operator own max_usd was scaled past"
+    assert "--max-budget-usd 2" in cmd(cfg)
+
+
+def test_a_project_can_ask_for_scaling_on_top_of_its_own_cap():
+    """`scale_usd = true` alongside a project's own `max_usd` asks for
+    scaling on top of that number instead of pinning it."""
+    d, sh = git_project()
+    with open(d / ".project" / "pipeline.toml", "a") as f:
+        f.write("[stages.review]\nmax_usd = 6\nscale_usd = true\n")
+    sh("git add -A && git commit -qm config")
+    cfg = cap_config("review", stage_config("review", d), d,
+                      {"plan_files": 15, "plan_steps": 40})
+    assert "--max-budget-usd 11" in cmd(cfg)
+
+
+def test_the_project_decides_which_stages_scale_their_cap():
+    """Only the stages in `USD_SCALED` scale by default, and a project can
+    opt a scaled stage back out with `scale_usd = false`."""
+    d, _ = git_project()
+    counters = {"plan_files": 15, "plan_steps": 40}
+    assert "counters" in cap_config("review", stage_config("review", d), d, counters)
+    assert "counters" not in cap_config("implementing", stage_config("implementing", d), d, counters)
+    assert "--max-budget-usd 8" in cmd(cap_config("implementing", stage_config("implementing", d), d, counters))
+
+    d2, sh2 = git_project()
+    with open(d2 / ".project" / "pipeline.toml", "a") as f:
+        f.write("[stages.review]\nscale_usd = false\n")
+    sh2("git add -A && git commit -qm config")
+    assert "counters" not in cap_config("review", stage_config("review", d2), d2, counters)
 
 
 def test_an_uncommitted_edit_to_pipeline_toml_does_not_change_project_config():
@@ -58,6 +135,50 @@ def test_an_uncommitted_stage_extra_must_not_reach_stage_extra():
     (d / ".project" / "stages" / "implementing.extra.md").write_text("INJECTED-9137\n")
 
     assert "INJECTED-9137" not in stage_extra(d, "implementing")
+
+
+def test_project_max_parallel_reads_the_committed_value():
+    d, sh = git_project()
+    (d / ".project" / "pipeline.toml").write_text(
+        'test_one="true"\ntest_suite="true"\ntest_suite_without_new="true"\n'
+        'base="main"\nmax_parallel = 1\n')
+    sh("git add -A && git commit -qm 'set max_parallel'")
+
+    assert project_max_parallel(d) == 1
+
+    (d / ".project" / "pipeline.toml").write_text(
+        'test_one="true"\ntest_suite="true"\ntest_suite_without_new="true"\n'
+        'base="main"\nmax_parallel = 9\n')
+
+    assert project_max_parallel(d) == 1
+
+
+def test_project_max_parallel_is_none_without_a_key():
+    d, _ = git_project()
+    assert project_max_parallel(d) is None
+
+
+def test_project_max_parallel_refuses_a_value_below_one():
+    d, sh = git_project()
+    (d / ".project" / "pipeline.toml").write_text(
+        'test_one="true"\ntest_suite="true"\ntest_suite_without_new="true"\n'
+        'base="main"\nmax_parallel = 0\n')
+    sh("git add -A && git commit -qm 'zero max_parallel'")
+    try:
+        project_max_parallel(d)
+        assert False, "max_parallel = 0 must raise"
+    except PipelineError as e:
+        assert "must be an integer >= 1" in str(e)
+
+    (d / ".project" / "pipeline.toml").write_text(
+        'test_one="true"\ntest_suite="true"\ntest_suite_without_new="true"\n'
+        'base="main"\nmax_parallel = true\n')
+    sh("git add -A && git commit -qm 'bool max_parallel'")
+    try:
+        project_max_parallel(d)
+        assert False, "max_parallel = true must raise"
+    except PipelineError as e:
+        assert "must be an integer >= 1" in str(e)
 
 
 def test_format_test_cmd_substitutes_test_path_and_name():
