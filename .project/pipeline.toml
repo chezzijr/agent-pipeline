@@ -14,3 +14,9 @@ base                   = "main"
 [readonly]
 allow = ["pipeline ls", "pipeline status", "pipeline plan", "pipeline projects",
           "pipeline metrics", "./pipeline/hooks/test_dangerous_commands.py"]
+
+# TICKET-066's planning run spent $5.30 over 46 turns on a 12-file data-model
+# change and was killed at the $5 default. Every other ticket in the 2026-08-27
+# batch planned well under it; this raises the ceiling for the large ones only.
+[stages.planning]
+max_usd = 10
