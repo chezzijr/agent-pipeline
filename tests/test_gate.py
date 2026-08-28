@@ -7,7 +7,8 @@ from pathlib import Path
 
 from helpers import FIXTURE, project
 from pipeline.core import ticket as T
-from pipeline.core.gate import _dedupe, gate, plan_steps
+from pipeline.core.config import project_config
+from pipeline.core.gate import _base_findings, _dedupe, gate, plan_steps
 from pipeline.core.machine import transition
 
 
@@ -29,7 +30,8 @@ def _set_digest(body: str) -> str:
     return out
 
 
-def _git_ticket_project(base_py: str, branch_py: str):
+def _git_ticket_project(base_py: str, branch_py: str,
+                        test_one: str = "echo test_broken; grep -q fixed f.py"):
     """A real git project: `main` holds `base_py`, the ticket worktree on
     `ticket/001` holds `branch_py`. Returns (project, worktree).
 
@@ -44,10 +46,10 @@ def _git_ticket_project(base_py: str, branch_py: str):
     (d / "test_thing.py").write_text("")
     (d / ".project" / "tickets").mkdir(parents=True)
     (d / ".project" / "pipeline.toml").write_text(
-        'test_one = "echo test_broken; grep -q fixed f.py"\n'
+        'test_one = "%s"\n'
         'test_suite = "true"\n'
         'test_suite_without_new = "true"\n'
-        'base = "main"\n')
+        'base = "main"\n' % test_one)
     (d / ".project" / "tickets" / "TICKET-001.md").write_text(FIXTURE)
     sh("git add -A && git commit -qm init")
     wt = d / ".worktrees" / "TICKET-001"
@@ -693,6 +695,22 @@ def test_gate_passes_a_test_that_fails_on_base_too():
     ok, failures = gate(d, "TICKET-001", workdir=wt)
     assert ok, failures
     assert "fails on base" in (d / ".project/tickets/TICKET-001.md").read_text()
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_the_base_run_covers_every_listed_test():
+    """DEC-017 with two tests: both branch test files are copied onto ONE
+    checkout of base and both are re-run there."""
+    d, wt = _git_ticket_project("buggy\n", "buggy\n",
+                                test_one="echo {name}; grep -q fixed f.py")
+    (wt / "test_thing2.py").write_text("")
+    subprocess.run("git add -A && git commit -qm second", shell=True, cwd=wt,
+                   capture_output=True, text=True)
+    out = _base_findings(d, project_config(d), wt,
+                         ["test_thing.py::test_broken",
+                          "test_thing2.py::test_broken2"])
+    for one in ("test_thing.py::test_broken", "test_thing2.py::test_broken2"):
+        assert any(f.startswith(f"ok: `{one}` fails on base") for f in out), out
     shutil.rmtree(d, ignore_errors=True)
 
 
