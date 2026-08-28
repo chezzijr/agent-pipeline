@@ -1,6 +1,6 @@
 ---
 name: pipeline-config
-description: Set up or fix this project's .project/pipeline.toml for the agent pipeline. Use when the pipeline was just installed here, when a stage or the Tier A gate runs the wrong test command, when the gate says a test "errored rather than failed" or "exited 0 -- it must fail before implementation", or when the user says "configure the pipeline", "set up pipeline.toml", "the pipeline can't run my tests".
+description: Set up or fix this project's .project/pipeline.toml for the agent pipeline. Use when the pipeline was just installed here, when a stage or the Tier A gate runs the wrong test command, when the gate says a test "errored rather than failed" or "exited 0 -- it must fail before implementation", or when the user says "configure the pipeline", "set up pipeline.toml", "the pipeline can't run my tests", when a stage was killed at its budget cap, when builds interfere across ticket worktrees, or when the user asks which keys `.project/pipeline.toml` takes.
 ---
 
 # Configuring `.project/pipeline.toml`
@@ -109,14 +109,94 @@ test has: it must be non-zero there too.
 The dispatcher reads this file from **git HEAD**
 (`git show HEAD:./.project/pipeline.toml`), so an uncommitted edit is inert.
 This is deliberate: it stops a stage rewriting the commands the gate trusts.
-If `.project/` is git-ignored here there is nothing to commit: run
-`pipeline config --sync` instead, and say so to the operator.
+If `.project/` is git-ignored here (`pipeline init --private`) there is
+nothing to commit. The dispatcher pinned a copy outside the repo on first
+read, under `~/.config/pipeline/pinned/<hash of the project path>/`, and
+every later edit stays inert until you run `pipeline config --sync`.
+`pipeline config` prints `source:  pinned` and warns when the working tree
+differs from the pin. Say both to the operator.
 
 `base` must name the branch tickets are cut from, and the main checkout must be
 parked on it while the dispatcher runs, or `merging` refuses to land.
 
-## The rest of the file
+## Every other key
 
-`[stages.<name>]`, `[mcp.<name>]`, `[readonly] allow` and `max_parallel` are
-documented in the comments of `.project/pipeline.toml` itself. Read them there
-rather than inventing keys — an unknown key is silently ignored.
+`test_one`, `test_suite`, `test_suite_without_new` and `base` are the
+only keys this file needs. The rest are optional. These five are the
+ones an operator reaches for, and the file's own comments do not carry
+them all.
+
+### `[stages.<name>] max_usd` -- the per-stage dollar cap
+
+Every stage spawns under a dollar cap. A stage killed at it escalates
+the ticket naming the cap, and nothing retries into the same spend.
+That is the lever for "the stage ran out of budget":
+
+```toml
+[stages.planning]
+max_usd = 10
+```
+
+Then `pipeline resume TICKET-066 --stage planning --reset budget_kills`.
+Defaults come from the stage's own file: `quick-review` 2, `triage` 3,
+`plan-validation` 3, `review` 4, `holistic-review` 4, `planning` 5,
+`implementing` 8. A `max_usd` here PINS the cap -- see `scale_usd`.
+Only `[stages.<name>] max_usd` is read; a top-level one is ignored.
+
+### `[stages.<name>] scale_usd` -- opt in to size-scaled caps
+
+`review`, `quick-review` and `holistic-review` grow their cap by one
+dollar per 4 declared files or per 8 plan steps, whichever is larger,
+capped at twice the stage's own number. Your `max_usd` pins the cap and
+is never scaled past unless you also set `scale_usd = true`;
+`scale_usd = false` turns scaling off for a stage that scales by
+default.
+
+```toml
+[stages.review]
+max_usd   = 6      # 6 flat; with the next line, 6 to 12 by plan size
+scale_usd = true
+```
+
+### `worktree_setup` -- one command per new checkout
+
+Top level, under no table. It runs in every worktree the dispatcher
+creates, after `git worktree add` and before the first stage, and in
+the throwaway checkout of `base` the gate re-runs `test_one` in. Copy
+an env file, install dependencies, key a build cache:
+
+```toml
+worktree_setup = "cp ../../.env . && npm ci --prefer-offline"
+```
+
+**Key any build cache per checkout.** Every ticket gets its own
+worktree. `ln -s ~/.cache/cargo-target target` points them all at one
+directory, and one ticket's stale artifact is then served into
+another's build: a test goes red for a reason that is not in that
+ticket's diff, and clears only when the source is touched. Use
+`CARGO_TARGET_DIR=~/.cache/cargo/$(basename $PWD)`, a `ccache` prefix
+per branch, or leave the cache unshared.
+
+### `.project/stages/<name>.extra.md` -- prose for one stage
+
+A file, not a key. Its text is appended after the packaged stage prompt
+and before the ticket view, so it adds instructions and can never relax
+one: there is no frontmatter in it to override a setting with. Settings
+go in `[stages.<name>]`; wording goes here.
+
+```sh
+mkdir -p .project/stages
+echo 'Run `make lint` before every commit.' > .project/stages/implementing.extra.md
+git add .project/stages/implementing.extra.md   # read from HEAD, like the config
+```
+
+`.project/stages/` is fenced, so a committed change parks the ticket at
+`awaiting-merge` for a human to read.
+
+### Still in the file's own comments
+
+The other `[stages.<name>]` keys (`model`, `effort`, `write`, `tools`,
+`hooks`, `permission_mode`, `skills`), `[mcp.<name>]`,
+`[readonly] allow` and `max_parallel` are documented in the comments of
+`.project/pipeline.toml` itself. Read them there rather than inventing
+keys -- an unknown key is silently ignored.

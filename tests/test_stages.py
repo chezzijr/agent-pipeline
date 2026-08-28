@@ -395,6 +395,15 @@ def test_the_config_skill_names_every_knob_the_code_reads():
         assert knob in text, f"{skill} does not mention {knob!r}"
 
 
+def test_the_config_template_documents_worktree_setup():
+    """TICKET-084: the skill delegates the keys it does not spell out
+    to the comments of `.project/pipeline.toml`. `worktree_setup` was
+    in neither file, so a session had no route to it at all."""
+    text = C.CONFIG_TEMPLATE.read_text()
+    assert "worktree_setup" in text, (
+        f"{C.CONFIG_TEMPLATE} does not document worktree_setup")
+
+
 def test_stage_config_can_take_a_per_project_override(tmp_path):
     """TICKET-038: `stage_config()` resolves against the packaged stage only,
     with no way for a project to add a model, tool or skill of its own. A

@@ -44,6 +44,17 @@ base                    = "main"
 # ignored, and -j stands.
 # max_parallel = 1
 
+# One command run in every worktree the dispatcher creates, after
+# `git worktree add` and before the first stage, and in the throwaway
+# checkout of `base` the gate re-runs a ticket's test in.
+# worktree_setup = "cp ../../.env . && npm ci --prefer-offline"
+#
+# A build cache shared across worktrees UNKEYED serves one ticket's
+# stale artifact into another ticket's build -- a test goes red for a
+# reason that is not in that ticket's diff. Key it per checkout
+# (CARGO_TARGET_DIR=~/.cache/cargo/$(basename $PWD), a ccache prefix
+# per branch) or leave it unshared.
+
 # Per-project stage overrides. A [stages.<name>] table is merged shallow onto
 # that stage's packaged frontmatter -- a key here replaces the packaged one,
 # it does not extend it (a `skills` list included).
