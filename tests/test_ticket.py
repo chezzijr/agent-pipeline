@@ -86,6 +86,32 @@ def test_frontmatter_that_reaches_a_shell_is_validated():
     assert T.validate_meta({**ok, "files_declared": ["/etc/passwd"]})
 
 
+def test_test_file_holds_one_test_or_a_list():
+    """TICKET-066: a bug needing two failing tests records both, and each
+    entry is validated on its own. A single string still works and is
+    never rewritten into a list."""
+    ok = {"id": "TICKET-001", "branch": "ticket/001", "files_declared": ["a.py"]}
+    assert T.validate_meta({**ok, "test_file": ["a.py::t", "b.py::u"]}) == []
+    bad = T.validate_meta({**ok, "test_file": ["a.py::t", "b.py::u; touch /tmp/PWNED"]})
+    assert any("b.py::u; touch /tmp/PWNED" in x for x in bad), bad
+    assert T.validate_meta({**ok, "test_file": "a.py::t; rm -rf ~"})
+    assert T.as_test_list("a.py::t") == ["a.py::t"]
+    assert T.as_test_list(None) == [] and T.as_test_list([]) == []
+    d = project(FIXTURE.replace("test_file: test_thing.py::test_broken",
+                                "test_file: [a.py::t, b.py::u]"))
+    path = d / ".project/tickets/TICKET-001.md"
+    t = Ticket.load(path)
+    assert t.tests == ["a.py::t", "b.py::u"]
+    t.save()
+    assert "- a.py::t" in path.read_text(), path.read_text()
+    one = Ticket.load(path)
+    one.test_file = "a.py::t"
+    one.save()
+    assert "test_file: a.py::t" in path.read_text()
+    assert one.tests == ["a.py::t"]
+    shutil.rmtree(d)
+
+
 def test_a_result_verdict_survives_a_crash_before_it_is_applied():
     d = project()
     T.result_file(d, "TICKET-001").write_text("result: ok\nsummary: x\n")

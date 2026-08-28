@@ -52,6 +52,20 @@ def lease_expiry(exp) -> datetime | None:
     return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
 
 
+def as_test_list(v) -> list:
+    """`test_file` as a list, whatever shape it was written in.
+
+    A ticket filed before TICKET-066 holds one `<path>::<name>` string and
+    keeps it: nothing rewrites a scalar into a list, so an existing ticket
+    file round-trips byte-identically. A bug needing two failing tests to
+    reproduce holds a YAML list instead. Not named `test_list`, because
+    pytest collects a module-level `test*` name a test module imported.
+    """
+    if not v:
+        return []
+    return list(v) if isinstance(v, list) else [v]
+
+
 def validate_meta(meta: dict) -> list[str]:
     """Every one of these fields reaches a shell command or the state machine,
     and every one of them sits in a file an agent can write. Validate on the way
@@ -63,8 +77,9 @@ def validate_meta(meta: dict) -> list[str]:
         bad.append(f"branch {meta.get('branch')!r} is not a plain branch name")
     if meta.get("stage") is not None and meta["stage"] not in KNOWN_STAGES:
         bad.append(f"stage {meta.get('stage')!r} is not a known stage")
-    if meta.get("test_file") and not SAFE_TEST.match(str(meta["test_file"])):
-        bad.append(f"test_file {meta['test_file']!r} contains shell metacharacters")
+    for one in as_test_list(meta.get("test_file")):
+        if not SAFE_TEST.match(str(one)):
+            bad.append(f"test_file {one!r} contains shell metacharacters")
     for f in meta.get("files_declared") or []:
         if not SAFE_FILE.match(str(f)) or ".." in str(f) or str(f).startswith("/"):
             bad.append(f"files_declared entry {f!r} is not a plain relative path")
@@ -504,7 +519,7 @@ class Ticket:
     stage: str = "new"
     klass: str = "bugfix"
     branch: str = ""
-    test_file: str | None = None
+    test_file: str | list[str] | None = None
     files_declared: list[str] = field(default_factory=list)
     counters: dict[str, int] = field(default_factory=dict)
     lease: dict = field(default_factory=lambda: {"holder": None, "expires": None})
@@ -544,6 +559,11 @@ class Ticket:
               "lease": self.lease}
         fm.update({k: v for k, v in self.extra.items() if k not in TYPED_KEYS})
         return fm
+
+    @property
+    def tests(self) -> list[str]:
+        """`test_file` as a list. The only shape `gate()` works with."""
+        return as_test_list(self.test_file)
 
     def errors(self) -> list[str]:
         return validate_meta(self.frontmatter())
