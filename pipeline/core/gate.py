@@ -1,9 +1,10 @@
 """Tier A gate -- deterministic, no LLM judgment anywhere in the path."""
 import re
 import shutil
+import tempfile
 from pathlib import Path
 
-from pipeline.core.config import format_test_cmd, project_config
+from pipeline.core.config import NO_TESTS_RE, format_test_cmd, project_config
 from pipeline.core.ticket import (FENCE_RE, Ticket, _fenced, active_decisions,
                                   decisions_dir, ticket_path)
 from pipeline.core.worktree import base_checkout, base_ref, run_cmd
@@ -89,6 +90,25 @@ CRIT_OUTCOME_RE = re.compile(
 CRIT_RULE = ("name a test, or name a command in backticks together with the "
              "output or exit status running it must produce")
 
+# Each regex refuses one shape of token that cannot recur by construction --
+# not every value that merely looks unstable. No bare-integer (pid) rule:
+# TICKET-076's reported pid sits inside a temp path already caught below, and
+# a standalone integer is as likely a count, a line number or an exit status.
+_TMP_DIRS = ["/tmp", "/var/tmp", "/var/folders", "/private/var/folders",
+             tempfile.gettempdir()]
+TMP_PATH_RE = re.compile(
+    r"(?:%s)/\S+" % "|".join(
+        sorted({re.escape(d.rstrip("/")) for d in _TMP_DIRS}, key=len, reverse=True)))
+# ` at 0x` is the CPython repr shape (`<Foo object at 0x7f...>`); anchoring on
+# it keeps a literal constant like `0xdeadbeef` legal.
+HEX_ADDR_RE = re.compile(r"\bat 0x[0-9a-fA-F]{4,}")
+# Anchored at the end: an ellipsis is only the truncation marker a reporter
+# added when it appears where the string stops, not wherever it appears.
+ELLIPSIS_RE = re.compile(r"(?:\.\.\.|…)['\")\]}]*\s*$")
+ESCAPE_RE = re.compile(r"\\[nrt]")
+
+UNMATCHABLE_MARK = "`## Reproduction` `expect:` cannot recur"
+
 # An allowlist, not a blocklist: a finding whose opener is not listed here
 # reads as substantive, which is what every finding did before this ticket.
 # `startswith`, never `in` -- a substantive finding can carry a fenced block
@@ -107,7 +127,25 @@ STRUCTURAL_MARKS = (
     "plan step names no declared file",
     "acceptance criterion names no test",
     "acceptance criterion pins an absolute count",
+    UNMATCHABLE_MARK,  # DEC-065: a new structural finding needs its own mark
 )
+
+
+def unmatchable(expect: str) -> str | None:
+    """Why `expect` can never match a second run's output, or `None` if it
+    might. Only tokens that cannot recur by construction are listed here --
+    see the comment above `_TMP_DIRS` for why there is no bare-integer rule."""
+    m = TMP_PATH_RE.search(expect)
+    if m:
+        return (f"{m.group(0)!r} is a path under the system temp dir, and "
+                 f"every one of those is minted fresh per run")
+    m = HEX_ADDR_RE.search(expect)
+    if m:
+        return f"{m.group(0)!r} is an object address, and it changes every run"
+    if ELLIPSIS_RE.search(expect):
+        return ("it ends with an ellipsis, which is the truncation marker of "
+                 "whatever printed the failure, not text the run emits")
+    return None
 
 
 def structural_only(failures: list[str]) -> bool:
@@ -237,6 +275,35 @@ def _base_findings(project: Path, cfg: dict, wd: Path, test: str,
             f"already fixed upstream\n```\n{out[-1200:]}\n```"]
 
 
+# `test_suite_without_new` exiting non-zero is pre-existing breakage only when
+# the run produced evidence it ran. A shell syntax error exits 2 with no test
+# result and used to read as breakage in the project's own tests (TICKET-074).
+# pytest, go test, jest, unittest and rspec exit 1 on a failing test; cargo
+# exits 101. The regex is the fallback for a runner that exits with its own
+# failure count -- mocha exits 3 on three failures.
+SUITE_FAILED_CODES = (1, 101)
+SUITE_RAN_RE = re.compile(
+    r"\b\d+\s+(?:failed|failing|passed|passing|errors?|skipped)\b"
+    r"|\bran\s+\d+\s+tests?\b"
+    r"|\btest result:"
+    r"|^(?:---\s+)?FAIL\b", re.M | re.I)
+
+
+def suite_ran(code: int, out: str) -> bool:
+    """True when a non-zero suite run produced evidence it ran tests.
+
+    False is the safe answer: it makes `gate()` report "could not run"
+    instead of asserting breakage nobody observed.
+
+    `NO_TESTS_RE` (DEC-068) vetoes first. `pytest`'s collection error exits 2
+    printing `collected 0 items / 1 error`, and `1 error` matches the count
+    regex, so without the veto a suite that collected nothing reads as red.
+    """
+    if NO_TESTS_RE.search(out):
+        return False
+    return code in SUITE_FAILED_CODES or bool(SUITE_RAN_RE.search(out))
+
+
 def gate(project: Path, tid: str, workdir: Path | None = None) -> tuple[bool, list[str]]:
     """Tier A checks, run in the ticket's checkout. Returns (passed, findings)."""
     path = ticket_path(project, tid)
@@ -280,6 +347,11 @@ def gate(project: Path, tid: str, workdir: Path | None = None) -> tuple[bool, li
     if repro.strip() and not expect:
         findings.append(
             "`## Reproduction` has no `expect:` line recording the expected failure string")
+    bad = unmatchable(expect) if expect else None
+    if bad:
+        findings.append(
+            f"{UNMATCHABLE_MARK}: {bad} -- trim it to the part of the failure "
+            f"that is the same on every run. Got: {expect!r}")
 
     test = t.test_file
     if not test:
@@ -304,6 +376,24 @@ def gate(project: Path, tid: str, workdir: Path | None = None) -> tuple[bool, li
                 findings.append(
                     f"`{test}` exited non-zero but its name never appears in the "
                     f"output -- it errored rather than failed\n```\n{out[-1200:]}\n```")
+            elif expect and expect not in out and bad:
+                # step 4 already reported why `expect` cannot recur -- a second,
+                # substantive finding here would make the list read as mixed and
+                # charge `plan_validation_attempts` instead of the structural
+                # counter (DEC-065).
+                findings.append(
+                    f"ok: `{test}` fails; its output is not checked against an "
+                    f"`expect:` that cannot recur\n```\n{out[-1200:]}\n```")
+            elif expect and expect not in out and ESCAPE_RE.search(expect):
+                # a literal backslash-`n` in `expect` is undecidable on its own:
+                # pytest reprs a string holding a real newline the same way, so
+                # this fires only once the grep has already missed -- see
+                # `## Decisions`.
+                findings.append(
+                    f"{UNMATCHABLE_MARK}: it holds a literal backslash escape "
+                    f"where the run's output holds a control character, and "
+                    f"`{test}`'s output does not contain it either way -- trim "
+                    f"it to the part before the escape. Got: {expect!r}")
             elif expect and expect not in out:
                 # a red test proves nothing if it is red for a different reason
                 # than the one reported -- that looks like evidence but isn't.
@@ -317,12 +407,20 @@ def gate(project: Path, tid: str, workdir: Path | None = None) -> tuple[bool, li
             else:
                 findings.append(f"ok: `{test}` fails as required\n```\n{out[-1200:]}\n```")
                 findings += _base_findings(project, cfg, wd, test, node)
-            code, out = run_cmd(format_test_cmd(cfg["test_suite_without_new"], test), wd)
-            if code != 0:
+            suite_cmd = format_test_cmd(cfg["test_suite_without_new"], test)
+            code, out = run_cmd(suite_cmd, wd)
+            if code != 0 and suite_ran(code, out):
                 findings.append(
                     f"suite excluding `{test}` is RED -- pre-existing breakage, "
                     f"fix that first\n```\n{out[-1200:]}\n```"
                 )
+            elif code != 0:
+                findings.append(
+                    f"could not run the suite excluding `{test}`: {suite_cmd!r} "
+                    f"exited {code} and reported no test result, so pre-existing "
+                    f"breakage is neither proven nor ruled out -- fix "
+                    f"`test_suite_without_new` in `.project/pipeline.toml`"
+                    f"\n```\n{out[-1200:]}\n```")
 
     dec = secs.get("Decisions checked", "")
     cited = sorted(set(DEC_ID_RE.findall(dec)))

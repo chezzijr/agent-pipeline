@@ -24,7 +24,7 @@ Your three commands must satisfy exactly this:
 |---|---|---|
 | `test_one` | run **only** that one test | exits non-zero **and** `the name` appears in the output; exits non-zero when the selector matches NO test |
 | `test_suite` | run everything | `verifying` passes only on exit 0 |
-| `test_suite_without_new` | run everything **except** that test | red here means pre-existing breakage |
+| `test_suite_without_new` | run everything **except** that test | non-zero **and** a reported test result means pre-existing breakage |
 
 Three traps behind that table:
 
@@ -39,6 +39,11 @@ Three traps behind that table:
   it cannot -- a `run-test.sh` that prints `FILTER MATCHED NO TEST -- refusing
   to report success` and exits 1. `pipeline register` probes exactly this and
   refuses a config that fails it.
+- `test_suite_without_new` exiting non-zero is not enough on its own: the gate
+  also needs evidence a test actually ran. It accepts exit 1 or 101, or output
+  containing `3 failed`, `Ran 7 tests`, `test result:`, or a line starting
+  `FAIL`. A runner that exits otherwise on failure and prints none of those
+  must be wrapped, the same way the selector trap above is.
 
 `{test}` is the whole `<path>::<name>` value; `{path}` and `{name}` are its
 two halves. All three are `shlex.quote`d and substituted; every other brace

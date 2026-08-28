@@ -43,6 +43,10 @@ proof rather than a sentence.
    text you actually saw, on a line of the form `expect: <text>` (e.g.
    `expect: KeyError: 'evict'`) -- the gate checks the test fails with this
    text, not just that it fails.
+   `expect:` must be the part of the failure that is the same on every run.
+   Trim a temp path, a pid, an object address, or a `...` the reporter added.
+   Write a backslash and an `n` only if the output really holds those two
+   characters. The gate refuses an `expect:` it can see cannot recur.
 
 Put the test's id in your result file as `test_file:` (e.g.
 `test_file: tests/test_cache.py::test_evicts`). The dispatcher copies it into

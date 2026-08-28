@@ -113,7 +113,8 @@ What makes that work: a one-line title, the mechanism, a runnable reproduction, 
 expected behaviour stated as something a test can check. If the user gave an exact error
 string, include it — triage records it as `expect: <text>` and the gate greps the real
 test output for it, which is what stops a test that fails for an unrelated reason from
-passing as a reproduction.
+passing as a reproduction. Give the invariant part of that string -- not a `/tmp` path, a
+pid, or a truncated tail, which the gate refuses because they cannot recur.
 
 **Do not touch the frontmatter beyond `class`.** `stage`, `branch`, `counters` and
 `lease` belong to the dispatcher, and a ticket whose control fields look edited is

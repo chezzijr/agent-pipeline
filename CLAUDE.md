@@ -108,7 +108,10 @@ still worth it: it prints one line per case, and the failure names the case.
   `project_env()` strips it; use `run_cmd`, never bare `subprocess`.
 - **A test that *errors* exits non-zero exactly like one that fails.** The gate
   requires the test's name in the output, or a missing dependency reads as a
-  successful reproduction.
+  successful reproduction. The same trap hits `test_suite_without_new`: a shell
+  syntax error also exits non-zero with no test ever run, so `suite_ran()` in
+  `pipeline/core/gate.py` gates the pre-existing-breakage verdict on evidence
+  of a run, not just the exit code (TICKET-074).
 - **`git worktree add -B` resets the branch.** Never use `-B`: recreating a
   worktree after a resume would silently discard the ticket's commits.
 - **`.project/` is excluded from the read-only tree snapshot**, because writing
@@ -168,6 +171,13 @@ still worth it: it prints one line per case, and the failure names the case.
   file on disk is unchanged and stays the protocol. A stage that reads
   the whole file to make an edit undoes the saving -- `_common.md`
   rule 4 is what stops it.
+- **`Ticket.save()` writes two destinations.** The main checkout's file, and a
+  `0444` mirror at `<worktree>/.project/tickets/<id>.md`, marked
+  `git update-index --skip-worktree` in the worktree's own index. Without the
+  mirror, the worktree copy is the branch-cut snapshot, and `implementing`
+  reads its own prompt as fabricated (TICKET-067). Without the mark, a write
+  there leaves the worktree dirty, and `merging`'s rebase fails with
+  `error: cannot rebase: You have unstaged changes.`
 - **`gate()` quotes each distinct output once and references the rest.** A
   re-gate re-runs the same test against the same code, so its fence is
   byte-identical to one the thread already holds, and `_dedupe()` replaces
@@ -255,6 +265,14 @@ still worth it: it prints one line per case, and the failure names the case.
   `unregister()` also refuse when `PIPELINE_STAGE` is set -- a guardrail, not
   a boundary, since the registry lives outside the worktree, the ticket's
   diff and `machine.FENCED` (TICKET-072).
+- **A budget kill is not a crash, and the stream says which it was.** Claude
+  Code's final `result` event carries `terminal_reason`, which
+  `--max-budget-usd` sets to `budget_exhausted`. `terminal_sink()` keeps it on
+  the child's record and `_finish()` escalates on the FIRST one, naming the
+  cap, instead of charging `no_result` and respawning into the identical
+  spend. An interactive stage emits no `result` event, so it is never
+  classified this way -- and it writes its `.result` LAST, because
+  `end_interactive()` SIGTERMs on the sidecar.
 
 ## Conventions
 

@@ -1349,6 +1349,57 @@ def test_an_absolute_count_finding_is_structural():
     assert structural_only([finding]) is True
 
 
+def test_suite_ran_tells_a_red_suite_from_a_command_that_never_ran():
+    from pipeline.core.gate import suite_ran
+    ran = [(1, ""),
+           (1, "1 failed, 84 passed in 3.21s"),
+           (101, "test result: FAILED. 3 passed; 1 failed"),
+           (3, "  3 failing"),
+           (2, "Ran 7 tests in 0.4s"),
+           (2, "--- FAIL: TestAdd (0.00s)")]
+    never = [(2, "sh: -c: line 1: syntax error near unexpected token"),
+             (127, "sh: line 1: pytest: command not found"),
+             (4, "no tests ran in 0.00s"),
+             (126, ""),
+             # `1 error` matches the count regex; NO_TESTS_RE vetoes it
+             (2, "collected 0 items / 1 error\nERROR tests/test_x.py"),
+             (5, "no tests ran in 0.01s")]
+    for code, out in ran:
+        assert suite_ran(code, out), (code, out)
+    for code, out in never:
+        assert not suite_ran(code, out), (code, out)
+
+
+def test_unmatchable_names_only_tokens_that_cannot_recur():
+    """The detector fires on a temp path, a pid inside one, an object address
+    and a trailing ellipsis; it stays silent on an exit status, a hex
+    constant, a project path and an ordinary error (TICKET-076)."""
+    from pipeline.core.gate import unmatchable
+
+    assert unmatchable("registered /tmp/tmpn7w0imby") is not None
+    assert unmatchable("names the unreadable subdir /tmp/chz_w8_39_2424171/sub") is not None
+    assert unmatchable("<Cache object at 0x7f3a2b1c9d50>") is not None
+    assert unmatchable('got: [CheckError { message: x, ...') is not None
+
+    assert unmatchable("exit status 137") is None
+    assert unmatchable("0xdeadbeef is wrong") is None
+    assert unmatchable("no such file: .project/pipeline.toml") is None
+    assert unmatchable("KeyError: 'evict'") is None
+
+
+def test_an_unmatchable_expect_finding_is_structural():
+    """The new finding must be classified structural, or a malformed
+    `expect:` line charges `plan_validation_attempts` like a bad plan
+    instead of `structural_gate_failures` (TICKET-076, DEC-065)."""
+    from pipeline.core.gate import UNMATCHABLE_MARK, structural_only
+
+    assert structural_only(
+        [UNMATCHABLE_MARK + ": 'x' is a path under the system temp dir"]) is True
+    assert structural_only(
+        ["`t.py::x` fails, but its output does not mention the expected "
+         "string 'y'"]) is False
+
+
 def test_a_gate_verdict_picks_its_result_string():
     """Only `plan-validation` splits `fail` into `bad-plan`: `revalidating`
     always gets `fail`, so a stale plan charges `stale_regate` (DEC-029) and
@@ -1385,3 +1436,72 @@ def test_a_tier_b_rejection_charges_the_plan_not_the_structural_counter():
     assert t.counters["plan_validation_attempts"] == 1
     assert "structural_gate_failures" not in t.counters
     shutil.rmtree(d, ignore_errors=True)
+
+
+def test_a_budget_kill_is_charged_and_retried_exactly_like_a_crash():
+    """A stage killed at its `--max-budget-usd` cap escalates on the FIRST
+    kill, charged to its own counter, naming the cap it hit -- not a blind
+    `no_result` retry into the same spend."""
+    d = project()
+    path = d / ".project/tickets/TICKET-001.md"
+    snap = Ticket.load(path)
+
+    log = d / ".project" / "logs" / "TICKET-001.log"
+    log.parent.mkdir(parents=True, exist_ok=True)
+
+    def rec():
+        return {"fh": log.open("w"), "prompt": d / "gone.md", "settings": None,
+                "path": path, "tid": "TICKET-001", "stage": "plan-validation",
+                "session": "s1", "log": log, "wt": d, "meta": snap,
+                "before": None, "terminal_reason": "budget_exhausted", "cap": 3}
+
+    supervisor.finish(d, rec())
+    t = Ticket.load(path)
+    assert t.stage == "escalated"
+    assert t.counters.get("budget_kills") == 1
+    assert t.counters.get("no_result", 0) == 0
+    msg = t.thread()[-1].text
+    assert "budget" in msg.lower() and "$3" in msg
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_a_crash_with_no_terminal_reason_still_retries_then_escalates():
+    """A harness that dies with no `terminal_reason` at all is not a budget
+    kill: it keeps the `no_result` retry, respawning once before it
+    escalates."""
+    d = project()
+    path = d / ".project/tickets/TICKET-001.md"
+    snap = Ticket.load(path)
+
+    log = d / ".project" / "logs" / "TICKET-001.log"
+    log.parent.mkdir(parents=True, exist_ok=True)
+
+    def rec():
+        return {"fh": log.open("w"), "prompt": d / "gone.md", "settings": None,
+                "path": path, "tid": "TICKET-001", "stage": "plan-validation",
+                "session": "s1", "log": log, "wt": d, "meta": snap,
+                "before": None}
+
+    supervisor.finish(d, rec())
+    t = Ticket.load(path)
+    assert t.counters["no_result"] == 1
+    assert t.stage == "plan-validation"
+
+    supervisor.finish(d, rec())
+    t = Ticket.load(path)
+    assert t.stage == "escalated"
+    assert "wrote no .result sidecar 2 times" in t.thread()[-1].text
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_the_stream_sink_records_the_terminal_reason_on_the_child():
+    """`terminal_sink()` records `terminal_reason` on the rec and forwards
+    every event to the inner sink -- it must never swallow one."""
+    rec = {}
+    seen = []
+    sink = supervisor.terminal_sink(rec, seen.append)
+    sink({"kind": "assistant"})
+    sink({"kind": "result", "terminal_reason": None})
+    sink({"kind": "result", "terminal_reason": "budget_exhausted"})
+    assert rec["terminal_reason"] == "budget_exhausted"
+    assert len(seen) == 3

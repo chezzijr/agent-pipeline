@@ -73,6 +73,7 @@ pipeline --project ~/code/myproject resume  TICKET-001 \
     --stage planning --reset plan_validation_attempts
 pipeline --project ~/code/myproject resume  TICKET-001 \
     --stage planning --grant plan_validation_attempts   # hand back one spent attempt, not the whole budget
+pipeline --project ~/code/myproject resume  TICKET-001 --stage planning --note "the escalation was a flaky test"
 ```
 
 `init` also installs `.claude/skills/file-ticket/SKILL.md` -- the protocol a
@@ -216,7 +217,10 @@ fails if either stops saying it.
 
 An interactive session also ends on its `.result` sidecar, not on `/exit`: a
 REPL does not exit when the agent reports a verdict, so the supervisor sends it
-SIGTERM once the sidecar lands and reaps it like any other child.
+SIGTERM once the sidecar lands and reaps it like any other child. That is also
+why an interactive stage writes its sidecar LAST while every other stage
+writes it first -- the sidecar is the interactive exit condition, and writing
+it early would end the session mid-thread-entry.
 
 ```
 -> {"id":7,"op":"attach","ticket":"TICKET-003"}      # "project" optional, a filter
@@ -383,6 +387,7 @@ Then one of three:
 | The reason is | Do |
 |---|---|
 | a flake -- crashed harness, expired lease, no sidecar | `pipeline resume TICKET-017 --stage plan-validation --reset no_result` |
+| the stage hit its `--max-budget-usd` cap (`budget_kills`) | raise that stage's `max_usd` in `pipeline/stages/<name>.md`, then `pipeline resume TICKET-017 --stage review --reset budget_kills` |
 | real, but the stage deserves another go with the thread it has now | `pipeline resume TICKET-017 --stage planning --grant plan_validation_attempts` |
 | the ticket itself is wrong | `pipeline reject TICKET-017 "why"` |
 
@@ -390,13 +395,20 @@ Then one of three:
 `--grant counter=N`) and cannot return more than was spent. Naming the same
 counter in both is an error, not a merge.
 
+`--note` attaches your reasoning to the resume. It lands in `## Thread`
+attributed to you, as a kind the stage view never omits, so the stage you
+resume to reads it. `pipeline answer` refuses outside `needs-input`, which is
+why the note rides on `resume`.
+
 The bound that was hit lives in the dispatcher, never in a stage prompt:
 `BOUNDS[class][counter]` in `pipeline/core/machine.py`, which is 2 for `bugfix`
 and `feature` and 3 for `refactor` on `review_loops` and
 `plan_validation_attempts`. `plan_validation_attempts` is the only one that
 grows with the plan -- one more attempt per 8 steps or 4 declared files, never
 past 5. `lease_expiries` and `no_result` are the dispatcher's own counters and
-stay at 2 whatever the class.
+stay at 2 whatever the class. `budget_kills` is bounded at one: a stage
+killed at its cap escalates on the first kill, because the same prompt
+against the same tree spends the same cap and stops at the same point.
 
 A Tier A failure whose findings are all structural -- a missing section, a
 plan line that is not a numbered step, a step citing no declared file --
