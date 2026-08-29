@@ -76,6 +76,13 @@ def cap_config(stage: str, cfg: dict, project: Path | None, counters: dict) -> d
     override = project_stage_config(project, stage)
     want = override.get("scale_usd")
     if want is None:
+        pinned = stage in USD_SCALED and "max_usd" in override
+        if pinned:
+            print(
+                f"{stage}: max_usd={override['max_usd']} is set without "
+                f"scale_usd, so this stage will not scale its cap with plan "
+                f"size. Add scale_usd = true if that was not the intent."
+            )
         want = stage in USD_SCALED and "max_usd" not in override
     return {**cfg, "counters": counters} if want else cfg
 
