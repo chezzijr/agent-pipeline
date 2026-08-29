@@ -416,6 +416,10 @@ def test_the_file_ticket_skill_requires_a_code_anchor_and_a_docs_only_shape():
     text = skill.read_text()
     assert "path:line" in text, f"{skill} does not require a path:line anchor"
     assert "docs-only" in text, f"{skill} does not name the docs-only shape"
+    assert re.search(r"[A-Za-z0-9_/.-]+[.]py:[0-9]+", text), (
+        f"{skill} states the anchor rule but carries no worked path:line anchor")
+    assert "test_the_config_skill_names_every_knob_the_code_reads" in text, (
+        f"{skill} does not name TICKET-084's test as the docs-only pattern")
 
 
 def test_stage_config_can_take_a_per_project_override(tmp_path):

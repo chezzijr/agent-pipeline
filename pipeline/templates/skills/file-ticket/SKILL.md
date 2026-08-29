@@ -73,7 +73,8 @@ to say so now:
 
 - **No observable symptom.** A triage agent's whole job is to write a *failing test*. If
   nothing fails, it will return `result: rejected` and the ticket dies at triage. Say so
-  and ask for the symptom.
+  and ask for the symptom. A symptom that lives in a document is still filable -- see
+  *A docs-only ticket* below for the shape it needs.
 - **Two unrelated changes.** `files_conflict` orders tickets by the files they touch, so
   one ticket spanning two areas blocks both. File two.
 - **A solution instead of a problem.** "Switch to a ring buffer" pre-empts the planning
@@ -97,16 +98,22 @@ A good summary is three short paragraphs:
 
 evict() never drops the key when the cache is at capacity
 
-`Cache.evict()` is supposed to make room by removing the LRU entry. With
-`maxsize=2`, adding a third key leaves all three present, so the cache grows
-without bound.
+`Cache.evict()` is supposed to make room by removing the LRU entry. It picks
+the victim and never removes it -- `cache/lru.py:64`, on main at a1b2c3d:
+
+    def evict(self):
+        if len(self._d) > self.maxsize:
+            self._lru()        # picks the victim, never deletes it
+
+With `maxsize=2`, adding a third key leaves all three present, so the cache
+grows without bound.
 
     >>> c = Cache(maxsize=2); c.put("a",1); c.put("b",2); c.put("c",3)
     >>> len(c)
     3          # expected 2
 
-Expected: `len(c) == 2` after the third put, with "a" gone. Seen on main at
-a1b2c3d. The exact failure a test should show is `AssertionError: 3 != 2`.
+Expected: `len(c) == 2` after the third put, with "a" gone. The exact
+failure a test should show is `AssertionError: 3 != 2`.
 ```
 
 What makes that work: a one-line title, the mechanism, a runnable reproduction, and the
@@ -115,6 +122,13 @@ string, include it — triage records it as `expect: <text>` and the gate greps 
 test output for it, which is what stops a test that fails for an unrelated reason from
 passing as a reproduction. Give the invariant part of that string -- not a `/tmp` path, a
 pid, or a truncated tail, which the gate refuses because they cannot recur.
+
+**Anchor the mechanism in code.** Name the location as `path:line` --
+`pipeline/core/gate.py:383` -- and quote the two or three lines it points at.
+Triage is charged per run, and a prose-only summary makes it re-find the
+location you already had open. Give the line number you saw and the commit
+you saw it on; a line that has since moved still lands triage within a few
+lines of the code.
 
 **Do not touch the frontmatter beyond `class`.** `stage`, `branch`, `counters` and
 `lease` belong to the dispatcher, and a ticket whose control fields look edited is
@@ -169,6 +183,32 @@ again at `awaiting-merge`, a second human gate, if its diff touches anything `CL
 fences off from unattended merge. The class table below does not change: there is no
 `chore` class, and a human cannot request the cheap route. That gate is the point, so
 do not describe filing as "it will be fixed automatically".
+
+## A docs-only ticket
+
+A ticket whose symptom is in a document -- a skill, a README, a stage prompt
+-- is filable, but not in the shape above. Triage's job is a *failing test*,
+and a wrong sentence has no runtime behaviour to fail on. The test asserts
+the document's own text instead.
+
+TICKET-084 is the worked precedent. The `pipeline-config` skill named none
+of five config knobs the code reads, and
+`tests/test_stages.py::test_the_config_skill_names_every_knob_the_code_reads`
+reads that file and asserts each name is in it -- red before the edit, green
+after, exactly like a bug's test.
+
+So a docs-only `## Summary` carries two things a code ticket does not:
+
+- **The test file the assertion goes in**, by path. An existing file where
+  this project already tests documents, not a new one.
+- **The assertion itself**, close to literal. "the skill must name
+  `path:line`" is enough for triage to write `assert "path:line" in text`.
+
+Anchor the document the way you anchor code: `path:line` plus the lines that
+are wrong, or the section that should exist and does not.
+
+Without both, step 2's first push-back applies: there is no symptom a test
+can fail on, so triage returns `result: rejected` and the ticket dies there.
 
 ## Do not
 
