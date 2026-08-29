@@ -46,8 +46,8 @@ def project_env() -> dict:
 
 
 def run_cmd(cmd: str, cwd: Path) -> tuple[int, str]:
-    p = subprocess.run(cmd, shell=True, cwd=cwd, capture_output=True, text=True,
-                       env=project_env())
+    p = retry_eagain(lambda: subprocess.run(cmd, shell=True, cwd=cwd, capture_output=True,
+                                             text=True, env=project_env()))
     return p.returncode, (p.stdout + p.stderr)[-4000:]
 
 

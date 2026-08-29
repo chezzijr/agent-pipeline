@@ -279,3 +279,26 @@ def test_retry_eagain_gives_up_after_the_last_try():
         pass
     assert calls["n"] == W.EAGAIN_TRIES == 4
     assert slept == [0.25, 0.5, 1.0]
+
+
+def test_run_cmd_survives_a_transient_blockingioerror_from_fork():
+    calls = {"n": 0}
+    real_run = subprocess.run
+
+    class Shim:
+        PIPE = subprocess.PIPE
+
+        def run(self, *a, **kw):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise BlockingIOError(11, "Resource temporarily unavailable")
+            return real_run(*a, **kw)
+
+    W.subprocess = Shim()
+    try:
+        code, out = W.run_cmd("echo hi", Path(tempfile.mkdtemp()))
+    finally:
+        W.subprocess = subprocess
+    assert code == 0
+    assert out.strip() == "hi"
+    assert calls["n"] == 2
