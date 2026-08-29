@@ -168,7 +168,7 @@ def start(cmd: str, cwd, env: dict, rows: int = ROWS, cols: int = COLS):
     second interactive stage would inherit the first one's master and could
     type into another ticket's permission prompt, so we clear it by hand.
     """
-    # retry_eagain runs in the parent only: the child returns from
+    # The retry runs in the parent only: the child returns from
     # pty.fork() with pid 0 and never raises there.
     pid, fd = retry_eagain(pty.fork)
     if pid == 0:                      # child: nothing here may return
