@@ -166,6 +166,13 @@ still worth it: it prints one line per case, and the failure names the case.
   REPL, and it parked at a prompt nobody could see until the lease expired
   twice (TICKET-059). A TUI that attaches after the spawn gets a headless
   stage; that race is accepted.
+- **`notice_once()` in `pipeline/core/__init__.py` holds a module-level set
+  of keys.** `spawn()`'s headless line and `cap_config()`'s pinned-`max_usd`
+  warning both go through it, keyed on the project and the stage; both fire
+  from inside `spawn()`, so an un-deduped line repeats for every ticket
+  forever and buries the per-ticket lines (TICKET-096). A new `spawn()`
+  print that states a fact about the setup rather than about the ticket
+  belongs there too. `reset_notices()` is the test seam.
 - **A REPL does not exit when the agent writes `.result`.** `finish()` fires on
   `proc.poll()`, so `end_interactive()` SIGTERMs an interactive child once its
   sidecar appears. Without it the lease expires twice and the ticket escalates

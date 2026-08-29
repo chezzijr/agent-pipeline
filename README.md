@@ -209,7 +209,8 @@ which a human can steer a stage.
 
 `mode: interactive` means "interactive while a human is attached". `pipeline
 run` has no socket, and `pipeline start` with no client subscribed is the same
-case: both run the stage **headless** instead, and say so on stdout. A TUI
+case: both run the stage **headless** instead. The dispatcher says so on
+stdout once per process for each project and stage, not once per ticket. A TUI
 that attaches after the spawn gets a headless stage. Nothing is lost but the
 steering: `planning`'s own escape hatch is `result: needs-input`, which parks
 the ticket at a human gate for `pipeline answer`. `pipeline start --help` and
