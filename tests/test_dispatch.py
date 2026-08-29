@@ -750,6 +750,33 @@ def test_the_daemons_max_parallel_is_not_machine_wide():
         f"across {len(projects)} projects"
 
 
+def test_the_machine_cap_is_shared_when_both_projects_have_work():
+    """A machine cap of 2 over two projects that both have work must split 1
+    and 1, not let whichever project ticks first take both slots."""
+    max_parallel = 2
+    projects = []
+    for i in range(2):
+        d, sh = git_project()
+        for n, fname in (("001", "thing.py"), ("002", "other.py")):
+            (d / f".project/tickets/TICKET-{n}.md").write_text(
+                FIXTURE.replace("stage: plan-validation", "stage: triage")
+                .replace("id: TICKET-001", f"id: TICKET-{n}")
+                .replace("branch: ticket/001", f"branch: ticket/{n}")
+                .replace("files_declared: [thing.py]", f"files_declared: [{fname}]"))
+        projects.append(d)
+
+    supervisor.machine_watch(projects)
+    inflights = [{} for _ in projects]
+    for d, inflight in zip(projects, inflights):
+        supervisor.tick(d, harness("fake"), inflight, max_parallel)
+
+    counts = [len(i) for i in inflights]
+    for d in projects:
+        shutil.rmtree(d, ignore_errors=True)
+    assert counts == [1, 1], \
+        f"a machine cap of 2 over two busy projects must be 1 each, got {counts}"
+
+
 def test_two_tickets_never_merge_in_the_same_tick():
     """Both would `git merge base` against the same base; the first
     `--ff-only` to land moves base, and the second -- a fully verified,

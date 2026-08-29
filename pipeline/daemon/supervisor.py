@@ -1287,17 +1287,76 @@ def _start_cap(project: Path, max_parallel: int) -> int:
     return min(max_parallel, cap)
 
 
+# Every inflight dict this dispatcher is ticking, by project key:
+#   {"<project path>": {"inflight": <the dict tick() mutates>, "want": bool}}
+# `-j` is ONE budget for the whole dispatcher process. `serve()` hands every
+# project its own `inflight` dict, so nothing but this map sees the total.
+_MACHINE: dict[str, dict] = {}
+
+
+def machine_watch(projects) -> None:
+    """Declare the projects this dispatcher watches, before it ticks them.
+
+    Seeds one entry per project with `want: True`, so the FIRST pass already
+    shares `-j` instead of letting whichever project ticks first take all of
+    it, and drops the entry of any project not named -- an unregistered
+    project must stop holding machine slots.
+    """
+    keys = {str(p) for p in projects}
+    for key in [k for k in _MACHINE if k not in keys]:
+        del _MACHINE[key]
+    for key in keys:
+        _MACHINE.setdefault(key, {"inflight": {}, "want": True})
+
+
+def machine_share(project: Path, inflight: dict, max_parallel: int) -> int:
+    """The most children `project` may hold out of the machine-wide `-j`.
+
+    The smaller of two limits: what `-j` has left after the OTHER
+    projects' inflight children, and an equal share of `-j` among the
+    projects with demand -- this one, plus every other whose last tick
+    left a ticket it had no slot for. A quiet project is not counted,
+    so one busy project still reaches `-j`.
+
+    `inflight` is stored by identity: `reap()` and `tick()` mutate that same
+    dict, so the count read here is always current. An entry whose project
+    directory is gone is dropped -- nothing will ever tick it again.
+    """
+    key = str(project)
+    entry = _MACHINE.setdefault(key, {"inflight": inflight, "want": True})
+    entry["inflight"] = inflight
+    for k in [k for k in _MACHINE if k != key and not Path(k).is_dir()]:
+        del _MACHINE[k]
+    others = sum(len(e["inflight"]) for k, e in _MACHINE.items() if k != key)
+    rivals = 1 + sum(1 for k, e in _MACHINE.items() if k != key and e["want"])
+    share = -(-max_parallel // rivals)      # ceil, so a share is never 0
+    return max(0, min(max_parallel - others, share))
+
+
+def machine_demand(project: Path, want: bool) -> None:
+    """Record whether `project` had a ticket the machine cap gave no slot for."""
+    entry = _MACHINE.get(str(project))
+    if entry is not None:
+        entry["want"] = want
+
+
 def tick(project: Path, hcfg: dict, inflight: dict, max_parallel: int = 3,
          poller: Poller | None = None, emit=noop, stopping=lambda: False) -> bool:
     """One pass over one project: reap what finished, start what can start.
     The whole loop body, so the daemon can run it for many projects and
-    `pipeline run` can run it for one. The start cap is the smaller of the
-    `-j` argument and the project's own `max_parallel` key."""
+    `pipeline run` can run it for one. The start cap is the smallest of the
+    `-j` argument, this project's share of it, and the project's own
+    `max_parallel` key."""
     worked = reap(project, inflight, emit)
     tickets = all_tickets(project)
-    cap = _start_cap(project, max_parallel) if tickets else max_parallel
+    share = machine_share(project, inflight, max_parallel)
+    cap = min(_start_cap(project, max_parallel), share) if tickets else share
+    want = False
     for path in tickets:
-        if stopping() or len(inflight) >= cap:
+        if stopping():
+            break
+        if len(inflight) >= cap:
+            want = len(inflight) >= share   # the machine cap stopped it, not this project's own key
             break
         try:
             tid = Ticket.load(path).id
@@ -1318,6 +1377,7 @@ def tick(project: Path, hcfg: dict, inflight: dict, max_parallel: int = 3,
         worked = worked or did_work
         if rec:
             inflight[rec["tid"]] = rec
+    machine_demand(project, want)
     return worked
 
 
@@ -1433,6 +1493,7 @@ def run(project: Path, once: bool, interval: int, harness_name: str,
     reload = _harness_reloader(harness_name)
     emit = store.emitter(project) if store is not None else noop
     inflight: dict[str, dict] = {}
+    machine_watch([project])   # -j is this dispatcher's budget; one project has all of it
     lock = registry.lock(project)
     if lock is None:
         raise PipelineError(
@@ -1520,6 +1581,7 @@ def serve(interval: int, harness_name: str, max_parallel: int, store, server,
                     # same reason `tick` is wrapped: one project's teardown
                     # must not strand every other project's leases
                     print(f"  {key}: release failed ({e.__class__.__name__}: {e})")
+            machine_watch(wanted)   # -j is one budget for all of them
             worked = False
             for key, proj in wanted.items():
                 if key not in states:
