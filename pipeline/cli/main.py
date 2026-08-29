@@ -126,6 +126,35 @@ def cmd_gate(args) -> None:
     sys.exit(0 if ok else 1)
 
 
+SKILLS_HINT = {
+    "stale": " -- run pipeline --project {project} skills --refresh",
+    "customised": " -- kept; add --force to overwrite it",
+    "unknown": " -- kept; add --force to overwrite it",
+    "linked": " -- a symlink to the packaged template; never rewritten",
+    "current": "",
+    "absent": "",
+}
+
+
+def cmd_skills(args) -> None:
+    project = proj(args)
+    if args.force and not args.refresh:
+        die("--force applies to --refresh only")
+    for name, dst, state in skill_status(project):
+        if state == "absent":
+            install_skill(project, name)
+            print(f"{name}: installed at {dst}")
+        elif args.refresh and state == "stale":
+            install_skill(project, name)
+            print(f"{name}: refreshed at {dst}")
+        elif args.refresh and args.force and state in ("customised", "unknown"):
+            install_skill(project, name)
+            print(f"{name}: overwritten at {dst}")
+        else:
+            print(f"{name}: {state} at {dst}"
+                  + SKILLS_HINT[state].format(project=project))
+
+
 def cmd_config(args) -> None:
     project = proj(args)
     if args.sync:
@@ -652,6 +681,7 @@ def main() -> None:
     p = sub.add_parser("new"); p.add_argument("title"); p.add_argument("--class", dest="cls", default="bugfix"); p.set_defaults(fn=cmd_new)
     p = sub.add_parser("gate"); p.add_argument("id"); p.add_argument("--findings", help="write {ok, findings} JSON here; the dispatcher's gate child reads it back"); p.set_defaults(fn=cmd_gate)
     p = sub.add_parser("config", help="where the dispatcher reads this project's pipeline.toml"); p.add_argument("--sync", action="store_true", help="adopt the working tree's config on a project git will never have"); p.set_defaults(fn=cmd_config)
+    p = sub.add_parser("skills", help="is this project's skill copy current with the packaged template"); p.add_argument("--refresh", action="store_true", help="rewrite a stale copy from the packaged template; a customised copy is kept"); p.add_argument("--force", action="store_true", help="with --refresh, overwrite a customised copy too"); p.set_defaults(fn=cmd_skills)
     p = sub.add_parser("plan"); p.add_argument("id"); p.set_defaults(fn=cmd_plan)
     p = sub.add_parser("approve"); p.add_argument("id"); p.add_argument("--by"); p.set_defaults(fn=cmd_approve)
     p = sub.add_parser("reject"); p.add_argument("id"); p.add_argument("reason"); p.set_defaults(fn=cmd_reject)

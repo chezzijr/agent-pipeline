@@ -519,6 +519,66 @@ def test_reinit_does_not_detect_a_packaged_skill_update():
     shutil.rmtree(d, ignore_errors=True)
 
 
+def test_skills_refresh_updates_a_stale_copy_and_keeps_a_customised_one():
+    """`pipeline skills --refresh` rewrites a stale copy from the packaged
+    template, and leaves a customised copy alone -- the distinction `init`
+    alone cannot make without --force."""
+    from pipeline.core.config import SKILL_TEMPLATE
+    d = Path(tempfile.mkdtemp())
+    r = cli(d, "init")
+    assert r.returncode == 0, r.stderr
+    pipeline_config = d / ".claude" / "skills" / "pipeline-config" / "SKILL.md"
+    pipeline_config.write_text("# ours\n")
+    original = SKILL_TEMPLATE.read_text()
+    try:
+        SKILL_TEMPLATE.write_text(original + "\n<!-- upstream update -->\n")
+        r = cli(d, "skills")
+        assert r.returncode == 0, r.stderr
+        assert "file-ticket: stale" in r.stdout, r.stdout
+        assert "pipeline-config: customised" in r.stdout, r.stdout
+
+        r = cli(d, "skills", "--refresh")
+        assert r.returncode == 0, r.stderr
+        file_ticket = d / ".claude" / "skills" / "file-ticket" / "SKILL.md"
+        assert file_ticket.read_text() == SKILL_TEMPLATE.read_text()
+        assert pipeline_config.read_text() == "# ours\n"
+
+        r = cli(d, "skills")
+        assert r.returncode == 0, r.stderr
+        assert "file-ticket: current" in r.stdout, r.stdout
+    finally:
+        SKILL_TEMPLATE.write_text(original)
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_skills_force_overwrites_a_customised_copy_but_never_a_symlink():
+    """`--refresh --force` overwrites a customised copy, and `--force`
+    without `--refresh` is refused. A symlinked copy -- this repo's own
+    layout -- is never written, even under `--force`."""
+    from pipeline.core.config import SKILL_TEMPLATE
+    d = Path(tempfile.mkdtemp())
+    r = cli(d, "init")
+    assert r.returncode == 0, r.stderr
+    file_ticket = d / ".claude" / "skills" / "file-ticket" / "SKILL.md"
+    file_ticket.write_text("# ours\n")
+    linked_target = d / "linked-elsewhere.md"
+    linked_target.write_text("# linked elsewhere\n")
+    pipeline_config = d / ".claude" / "skills" / "pipeline-config" / "SKILL.md"
+    pipeline_config.unlink()
+    pipeline_config.symlink_to(linked_target)
+
+    r = cli(d, "skills", "--refresh", "--force")
+    assert r.returncode == 0, r.stderr
+    assert file_ticket.read_text() == SKILL_TEMPLATE.read_text()
+    assert pipeline_config.is_symlink(), "--force rewrote a symlinked skill copy"
+    assert linked_target.read_text() == "# linked elsewhere\n"
+
+    r = cli(d, "skills", "--force")
+    assert r.returncode != 0
+    assert "--force applies to --refresh only" in r.stderr, r.stderr
+    shutil.rmtree(d, ignore_errors=True)
+
+
 def test_a_human_gate_records_the_moment_the_human_acted():
     """View 6 measures time parked in a human gate: entering it is a
     `transition` event, and leaving it was "the next transition on that
