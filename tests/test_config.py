@@ -11,7 +11,8 @@ from pipeline.core.config import (cap_config, format_test_cmd,
                                   format_tests_cmd, harness, pin_dir,
                                   pin_path, project_config,
                                   project_max_parallel, render,
-                                  selector_failure, stage_config, stage_extra,
+                                  selector_failure, selector_parts,
+                                  stage_config, stage_extra,
                                   suite_failure)
 from pipeline.daemon.registry import config_dir
 from tests.helpers import ROOT, git_project
@@ -352,3 +353,17 @@ def test_a_private_projects_stage_extra_is_pinned_too():
     assert stage_extra(d, "implementing").strip() == "SAFE"
     (d / ".project" / "stages" / "implementing.extra.md").write_text("INJECTED-9137\n")
     assert "INJECTED-9137" not in stage_extra(d, "implementing")
+
+
+def test_selector_parts_has_a_rest_placeholder_for_non_pytest_selectors():
+    """A Rust/Go/JVM selector needs `{path}` to stay a real file the gate
+    can stat and copy, and a module selector for the runner -- the two
+    differ when the test id has more than one `::`. `{rest}` is everything
+    after the FIRST `::`, so `test_one = "cargo test {rest}"` runs the
+    right test while `{path}` still names `src/vm.rs`."""
+    parts = selector_parts("src/vm.rs::vm::tests::foo")
+    assert parts["path"] == "src/vm.rs"
+    assert parts["rest"] == "vm::tests::foo"
+
+    cmd = format_test_cmd("cargo test {rest}", "src/vm.rs::vm::tests::foo")
+    assert cmd == "cargo test vm::tests::foo"
