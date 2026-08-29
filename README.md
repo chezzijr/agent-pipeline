@@ -291,15 +291,21 @@ is never hidden.
 
     pipeline --project ~/code/myproject run -j 4
 
-A project can lower that number further in `.project/pipeline.toml`:
+`-j` is the dispatcher's whole budget across every registered project, not
+`-j` each: each project with work gets an equal share when the cap binds,
+which project ticks first rotates each pass, and a quiet project takes no
+share, so one busy project still reaches the full `-j`. A project can lower
+its own share further in `.project/pipeline.toml`:
 
 ```toml
 max_parallel = 1
 ```
 
-The dispatcher uses the smaller of `-j` and that key for this project's
-tickets. The key is read from HEAD, so a ticket branch cannot raise its own
-cap.
+The dispatcher uses the smaller of `-j`, this project's share of it, and
+that key for this project's tickets. The key is read from HEAD, so a ticket
+branch cannot raise its own cap. Two dispatchers on the same host -- a
+`pipeline start` beside a `pipeline run` -- each get their own `-j`; the
+budget is not host-wide.
 
 Each ticket gets its own git worktree under `.worktrees/<ID>`, created from
 `base` and removed when the ticket reaches a terminal stage. Two tickets cannot

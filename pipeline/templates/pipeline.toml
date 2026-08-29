@@ -43,9 +43,10 @@ test_suite_without_new  = "pytest {test:--deselect }"
 # The branch tickets are cut from, and the one Tier A re-runs {test} against.
 base                    = "main"
 
-# Lowers the daemon's -j for this project's tickets only; it never raises it.
-# A project with no key leaves -j alone. A value below 1 is reported and
-# ignored, and -j stands.
+# Lowers this project's share of the daemon's -j; it never raises it. -j is a
+# machine-wide budget shared across every registered project, and this key
+# lowers this project alone. A project with no key takes its share. A value
+# below 1 is reported and ignored.
 # max_parallel = 1
 
 # One command run in every worktree the dispatcher creates, after

@@ -20,7 +20,7 @@ def main() -> None:
     ap.add_argument("--interval", type=int, default=10)
     ap.add_argument("--harness", default="claude-code")
     ap.add_argument("-j", "--max-parallel", type=int, default=3,
-                    help="agents in flight per project")
+                    help="agents in flight across every registered project")
     ap.add_argument("--socket", help="override the daemon socket path (default: "
                          "$XDG_RUNTIME_DIR/pipeline/daemon.sock, or "
                          "/tmp/pipeline-$UID/daemon.sock when unset)")

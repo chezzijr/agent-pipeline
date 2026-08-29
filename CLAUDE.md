@@ -139,11 +139,16 @@ still worth it: it prints one line per case, and the failure names the case.
   instead -- `pipeline config --sync` is the only way to adopt a later edit. A
   committed edit lands in the ticket's diff, and `.project/pipeline.toml` is in
   `machine.FENCED`, so it parks at `awaiting-merge`.
-- **`-j` is already per project, not machine-wide.** `serve()` passes
-  `states[key]`, one inflight dict per project, so `max_parallel` in
-  `.project/pipeline.toml` only lowers it -- neither number bounds the
-  machine across projects. A bad value is printed and ignored, because a
-  raise from `tick()` would kill `run()`.
+- **`-j` is the dispatcher's machine-wide budget, shared across projects.**
+  `machine_watch()` and `machine_share()` in `pipeline/daemon/supervisor.py`
+  hold every ticked project's `inflight` dict in one map; a project starts a
+  child only while the total across projects is under `-j`, and never more
+  than an equal share of `-j` among the projects that reported demand at
+  their last tick. `serve()` rotates which project ticks first each pass.
+  The budget is per dispatcher PROCESS, so a `pipeline run` beside a
+  `pipeline start` gets its own `-j`. `max_parallel` in
+  `.project/pipeline.toml` still only lowers one project's own number, and a
+  bad value is printed and ignored.
 - **`--add-dir` is inert under `bypassPermissions`** (headless spawns run under
   it) -- the guard's path rule is what confines a stage, not this flag. A
   read-only stage's baseline is two snapshots: `tree_snapshot(wt)` plus
