@@ -12,9 +12,10 @@ from pathlib import Path
 from pipeline.cli import metrics
 from pipeline.cli.client import connect
 from pipeline.core import PipelineError, line_buffer_stdout
-from pipeline.core.config import (CONFIG_TEMPLATE, SKILLS_DIR, TICKET_TEMPLATE,
-                                  config_source, pin_dir, pin_path,
-                                  project_config, selector_failure,
+from pipeline.core.config import (CONFIG_TEMPLATE, TICKET_TEMPLATE,
+                                  config_source, install_skill, mark_skill,
+                                  pin_dir, pin_path, project_config,
+                                  selector_failure, skill_marks, skill_status,
                                   suite_failure, sync_pins)
 from pipeline.core.gate import gate
 from pipeline.core.machine import KNOWN_STAGES, cleared_key
@@ -56,15 +57,28 @@ def cmd_init(args) -> None:
     # Every packaged skill, not a named one: a skill added to
     # `pipeline/templates/skills/` should reach the projects `init` scaffolds
     # without a second edit here. Each is kept if the project customised it,
-    # exactly as `.project/pipeline.toml` is.
-    for src in sorted(SKILLS_DIR.iterdir()):
-        skill = project / ".claude" / "skills" / src.name / "SKILL.md"
-        if skill.exists():
-            print(f"  {src.name} skill already at {skill} -- kept")
-        else:
-            skill.parent.mkdir(parents=True, exist_ok=True)
-            skill.write_text((src / "SKILL.md").read_text())
-            print(f"  installed the {src.name} skill at {skill}")
+    # exactly as `.project/pipeline.toml` is -- `init` never overwrites
+    # (DEC-056); only `pipeline skills --refresh` writes.
+    KEPT = {
+        "current": "  {name} skill already at {dst} -- kept",
+        "linked": "  {name} skill already at {dst} -- kept "
+                  "(a symlink to the packaged template)",
+        "stale": "  {name} skill at {dst} is stale -- kept; run "
+                 "pipeline --project {project} skills --refresh",
+        "customised": "  {name} skill at {dst} differs from the packaged "
+                      "template -- kept (customised)",
+        "unknown": "  {name} skill at {dst} differs from the packaged "
+                   "template -- kept (no install record; skills --refresh "
+                   "--force overwrites it)",
+    }
+    for name, dst, state in skill_status(project):
+        if state == "absent":
+            install_skill(project, name)
+            print(f"  installed the {name} skill at {dst}")
+            continue
+        if state == "current" and name not in skill_marks(project):
+            mark_skill(project, name, dst.read_text())
+        print(KEPT[state].format(name=name, dst=dst, project=project))
     # `--private` is for a shared repo where you are the only one running the
     # pipeline. It writes `.git/info/exclude`, which is per-clone and never
     # committed, so nothing about this tool reaches a teammate's diff. A team
