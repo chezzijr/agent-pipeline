@@ -170,6 +170,13 @@ def transition(stage: str, result: str, counters: dict, klass: str = "bugfix"):
             # the Tier B agent rejected the plan. This is the verdict
             # `plan_validation_attempts` bounds bad plans against.
             return charge("plan_validation_attempts", "planning")
+        case ("plan-validation", "environment"):
+            # the suite is red on base too, so it is neither a bad plan nor a
+            # formatting slip -- no re-plan can fix an environment that is
+            # already broken on base. No counter is charged. This row is
+            # explicit rather than left to the unknown-pair fallback, which
+            # would escalate identically but without a row a reader can find.
+            return "escalated", c
         case ("revalidating", "ok"):
             return forgive("stale_regate", "implementing")
         case ("revalidating", "fail"):
