@@ -1918,6 +1918,7 @@ def test_a_spawn_that_keeps_failing_escalates_one_ticket_and_keeps_the_loop():
 
 def test_environment_only_classifies_a_suite_red_on_base_and_nothing_else():
     from pipeline.core.gate import environment_only, ENVIRONMENT_MARK
+    from pipeline.daemon.supervisor import gate_result
     env = [ENVIRONMENT_MARK + "suite excluding `t` is RED -- pre-existing "
            "breakage, and it is RED on base `main` too"]
     assert environment_only(env) is True
@@ -1925,3 +1926,9 @@ def test_environment_only_classifies_a_suite_red_on_base_and_nothing_else():
     assert environment_only(env + ["`files_declared` is empty"]) is False
     assert environment_only(
         ["the plan quotes " + ENVIRONMENT_MARK + " in its own output"]) is False
+
+    assert gate_result(False, env, "plan-validation") == "environment"
+    assert gate_result(False, env, "revalidating") == "fail"
+    assert gate_result(
+        False, env + ["`files_declared` is empty"], "plan-validation") == "bad-plan"
+    assert gate_result(True, [], "plan-validation") == "ok"

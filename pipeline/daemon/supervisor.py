@@ -21,7 +21,7 @@ from pipeline.core.config import (cap_config, compose_prompt,
                                   render, stage_cap, stage_config,
                                   stage_settings)
 from pipeline.core.fence import fenced_touches
-from pipeline.core.gate import gate, plan_steps, structural_only
+from pipeline.core.gate import environment_only, gate, plan_steps, structural_only
 from pipeline.core.machine import (CLEANUP_STAGES, CONTROL_FIELDS,
                                    HUMAN_GATES, MAX_ATTEMPTS, TERMINAL,
                                    apply_claims, bound_for, conflict_holder,
@@ -961,12 +961,19 @@ def read_findings(rec: dict, code: int) -> tuple[bool, list[str]]:
 
 def gate_result(ok: bool, failures: list[str], stage: str) -> str:
     """The verdict string a Tier A gate's outcome charges. Only `plan-validation`
-    splits `fail` in two: `revalidating` always gets `fail`, because
-    `("revalidating", "bad-plan")` is an unknown pair that would escalate a
-    stale plan instead of charging `stale_regate` (DEC-029)."""
+    splits `fail` into three: `structural` findings keep `fail`, an all-
+    `environment` list of findings (the suite red on base too, TICKET-089)
+    returns `environment`, and anything else is `bad-plan`. `revalidating`
+    always gets `fail`, because `("revalidating", "bad-plan")` and
+    `("revalidating", "environment")` are both unknown pairs that would
+    escalate a stale plan instead of charging `stale_regate` (DEC-029)."""
     if ok:
         return "ok"
-    if stage == "plan-validation" and not structural_only(failures):
+    if stage != "plan-validation":
+        return "fail"
+    if environment_only(failures):
+        return "environment"
+    if not structural_only(failures):
         return "bad-plan"
     return "fail"
 
