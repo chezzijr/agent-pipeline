@@ -300,6 +300,17 @@ still worth it: it prints one line per case, and the failure names the case.
   `test_suite_without_new` runs once for all of them, and `{test:--deselect }`
   is how a flag that takes one value at a time (like pytest's `--deselect`)
   excludes them all in that single run.
+- **A transient `fork` EAGAIN must not end a stage or the loop.**
+  `retry_eagain()` in `pipeline/core/worktree.py` retries a `BlockingIOError`
+  3 times with 0.25/0.5/1.0 s backoff, and every spawn primitive goes through
+  it -- both `subprocess.Popen` calls in `pipeline/daemon/supervisor.py`,
+  `subprocess.run` in `run_cmd()`, and `pty.fork()` in `pipeline/pty/host.py`.
+  `run()` catches per tick like `serve()` does, so an error that outlives the
+  retries escalates one ticket through `bail()` and never reaches `finally:
+  shut_down(project, inflight)`. Two consequences: a new spawn primitive that
+  skips the helper reopens TICKET-086, and a test that detects a runaway loop
+  by raising from a fake `tick()` must raise a `BaseException` subclass, or
+  either catch eats it and the test hangs instead of failing.
 
 ## Conventions
 
