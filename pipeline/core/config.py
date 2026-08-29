@@ -14,7 +14,7 @@ import tempfile
 import tomllib
 from pathlib import Path
 
-from pipeline.core import PipelineError
+from pipeline.core import PipelineError, notice_once
 from pipeline.core.machine import USD_SCALED, cap_for
 from pipeline.core.ticket import split_frontmatter, write_atomic
 from pipeline.core.worktree import git_ignored, head_file, run_cmd
@@ -78,10 +78,11 @@ def cap_config(stage: str, cfg: dict, project: Path | None, counters: dict) -> d
     if want is None:
         pinned = stage in USD_SCALED and "max_usd" in override
         if pinned:
-            print(
+            notice_once(
                 f"{stage}: max_usd={override['max_usd']} is set without "
                 f"scale_usd, so this stage will not scale its cap with plan "
-                f"size. Add scale_usd = true if that was not the intent."
+                f"size. Add scale_usd = true if that was not the intent.",
+                "cap-pin", str(project), stage,
             )
         want = stage in USD_SCALED and "max_usd" not in override
     return {**cfg, "counters": counters} if want else cfg

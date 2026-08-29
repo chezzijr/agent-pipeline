@@ -6,7 +6,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from pipeline.core import PipelineError
+from pipeline.core import PipelineError, reset_notices
 from pipeline.core.config import (cap_config, format_test_cmd,
                                   format_tests_cmd, harness, pin_dir,
                                   pin_path, project_config,
@@ -103,6 +103,35 @@ def test_pinning_max_usd_with_scale_usd_does_not_warn(capsys):
                {"plan_files": 15, "plan_steps": 40})
     out = capsys.readouterr().out
     assert out == ""
+
+
+def test_the_pinned_cap_warning_prints_once_per_process(capsys):
+    """The pinned-cap warning is a fact about the project's config, not
+    about one review, so a second `cap_config()` call for the same project
+    and stage must not reprint it (TICKET-096)."""
+    reset_notices()
+    d, sh = git_project()
+    with open(d / ".project" / "pipeline.toml", "a") as f:
+        f.write("[stages.review]\nmax_usd = 9\n")
+    sh("git add -A && git commit -qm config")
+    cap_config("review", stage_config("review", d), d,
+               {"plan_files": 15, "plan_steps": 40})
+    cap_config("review", stage_config("review", d), d,
+               {"plan_files": 15, "plan_steps": 40})
+    out = capsys.readouterr().out
+    assert out.count("max_usd") == 1, (
+        f"expected the pinned-cap warning once per process, got: {out!r}")
+
+    d2, sh2 = git_project()
+    with open(d2 / ".project" / "pipeline.toml", "a") as f:
+        f.write("[stages.quick-review]\nmax_usd = 9\n")
+    sh2("git add -A && git commit -qm config")
+    cap_config("quick-review", stage_config("quick-review", d2), d2,
+               {"plan_files": 15, "plan_steps": 40})
+    out2 = capsys.readouterr().out
+    assert out2.count("max_usd") == 1, (
+        f"expected a second project and stage to warn once too, got: "
+        f"{out2!r}")
 
 
 def test_the_project_decides_which_stages_scale_their_cap():
