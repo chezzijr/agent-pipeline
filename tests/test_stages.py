@@ -407,6 +407,19 @@ def test_the_config_template_documents_worktree_setup():
         f"{C.CONFIG_TEMPLATE} does not document worktree_teardown")
 
 
+def test_the_build_cache_docs_warn_that_a_key_must_exclude_the_checkout_path():
+    """TICKET-097: `README.md`, `CONFIG_TEMPLATE` and the pipeline-config
+    skill all tell an agent to key a build cache per checkout, but none
+    say a cache is shareable across worktrees only if its key excludes the
+    checkout path -- so a content-addressed cache (sccache) that looks
+    shareable silently misses on every ticket."""
+    skill = C.SKILLS_DIR / "pipeline-config" / "SKILL.md"
+    readme = Path(__file__).resolve().parent.parent / "README.md"
+    for p in (readme, C.CONFIG_TEMPLATE, skill):
+        text = p.read_text()
+        assert "shareable" in text, f"{p} does not say when a cache is shareable"
+
+
 def test_stage_config_can_take_a_per_project_override(tmp_path):
     """TICKET-038: `stage_config()` resolves against the packaged stage only,
     with no way for a project to add a model, tool or skill of its own. A
