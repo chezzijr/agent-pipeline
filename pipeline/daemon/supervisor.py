@@ -13,7 +13,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from pipeline import __version__
-from pipeline.core import PipelineError
+from pipeline.core import PipelineError, notice_once
 from pipeline.core.config import (cap_config, compose_prompt,
                                   format_tests_cmd, harness, is_readonly,
                                   mcp_config, mcp_servers, project_config,
@@ -420,6 +420,11 @@ def spawn(project: Path, wt: Path, tid: str, stage: str, hcfg: dict,
     # second question -- a client subscribed right now. A TUI that attaches
     # after the spawn gets a headless stage, deliberately: the alternative is
     # holding a ticket for a human who may never arrive.
+    #
+    # The notice states a fact about the setup rather than about the
+    # ticket, so it is keyed by project, stage and reason and printed once
+    # per process (TICKET-096). The ticket id is gone from the message on
+    # purpose, because a line printed once must not name one ticket.
     attached = (poller.watchers(str(project.resolve()))
                 if getattr(poller, "attachable", False) else 0)
     interactive = cfg.get("mode") == "interactive" and attached > 0
@@ -427,9 +432,10 @@ def spawn(project: Path, wt: Path, tid: str, stage: str, hcfg: dict,
         why = ("nothing can attach to it here"
                if not getattr(poller, "attachable", False)
                else "no client is attached")
-        print(f"  {tid}: `{stage}` is interactive, but {why} -- running "
-              f"headless (leave `pipeline tui` open before the stage starts "
-              f"to steer it)")
+        notice_once(f"  {project}: `{stage}` is interactive, but {why} -- "
+                    f"running headless (leave `pipeline tui` open before "
+                    f"the stage starts to steer it). Said once per process.",
+                    "headless", str(project), stage, why)
     session = str(uuid.uuid4())
     logs = project / ".project" / "logs"
     logs.mkdir(parents=True, exist_ok=True)
