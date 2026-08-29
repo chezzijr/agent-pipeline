@@ -1,5 +1,7 @@
 """The transition table's bounds, the claims table, and overlap ordering.
 Pure functions: nothing here touches the disk."""
+import inspect
+
 from pipeline.core import config as C
 from pipeline.core import machine as M
 
@@ -320,6 +322,18 @@ def test_a_structural_gate_failure_charges_its_own_counter():
     assert "structural_gate_failures" not in M.SIZE_SCALED
     assert all("structural_gate_failures" not in bounds
                for bounds in M.BOUNDS.values())
+
+
+def test_a_missing_test_file_is_an_enumerated_row_that_escalates():
+    """`transition("plan-validation", "no-test-file", {}, "bugfix")` already
+    returns `('escalated', {})` through the unknown-pair fallback at
+    `5465a01`, so the first two asserts pass vacuously and the source assert
+    is the only part that fails before the row is added."""
+    nxt, c = t("plan-validation", "no-test-file")
+    assert nxt == "escalated"
+    assert c == {}
+    assert '"no-test-file"' in inspect.getsource(M.transition), (
+        "the pair must be an enumerated row, not the unknown-pair fallback")
 
 
 def test_the_size_scaled_bound_has_a_ceiling_and_spares_the_dispatchers_counters():

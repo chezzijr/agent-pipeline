@@ -170,6 +170,11 @@ def transition(stage: str, result: str, counters: dict, klass: str = "bugfix"):
             # the Tier B agent rejected the plan. This is the verdict
             # `plan_validation_attempts` bounds bad plans against.
             return charge("plan_validation_attempts", "planning")
+        case ("plan-validation", "no-test-file"):
+            # the ticket's `test_file` names no file. `CLAIMS` gives that
+            # field to `triage` alone, so no counter is charged and no stage
+            # is retried -- a human repairs the field or re-runs triage.
+            return "escalated", counters
         case ("revalidating", "ok"):
             return forgive("stale_regate", "implementing")
         case ("revalidating", "fail"):
