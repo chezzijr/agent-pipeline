@@ -1080,3 +1080,28 @@ def test_a_suite_red_identically_on_base_does_not_charge_plan_validation_attempt
         f"suite failed identically on base too but still charged "
         f"plan_validation_attempts: {counters}")
     shutil.rmtree(d, ignore_errors=True)
+
+
+def test_a_suite_red_only_in_the_worktree_still_charges_the_plan():
+    """TICKET-089: base is green, so the environment verdict must not fire --
+    today's verdict and today's charge both stand."""
+    d, wt = _git_ticket_project("buggy\n", "buggy\n")
+    (d / ".project" / "pipeline.toml").write_text(
+        'test_one = "echo test_broken; exit 1"\n'
+        'test_suite = "true"\n'
+        'test_suite_without_new = "! test -f broken"\n'
+        'base = "main"\n')
+    subprocess.run("git add -A && git commit -qm cfg", shell=True, cwd=d,
+                   capture_output=True, text=True)
+    (wt / "broken").write_text("")
+    subprocess.run("git add -A && git commit -qm broken", shell=True, cwd=wt,
+                   capture_output=True, text=True)
+    ok, failures = gate(d, "TICKET-001", workdir=wt)
+    assert not ok
+    assert any("RED -- pre-existing breakage" in f for f in failures), failures
+    assert not any(f.startswith("ENVIRONMENT: ") for f in failures), failures
+    res = gate_result(ok, failures, "plan-validation")
+    assert res == "bad-plan"
+    _, counters = transition("plan-validation", res, {})
+    assert counters["plan_validation_attempts"] == 1
+    shutil.rmtree(d, ignore_errors=True)
