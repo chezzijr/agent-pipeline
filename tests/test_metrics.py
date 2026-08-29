@@ -338,3 +338,19 @@ def test_render_names_its_project_scope_and_points_a_gate_failure_at_extra_md():
         assert ".extra.md" in text, text
     finally:
         conn.close()
+
+
+def test_render_says_all_and_counts_the_projects_it_summed():
+    s = _log()
+    _at(s, BASE + 0, "stage_end", ticket="TICKET-100", stage="planning",
+       result="ok", next_stage="review", exit_code=0)
+    _at(s, BASE + 1, "stage_end", ticket="TICKET-101", stage="planning",
+       result="ok", next_stage="review", exit_code=0, project="/other")
+
+    conn = metrics.connect(s.path)
+    try:
+        text = metrics.render(metrics.collect(conn))
+        assert "project: all (2 in this log)" in text, text
+    finally:
+        conn.close()
+    s.close()

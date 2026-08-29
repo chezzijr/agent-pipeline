@@ -391,11 +391,24 @@ def parked_summary(conn: sqlite3.Connection, since: float = 0.0,
             "by_gate": by_gate}
 
 
+# -- header: the project scope, not a seventh view --------------------------
+def project_scope(conn: sqlite3.Connection, since: float = 0.0,
+                  project: str | None = None) -> dict:
+    # A header over the same window every view queries, not a seventh view.
+    # The count comes from the log itself, not registry.projects(), so a
+    # registered project with no events in this window cannot inflate it.
+    return {"project": project,
+            "projects": conn.execute(
+                _EV + "SELECT COUNT(DISTINCT project) FROM ev",
+                {"since": since, "project": project}).fetchone()[0]}
+
+
 # -- everything, once -------------------------------------------------------
 def collect(conn: sqlite3.Connection, since: float = 0.0,
            project: str | None = None) -> dict:
     per_merged, per_merged_estimated = cost_per_merged(conn, since, project)
     return {
+        "scope": project_scope(conn, since, project),
         "escalation": escalation_rates(conn, since, project),
         "review_loop_distribution": review_loop_distribution(conn, since, project),
         "cost": {"per_merged": per_merged, "per_merged_estimated": per_merged_estimated,
@@ -440,6 +453,14 @@ def render(data: dict) -> str:
     cost_by_stage_map = {r["stage"]: r for r in data["cost"]["by_stage"]}
     stages = sorted(set(esc_by_stage) | set(cost_by_stage_map))
     any_estimated = False
+
+    scope = data["scope"]
+    if scope["project"]:
+        out.append(f"project: {scope['project']}")
+    else:
+        out.append(f"project: all ({scope['projects']} in this log) "
+                  f"-- filter with --project PATH|name")
+    out.append("")
 
     out.append(f"{'stage':<17} {'runs':>4} {'escalated':>9} {'rate':>6} {'p50 cost':>10}"
                f" {'turns':>6} {'out tok':>8} {'think':>7} {'cache rd':>9}")
