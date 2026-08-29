@@ -76,6 +76,35 @@ def test_a_project_can_ask_for_scaling_on_top_of_its_own_cap():
     assert "--max-budget-usd 11" in cmd(cfg)
 
 
+def test_pinning_max_usd_without_scale_usd_warns(capsys):
+    """A project that sets `max_usd` on a USD_SCALED stage without also
+    setting `scale_usd` silently opts that stage out of scaling
+    (TICKET-095). cap_config() must print one line naming the pinned cap
+    and the scaling it turned off, so the operator can add
+    `scale_usd = true` if that was not the intent."""
+    d, sh = git_project()
+    with open(d / ".project" / "pipeline.toml", "a") as f:
+        f.write("[stages.review]\nmax_usd = 9\n")
+    sh("git add -A && git commit -qm config")
+    cap_config("review", stage_config("review", d), d,
+               {"plan_files": 15, "plan_steps": 40})
+    out = capsys.readouterr().out
+    assert "max_usd" in out and "9" in out, (
+        f"expected a warning naming the pinned max_usd=9 and the scaling "
+        f"it disabled, got: {out!r}")
+
+
+def test_pinning_max_usd_with_scale_usd_does_not_warn(capsys):
+    d, sh = git_project()
+    with open(d / ".project" / "pipeline.toml", "a") as f:
+        f.write("[stages.review]\nmax_usd = 9\nscale_usd = true\n")
+    sh("git add -A && git commit -qm config")
+    cap_config("review", stage_config("review", d), d,
+               {"plan_files": 15, "plan_steps": 40})
+    out = capsys.readouterr().out
+    assert out == ""
+
+
 def test_the_project_decides_which_stages_scale_their_cap():
     """Only the stages in `USD_SCALED` scale by default, and a project can
     opt a scaled stage back out with `scale_usd = false`."""
