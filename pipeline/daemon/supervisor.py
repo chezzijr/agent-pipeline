@@ -21,7 +21,7 @@ from pipeline.core.config import (cap_config, compose_prompt,
                                   render, stage_cap, stage_config,
                                   stage_settings)
 from pipeline.core.fence import fenced_touches
-from pipeline.core.gate import gate, plan_steps, structural_only
+from pipeline.core.gate import gate, missing_test_file, plan_steps, structural_only
 from pipeline.core.machine import (CLEANUP_STAGES, CONTROL_FIELDS,
                                    HUMAN_GATES, MAX_ATTEMPTS, TERMINAL,
                                    apply_claims, bound_for, conflict_holder,
@@ -961,6 +961,11 @@ def gate_result(ok: bool, failures: list[str], stage: str) -> str:
     stale plan instead of charging `stale_regate` (DEC-029)."""
     if ok:
         return "ok"
+    # Checked before structural_only(), and only at plan-validation (DEC-065):
+    # a ticket whose plan is ALSO bad still escalates instead of charging a
+    # counter no stage can spend.
+    if stage == "plan-validation" and missing_test_file(failures):
+        return "no-test-file"
     if stage == "plan-validation" and not structural_only(failures):
         return "bad-plan"
     return "fail"

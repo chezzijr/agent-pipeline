@@ -494,13 +494,18 @@ def test_a_bound_escalation_emits_an_escalated_event():
     agent spawned, `finish()` on the gate child is what records that the
     stage ran at all.
     """
-    d, _ = git_project()
+    d, sh = git_project()
+    (d / "test_thing.py").write_text("")
+    sh("git add test_thing.py && git commit -qm 'the test file'")
     path = d / ".project/tickets/TICKET-001.md"
     # one attempt already spent; `bugfix` has a bound of 2
     path.write_text(FIXTURE.replace("counters: {}",
                                     "counters: {plan_validation_attempts: 1}"))
     s = Store(Path(tempfile.mkdtemp()) / "events.db")
-    # the gate fails: FIXTURE's `test_file` does not exist in this checkout
+    # the gate fails because the project's `test_one` command exits 0, so the
+    # reproduction test does not fail -- it no longer fails on a missing
+    # `test_thing.py`, since that route now escalates without charging and
+    # this test needs the bound reached.
     did, rec = supervisor.start(d, path, harness("fake"), {}, None, s.emitter(str(d)))
     rec["proc"].wait()
     supervisor.finish(d, rec, s.emitter(str(d)))
@@ -1412,7 +1417,9 @@ def test_a_failing_gate_child_sends_the_ticket_back_to_planning():
     """A failed Tier A gate charges `plan_validation_attempts` and lands the
     ticket at `planning`, exactly like the inline gate used to -- and it must
     still write the one `stage_end` view 1 counts as a `plan-validation` run."""
-    d, sh = git_project()   # no test_thing.py committed -> Tier A fails
+    d, sh = git_project()
+    (d / "test_thing.py").write_text("")
+    sh("git add test_thing.py && git commit -qm 'the test file'")
     path = d / ".project/tickets/TICKET-001.md"
     path.write_text(FIXTURE)
     s = Store(Path(tempfile.mkdtemp()) / "events.db")
@@ -1555,9 +1562,28 @@ def test_a_gate_verdict_picks_its_result_string():
         False, ["`files_declared` is empty"], "plan-validation") == "fail"
     assert supervisor.gate_result(
         False, ["test file /x/test_thing.py does not exist"],
-        "plan-validation") == "bad-plan"
+        "plan-validation") == "no-test-file"
     assert supervisor.gate_result(
         False, ["`files_declared` is empty"], "revalidating") == "fail"
+
+
+def test_a_missing_test_file_escalates_instead_of_charging_planning():
+    """A `test_file` naming no file is a triage typo, not a bad plan: it
+    escalates through its own verdict and charges neither planning
+    counter. `revalidating` keeps `fail` per DEC-065, so `stale_regate`
+    still charges there."""
+    from pipeline.core.gate import missing_test_file
+
+    assert missing_test_file(["test file /x/vm does not exist"]) is True
+    assert missing_test_file(["unusable frontmatter: x"]) is False
+    assert missing_test_file([]) is False
+
+    assert supervisor.gate_result(
+        False, ["test file /x/vm does not exist"],
+        "plan-validation") == "no-test-file"
+    assert supervisor.gate_result(
+        False, ["test file /x/vm does not exist"],
+        "revalidating") == "fail"
 
 
 def test_a_tier_b_rejection_charges_the_plan_not_the_structural_counter():

@@ -136,6 +136,9 @@ STRUCTURAL_MARKS = (
     UNMATCHABLE_MARK,  # DEC-065: a new structural finding needs its own mark
 )
 
+# No other `gate()` finding opens with these two words.
+MISSING_TEST_MARK = "test file "
+
 
 def unmatchable(expect: str) -> str | None:
     """Why `expect` can never match a second run's output, or `None` if it
@@ -160,6 +163,15 @@ def structural_only(failures: list[str]) -> bool:
     Empty is False: no findings is a PASS, not this function's question.
     """
     return bool(failures) and all(f.startswith(STRUCTURAL_MARKS) for f in failures)
+
+
+def missing_test_file(failures: list[str]) -> bool:
+    """Does `failures` include a `test_file` naming no file?
+
+    That is a triage typo, not a bad plan, and `CLAIMS` gives the
+    `test_file` field to `triage` alone, so no re-plan can repair it.
+    """
+    return any(f.startswith(MISSING_TEST_MARK) for f in failures)
 
 
 def _cites(text: str, path: str) -> bool:
@@ -382,7 +394,7 @@ def gate(project: Path, tid: str, workdir: Path | None = None) -> tuple[bool, li
         for test in tests:
             test_path = wd / test.split("::")[0]
             if not test_path.is_file():
-                findings.append(f"test file {test_path} does not exist")
+                findings.append(f"{MISSING_TEST_MARK}{test_path} does not exist")
             else:
                 runnable.append(test)
         # `reproduced`, not `failed`: `gate()` binds that name below for
