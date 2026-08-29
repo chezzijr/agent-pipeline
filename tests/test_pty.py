@@ -7,6 +7,7 @@ plausible-looking implementation breaks: **detaching must not kill the child.**
 import base64
 import json
 import os
+import pty
 import socket
 import tempfile
 import time
@@ -524,3 +525,26 @@ def test_the_geometry_marker_round_trips_and_clamps():
     s = host.Screen(4, 20)
     s.feed(host.geom_marker(40, 124) + b"hi")
     assert s.display[0].strip() == "hi"
+
+
+def test_an_interactive_spawn_survives_a_transient_blockingioerror_from_fork():
+    calls = {"n": 0}
+    real_fork = pty.fork
+
+    class Shim:
+        def fork(self):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise BlockingIOError(11, "Resource temporarily unavailable")
+            return real_fork()
+
+    orig = host.pty
+    host.pty = Shim()
+    try:
+        proc, pipe = host.start("printf hello; exit 0", Path(tempfile.mkdtemp()),
+                                dict(os.environ, TERM="xterm-256color"))
+        assert calls["n"] == 2
+        assert proc.wait(timeout=5) is not None
+        pipe.close()
+    finally:
+        host.pty = orig

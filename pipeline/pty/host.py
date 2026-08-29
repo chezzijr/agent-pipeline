@@ -26,6 +26,8 @@ import time
 
 import pyte
 
+from pipeline.core.worktree import retry_eagain
+
 ROWS, COLS = 40, 120
 MAX_DIM = 1000
 GEOM_OSC = re.compile(rb"\x1b\]9999;(\d{1,4});(\d{1,4})\x07")
@@ -166,7 +168,9 @@ def start(cmd: str, cwd, env: dict, rows: int = ROWS, cols: int = COLS):
     second interactive stage would inherit the first one's master and could
     type into another ticket's permission prompt, so we clear it by hand.
     """
-    pid, fd = pty.fork()
+    # retry_eagain runs in the parent only: the child returns from
+    # pty.fork() with pid 0 and never raises there.
+    pid, fd = retry_eagain(pty.fork)
     if pid == 0:                      # child: nothing here may return
         try:
             os.chdir(str(cwd))
