@@ -259,6 +259,27 @@ def _base_verdict(test: str, node: str, base: str, code: int, out: str) -> str:
             f"already fixed upstream\n```\n{out[-1200:]}\n```")
 
 
+def _unsafe_rel(tests: list[str]) -> str | None:
+    """The first of `tests` whose file half is not a plain relative path, or
+    `None`. SAFE_TEST bans shell metacharacters, not traversal -- and unlike
+    the branch run, which only reads, copying onto a base checkout WRITES
+    the path."""
+    for test in tests:
+        rel = test.split("::")[0]
+        if ".." in rel or rel.startswith("/"):
+            return test
+    return None
+
+
+def _copy_tests(wd: Path, base_wt: Path, tests: list[str]) -> None:
+    """Copy each test file `tests` names, from `wd` onto `base_wt`, once per
+    distinct file even when several node ids share it."""
+    for rel in dict.fromkeys(x.split("::")[0] for x in tests):
+        dst = base_wt / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(wd / rel, dst)
+
+
 def _base_findings(project: Path, cfg: dict, wd: Path,
                    tests: list[str]) -> list[str]:
     """A test that fails in the ticket's worktree proves the bug is HERE.
@@ -271,13 +292,12 @@ def _base_findings(project: Path, cfg: dict, wd: Path,
     if wd.resolve() == project.resolve():
         return ["ok: base check skipped -- no ticket worktree was given, so "
                 "there is no branch to compare against base"]
-    for test in tests:
-        rel = test.split("::")[0]
-        if ".." in rel or rel.startswith("/"):
-            # SAFE_TEST bans shell metacharacters, not traversal -- and unlike
-            # the branch run, which only reads, this one WRITES the path.
-            return [f"`{test}` is not a plain relative path -- refusing to copy "
-                    f"it into a checkout of base"]
+    unsafe = _unsafe_rel(tests)
+    if unsafe:
+        # SAFE_TEST bans shell metacharacters, not traversal -- and unlike
+        # the branch run, which only reads, this one WRITES the path.
+        return [f"`{unsafe}` is not a plain relative path -- refusing to copy "
+                f"it into a checkout of base"]
     base = base_ref(cfg)
     named = " ".join(f"`{x}`" for x in tests)
     verdicts = []
@@ -285,10 +305,7 @@ def _base_findings(project: Path, cfg: dict, wd: Path,
         if base_wt is None:
             return [f"could not check out base `{base}` to re-run {named}"
                     f"\n```\n{err[-1200:]}\n```"]
-        for rel in dict.fromkeys(x.split("::")[0] for x in tests):
-            dst = base_wt / rel
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(wd / rel, dst)
+        _copy_tests(wd, base_wt, tests)
         for test in tests:
             code, out = run_cmd(format_test_cmd(cfg["test_one"], test), base_wt)
             verdicts.append(
