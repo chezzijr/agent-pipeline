@@ -1914,3 +1914,14 @@ def test_a_spawn_that_keeps_failing_escalates_one_ticket_and_keeps_the_loop():
     finally:
         supervisor.spawn = orig
         shutil.rmtree(d, ignore_errors=True)
+
+
+def test_environment_only_classifies_a_suite_red_on_base_and_nothing_else():
+    from pipeline.core.gate import environment_only, ENVIRONMENT_MARK
+    env = [ENVIRONMENT_MARK + "suite excluding `t` is RED -- pre-existing "
+           "breakage, and it is RED on base `main` too"]
+    assert environment_only(env) is True
+    assert environment_only([]) is False
+    assert environment_only(env + ["`files_declared` is empty"]) is False
+    assert environment_only(
+        ["the plan quotes " + ENVIRONMENT_MARK + " in its own output"]) is False

@@ -162,6 +162,23 @@ def structural_only(failures: list[str]) -> bool:
     return bool(failures) and all(f.startswith(STRUCTURAL_MARKS) for f in failures)
 
 
+# A second `startswith` allowlist, same shape as `STRUCTURAL_MARKS` and for
+# the same reason (DEC-065): a substantive finding can quote this text in a
+# captured-output fence, and a substring match would let a ticket forge its
+# own escalation.
+ENVIRONMENT_MARK = "ENVIRONMENT: "
+ENVIRONMENT_MARKS = (ENVIRONMENT_MARK,)
+
+
+def environment_only(failures: list[str]) -> bool:
+    """Are every one of `failures` an environment finding -- the suite red on
+    base too, not this branch's doing?
+
+    Empty is False: no findings is a PASS, not this function's question.
+    """
+    return bool(failures) and all(f.startswith(ENVIRONMENT_MARKS) for f in failures)
+
+
 def _cites(text: str, path: str) -> bool:
     """Does `text` name `path`? Substring match, but anchored at a
     non-path/non-word boundary on both sides -- a plain `path in text` lets a
