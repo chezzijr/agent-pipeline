@@ -320,3 +320,21 @@ def test_a_resumed_ticket_reaching_a_terminal_stage_twice_is_counted_once():
     finally:
         conn.close()
     s.close()
+
+
+def test_render_names_its_project_scope_and_points_a_gate_failure_at_extra_md():
+    """TICKET-093: `render()` must say which project(s) it counted, and view
+    4's table must point a repeated gate finding at `.extra.md`, the project
+    rule file that fixes it. Neither line exists today."""
+    s = build_log()
+    db_path = s.path
+    s.close()
+
+    conn = metrics.connect(db_path)
+    try:
+        data = metrics.collect(conn, project="/proj")
+        text = metrics.render(data)
+        assert "/proj" in text, text
+        assert ".extra.md" in text, text
+    finally:
+        conn.close()
