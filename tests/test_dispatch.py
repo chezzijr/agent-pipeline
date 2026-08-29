@@ -1142,6 +1142,34 @@ def test_serve_rotates_which_project_ticks_first():
     assert set(seen[:2]) == set(seen[2:])
 
 
+def test_an_unwatched_project_stops_holding_machine_slots():
+    """The two prunes that keep the machine budget from leaking: dropping a
+    project the dispatcher no longer watches, and dropping one whose
+    directory is gone."""
+    import tempfile
+
+    p1 = Path(tempfile.mkdtemp())
+    p2 = Path(tempfile.mkdtemp())
+
+    supervisor.machine_watch([p1, p2])
+    supervisor.machine_share(p1, {"TICKET-001": {}, "TICKET-002": {}}, 2)
+    assert supervisor.machine_share(p2, {}, 2) == 0, "p1 holds both slots"
+
+    supervisor.machine_watch([p2])
+    assert supervisor.machine_share(p2, {}, 2) == 2, \
+        "an unwatched project must stop holding machine slots"
+
+    supervisor.machine_watch([p1, p2])
+    supervisor.machine_share(p1, {"TICKET-001": {}, "TICKET-002": {}}, 2)
+    shutil.rmtree(p1)
+    assert supervisor.machine_share(p2, {}, 2) == 2, \
+        "a project directory that is gone must stop holding machine slots"
+
+    supervisor.machine_watch([])
+    shutil.rmtree(p1, ignore_errors=True)
+    shutil.rmtree(p2, ignore_errors=True)
+
+
 def test_a_stale_dispatcher_reaps_its_children_before_it_exits():
     """The exit is at a tick boundary with no children running: a stale loop
     stops claiming tickets (`tick()` sees `stopping() is True`) and keeps
