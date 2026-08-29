@@ -908,7 +908,7 @@ def test_a_merged_dispatcher_change_reaches_the_running_loop():
     src = Path(supervisor.__file__)
     before = src.stat().st_mtime
 
-    class Stop(Exception):
+    class Stop(BaseException):     # run() catches Exception around tick()
         pass
 
     d = project()
@@ -993,6 +993,9 @@ def test_a_stale_dispatcher_reaps_its_children_before_it_exits():
     d = project()
     seen, flags, orig_tick = [], [], supervisor.tick
 
+    class Stop(BaseException):     # run() catches Exception around tick()
+        pass
+
     def fake_tick(proj, hcfg, inflight, max_parallel, poller, emit, stopping):
         seen.append(len(seen))
         flags.append(stopping())
@@ -1002,12 +1005,14 @@ def test_a_stale_dispatcher_reaps_its_children_before_it_exits():
         if len(seen) == 2:
             inflight.clear()                          # it finished; shut_down
         if len(seen) >= 4:                            # must not see the fake
-            raise AssertionError("a stale loop never exited")
+            raise Stop("a stale loop never exited")
         return False
 
     supervisor.tick = fake_tick
     try:
         supervisor.run(d, once=False, interval=0, harness_name="fake")
+    except Stop as e:
+        raise AssertionError(str(e))
     finally:
         supervisor.tick = orig_tick
         os.utime(src, (before, before))
@@ -1016,6 +1021,35 @@ def test_a_stale_dispatcher_reaps_its_children_before_it_exits():
     assert len(seen) == 2, f"expected a reaping tick 2, got {len(seen)} ticks"
     assert flags == [False, True], \
         f"a stale loop must stop claiming tickets: stopping() was {flags}"
+
+
+def test_run_does_not_swallow_a_loop_detector_that_subclasses_baseexception():
+    """TICKET-086: `run()` catches `Exception` around `tick()`, so a test
+    that detects a runaway loop by raising from a fake `tick()` must raise
+    a `BaseException` subclass -- an `Exception` one is eaten by that catch
+    and the test hangs at its timeout instead of failing."""
+    d = project()
+
+    class Stop(BaseException):
+        pass
+
+    calls, orig_tick = {"n": 0}, supervisor.tick
+
+    def fake_tick(proj, hcfg, inflight, max_parallel, poller, emit, stopping):
+        calls["n"] += 1
+        raise Stop("a runaway loop detector must reach the test")
+
+    supervisor.tick = fake_tick
+    try:
+        supervisor.run(d, once=True, interval=0, harness_name="fake")
+        raise AssertionError("run() swallowed a BaseException loop detector")
+    except Stop:
+        pass
+    finally:
+        supervisor.tick = orig_tick
+        shutil.rmtree(d, ignore_errors=True)
+
+    assert calls["n"] == 1, f"expected one tick, got {calls['n']}"
 
 
 def test_a_readonly_stage_snapshots_after_the_settings_strip():
