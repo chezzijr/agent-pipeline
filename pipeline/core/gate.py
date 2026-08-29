@@ -359,6 +359,34 @@ def suite_ran(code: int, out: str) -> bool:
     return code in SUITE_FAILED_CODES or bool(SUITE_RAN_RE.search(out))
 
 
+def _base_suite(project: Path, cfg: dict, wd: Path,
+                 tests: list[str]) -> tuple[str | None, str]:
+    """Re-run `test_suite_without_new` on a throwaway checkout of base.
+    Returns `(output, "")` when the suite RAN and FAILED there too --
+    evidence the breakage is not this branch's doing. Returns `(None, why)`
+    otherwise, where `why` is empty when the suite is simply not red on base
+    and non-empty when the question is unproven (no worktree, an unsafe test
+    path, a base checkout that fails, or a run with no evidence it happened)
+    -- callers fail closed on a non-empty `why`."""
+    if wd.resolve() == project.resolve():
+        return None, ("no ticket worktree was given, so there is no branch "
+                       "to compare against base")
+    bad = _unsafe_rel(tests)
+    if bad:
+        return None, f"`{bad}` is not a plain relative path"
+    base = base_ref(cfg)
+    with base_checkout(project, cfg) as (base_wt, err):
+        if base_wt is None:
+            return None, f"base `{base}` could not be checked out: {err[-200:]}"
+        _copy_tests(wd, base_wt, tests)
+        code, out = run_cmd(format_tests_cmd(cfg["test_suite_without_new"], tests), base_wt)
+    if code != 0 and suite_ran(code, out):
+        return out, ""
+    if code == 0:
+        return None, ""
+    return None, f"the suite exited {code} on base `{base}` and reported no test result"
+
+
 def gate(project: Path, tid: str, workdir: Path | None = None) -> tuple[bool, list[str]]:
     """Tier A checks, run in the ticket's checkout. Returns (passed, findings)."""
     path = ticket_path(project, tid)
@@ -502,10 +530,28 @@ def gate(project: Path, tid: str, workdir: Path | None = None) -> tuple[bool, li
                 suite_cmd = format_tests_cmd(cfg["test_suite_without_new"], runnable)
                 code, out = run_cmd(suite_cmd, wd)
                 if code != 0 and suite_ran(code, out):
-                    findings.append(
-                        f"suite excluding {names} is RED -- pre-existing breakage, "
-                        f"fix that first\n```\n{out[-1200:]}\n```"
-                    )
+                    base_out, why = _base_suite(project, cfg, wd, runnable)
+                    if base_out is not None:
+                        findings.append(
+                            f"{ENVIRONMENT_MARK}suite excluding {names} is RED -- "
+                            f"pre-existing breakage, and it is RED on base "
+                            f"`{base_ref(cfg)}` too, so it is not this branch's "
+                            f"doing and no plan can fix it. Fix the environment "
+                            f"or base itself, then `pipeline resume {tid}`"
+                            f"\n```on base\n{base_out[-1200:]}\n```"
+                            f"\n```in the ticket's worktree\n{out[-1200:]}\n```"
+                        )
+                    elif not why:
+                        findings.append(
+                            f"suite excluding {names} is RED -- pre-existing breakage, "
+                            f"fix that first\n```\n{out[-1200:]}\n```"
+                        )
+                    else:
+                        findings.append(
+                            f"suite excluding {names} is RED -- pre-existing breakage, "
+                            f"fix that first\n```\n{out[-1200:]}\n```"
+                            f"\n(base was not consulted: {why})"
+                        )
                 elif code != 0:
                     findings.append(
                         f"could not run the suite excluding {names}: {suite_cmd!r} "
