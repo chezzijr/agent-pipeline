@@ -141,7 +141,7 @@ def cmd_skills(args) -> None:
     if args.force and not args.refresh:
         die("--force applies to --refresh only")
     for name, dst, state in skill_status(project):
-        if state == "absent":
+        if args.refresh and state == "absent":
             install_skill(project, name)
             print(f"{name}: installed at {dst}")
         elif args.refresh and state == "stale":

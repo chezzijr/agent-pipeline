@@ -579,6 +579,23 @@ def test_skills_force_overwrites_a_customised_copy_but_never_a_symlink():
     shutil.rmtree(d, ignore_errors=True)
 
 
+def test_skills_with_no_flags_never_installs_an_absent_copy():
+    """`pipeline skills` with no flags is a report; it must not write. Run
+    against a project directory with no scaffolded skills, it must leave
+    every copy missing and print `absent`, not `installed`."""
+    d = Path(tempfile.mkdtemp())
+    file_ticket = d / ".claude" / "skills" / "file-ticket" / "SKILL.md"
+
+    r = cli(d, "skills")
+    assert r.returncode == 0, r.stderr
+    assert "file-ticket: absent" in r.stdout, r.stdout
+    assert "installed" not in r.stdout, r.stdout
+    assert not file_ticket.exists(), (
+        "`pipeline skills` with no flags installed a copy into an empty project")
+    assert not (d / ".project" / "skills.json").exists()
+    shutil.rmtree(d, ignore_errors=True)
+
+
 def test_a_human_gate_records_the_moment_the_human_acted():
     """View 6 measures time parked in a human gate: entering it is a
     `transition` event, and leaving it was "the next transition on that
