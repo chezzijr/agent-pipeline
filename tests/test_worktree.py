@@ -60,6 +60,28 @@ def test_recreating_a_worktree_never_resets_the_branch():
     shutil.rmtree(d, ignore_errors=True)
 
 
+def test_drop_worktree_runs_worktree_teardown():
+    """`worktree_setup` keys a cache outside the worktree; nothing today ever
+    runs a matching teardown, so `drop_worktree()` must invoke `worktree_teardown`
+    (in the checkout, before it is removed) to reclaim it."""
+    d, sh = git_project()
+    meta = {"id": "TICKET-001", "branch": "ticket/001"}
+    marker = Path(tempfile.mkdtemp()) / "TICKET-001.marker"
+    marker.write_text("keyed cache\n")
+    cfg = {
+        "base": "main",
+        "worktree_setup": "true",
+        "worktree_teardown": f"rm -f {marker}",
+    }
+    wt = W.ensure_worktree(d, meta, cfg)
+    assert wt is not None
+
+    W.drop_worktree(d, meta, cfg)
+
+    assert not marker.exists(), "worktree_teardown never ran: keyed cache survived drop_worktree()"
+    shutil.rmtree(d, ignore_errors=True)
+
+
 def test_project_commands_do_not_inherit_the_dispatchers_venv():
     """Assert the stripping actually happens, rather than passing by luck when
     the suite is run outside a venv."""
