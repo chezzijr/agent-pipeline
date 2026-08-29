@@ -228,6 +228,20 @@ def cmd_reject(args) -> None:
     print(f"{args.id}: -> planning")
 
 
+def cmd_note(args) -> None:
+    """Appends a human note at any stage, escalated included. No control
+    field changes -- a stage already holding a lease sees it only on its
+    next spawn, since the prompt is composed once."""
+    project = proj(args)
+    t = Ticket.find(project, args.id)
+    who = os.environ.get("USER", "human")
+    t.append("human", "note", f"**note from {who}**\n\n{args.text}", by=who)
+    t.save()
+    print(f"{args.id}: note added"
+          + (f" (`{t.stage}` holds a lease; it reaches the stage on its next spawn)"
+             if t.lease else ""))
+
+
 def cmd_answer(args) -> None:
     project = proj(args)
     t = Ticket.find(project, args.id)
@@ -627,6 +641,7 @@ def main() -> None:
     p = sub.add_parser("plan"); p.add_argument("id"); p.set_defaults(fn=cmd_plan)
     p = sub.add_parser("approve"); p.add_argument("id"); p.add_argument("--by"); p.set_defaults(fn=cmd_approve)
     p = sub.add_parser("reject"); p.add_argument("id"); p.add_argument("reason"); p.set_defaults(fn=cmd_reject)
+    p = sub.add_parser("note"); p.add_argument("id"); p.add_argument("text"); p.set_defaults(fn=cmd_note)
     p = sub.add_parser("answer"); p.add_argument("id"); p.add_argument("text"); p.set_defaults(fn=cmd_answer)
     p = sub.add_parser("resume"); p.add_argument("id"); p.add_argument("--stage", required=True); p.add_argument("--grant", nargs="*", metavar="COUNTER[=N]", help="hand back N spent attempts (default 1) on a counter; a grant only subtracts"); p.add_argument("--reset", nargs="*"); p.add_argument("--note", metavar="TEXT", help="a note for the resumed stage; recorded in the ticket thread, attributed to you"); p.set_defaults(fn=cmd_resume)
     p = sub.add_parser("logs"); p.add_argument("id"); p.add_argument("-f", "--follow", action="store_true"); p.set_defaults(fn=cmd_logs)
