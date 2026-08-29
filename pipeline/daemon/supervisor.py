@@ -733,7 +733,12 @@ def start(project: Path, path: Path, hcfg: dict, inflight: dict,
         # an escalated ticket keeps its worktree: the uncommitted state is the
         # evidence the human was escalated to look at
         if stage in CLEANUP_STAGES and worktree(project, t.frontmatter()).is_dir():
-            drop_worktree(project, t.frontmatter())
+            try:
+                cfg = project_config(project)
+            except (PipelineError, ValueError) as e:
+                print(f"  {tid}: no worktree_teardown ({e})")
+                cfg = {}
+            drop_worktree(project, t.frontmatter(), cfg)
             print(f"  cleaned worktree for {tid} ({stage})")
             return True, None
         return False, None
