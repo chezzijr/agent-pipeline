@@ -205,6 +205,32 @@ def test_resume_note_is_optional_and_may_not_be_empty():
     shutil.rmtree(d)
 
 
+def test_note_appends_at_any_stage_without_touching_control_fields():
+    """`pipeline note` should append a human thread entry at ANY stage,
+    escalated included, and leave stage/counters/branch/lease untouched.
+    Today there is no `note` subcommand at all."""
+    d = Path(tempfile.mkdtemp())
+    cli(d, "new", "t")
+    r = cli(d, "resume", "TICKET-001", "--stage", "implementing")
+    assert r.returncode == 0, r.stderr
+    before = Ticket.load(d / ".project/tickets/TICKET-001.md")
+    before_stage, before_counters, before_branch, before_lease = (
+        before.stage, dict(before.counters), before.branch, before.lease)
+
+    r = cli(d, "note", "TICKET-001", "watch out for the flaky cache test")
+    assert r.returncode == 0, (r.returncode, r.stdout, r.stderr)
+
+    after = Ticket.load(d / ".project/tickets/TICKET-001.md")
+    assert after.stage == before_stage, after.stage
+    assert after.counters == before_counters, after.counters
+    assert after.branch == before_branch, after.branch
+    assert after.lease == before_lease, after.lease
+    notes = [e for e in after.thread() if e.kind == "note"
+             and "watch out for the flaky cache test" in e.text]
+    assert len(notes) == 1, after.thread()
+    shutil.rmtree(d)
+
+
 def test_resume_help_and_readme_name_the_note_flag():
     r = subprocess.run([sys.executable, "-m", "pipeline", "resume", "--help"],
                         cwd=ROOT, capture_output=True, text=True)
