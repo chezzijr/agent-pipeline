@@ -777,6 +777,30 @@ def test_the_machine_cap_is_shared_when_both_projects_have_work():
         f"a machine cap of 2 over two busy projects must be 1 each, got {counts}"
 
 
+def test_a_quiet_project_does_not_shrink_a_busy_ones_share():
+    """A quiet project reports no demand, so it must not be counted among the
+    rivals a busy project divides `-j` with."""
+    busy, sh = git_project()
+    for n, fname in (("001", "thing.py"), ("002", "other.py")):
+        (busy / f".project/tickets/TICKET-{n}.md").write_text(
+            FIXTURE.replace("stage: plan-validation", "stage: triage")
+            .replace("id: TICKET-001", f"id: TICKET-{n}")
+            .replace("branch: ticket/001", f"branch: ticket/{n}")
+            .replace("files_declared: [thing.py]", f"files_declared: [{fname}]"))
+    quiet, _ = git_project()
+
+    supervisor.machine_watch([busy, quiet])
+    supervisor.tick(quiet, harness("fake"), {}, 2)
+    inflight = {}
+    supervisor.tick(busy, harness("fake"), inflight, 2)
+
+    count = len(inflight)
+    shutil.rmtree(busy, ignore_errors=True)
+    shutil.rmtree(quiet, ignore_errors=True)
+    assert count == 2, \
+        f"a quiet project takes no share of -j 2, expected 2 children, got {count}"
+
+
 def test_two_tickets_never_merge_in_the_same_tick():
     """Both would `git merge base` against the same base; the first
     `--ff-only` to land moves base, and the second -- a fully verified,
