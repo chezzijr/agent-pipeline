@@ -669,6 +669,19 @@ def test_gate_blocks_a_test_that_passes_on_base():
     shutil.rmtree(d, ignore_errors=True)
 
 
+def test_gate_falls_through_to_base_when_the_worktree_test_already_passes():
+    """TICKET-090: a ticket resumed to `plan-validation` after `implementing`
+    has already landed the fix has a worktree where `test_file` now PASSES.
+    Today that reads as an unresolvable exit-0 ambiguity and the gate can
+    never pass again. It must instead fall through to the base check: base
+    still has the bug, which is the durable proof the branch already fixed
+    it, and the gate must PASS on that."""
+    d, wt = _git_ticket_project("buggy\n", "fixed\n")
+    ok, failures = gate(d, "TICKET-001", workdir=wt)
+    assert ok, failures
+    shutil.rmtree(d, ignore_errors=True)
+
+
 def test_gate_names_both_causes_when_the_test_exits_zero_on_base():
     """The base run carries the branch run's exit-0 ambiguity: `test_one`
     exits 0 on base without printing the node, which is a pass there or a
