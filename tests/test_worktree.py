@@ -82,6 +82,35 @@ def test_drop_worktree_runs_worktree_teardown():
     shutil.rmtree(d, ignore_errors=True)
 
 
+def test_base_checkout_runs_worktree_teardown():
+    """The gate's throwaway checkout of base also runs `worktree_setup`, so it
+    must run a matching `worktree_teardown` too, before the checkout is removed."""
+    d, _ = git_project()
+    marker = Path(tempfile.mkdtemp()) / "base.marker"
+    marker.write_text("keyed cache")
+    cfg = {"base": "main", "worktree_teardown": f"rm -f {marker}"}
+    with W.base_checkout(d, cfg) as (wt, err):
+        assert wt is not None
+        assert marker.exists()
+    assert not marker.exists(), "worktree_teardown never ran in the gate base checkout"
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_a_failing_worktree_teardown_still_removes_the_checkout(capsys):
+    """A teardown failure must not strand the git worktree -- an orphan worktree
+    breaks the ticket resume path, while an unreclaimed cache only costs disk."""
+    d, _ = git_project()
+    meta = {"id": "TICKET-001", "branch": "ticket/001"}
+    cfg = {"base": "main", "worktree_teardown": "exit 3"}
+    W.ensure_worktree(d, meta, cfg)
+
+    W.drop_worktree(d, meta, cfg)
+
+    assert not W.worktree(d, meta).is_dir()
+    assert "worktree_teardown failed" in capsys.readouterr().out
+    shutil.rmtree(d, ignore_errors=True)
+
+
 def test_project_commands_do_not_inherit_the_dispatchers_venv():
     """Assert the stripping actually happens, rather than passing by luck when
     the suite is run outside a venv."""

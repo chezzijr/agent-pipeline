@@ -121,6 +121,10 @@ def base_checkout(project: Path, cfg: dict):
             yield wt, ""
     finally:
         if not code:
+            if cfg.get("worktree_teardown"):
+                code2, out2 = run_cmd(cfg["worktree_teardown"], wt)
+                if code2:
+                    print(f"  worktree_teardown failed in the base checkout: {out2.strip()[:300]}")
             run_cmd(f"git worktree remove --force {shlex.quote(str(wt))}", project)
         shutil.rmtree(tmp, ignore_errors=True)
 
