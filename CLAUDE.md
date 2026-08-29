@@ -120,6 +120,12 @@ still worth it: it prints one line per case, and the failure names the case.
   syntax error also exits non-zero with no test ever run, so `suite_ran()` in
   `pipeline/core/gate.py` gates the pre-existing-breakage verdict on evidence
   of a run, not just the exit code (TICKET-074).
+- **An exit-0 repro run in the worktree falls through to the base run.** A
+  ticket resumed to `plan-validation` after `implementing` landed the fix has
+  a worktree where `test_file` passes, and failing on that made Tier A
+  permanently unsatisfiable. `gate()` reports the exit-0 finding only when
+  the test does not also FAIL on base; failing on base is the durable proof
+  the branch already carries the fix (TICKET-090).
 - **`git worktree add -B` resets the branch.** Never use `-B`: recreating a
   worktree after a resume would silently discard the ticket's commits.
 - **`.project/` is excluded from the read-only tree snapshot**, because writing

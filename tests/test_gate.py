@@ -689,6 +689,29 @@ def test_gate_blocks_a_test_that_passes_on_base():
     shutil.rmtree(d, ignore_errors=True)
 
 
+def test_gate_falls_through_to_base_when_the_worktree_test_already_passes():
+    """TICKET-090: a ticket resumed to `plan-validation` after `implementing`
+    has already landed the fix has a worktree where `test_file` now PASSES.
+    Today that reads as an unresolvable exit-0 ambiguity and the gate can
+    never pass again. It must instead fall through to the base check: base
+    still has the bug, which is the durable proof the branch already fixed
+    it, and the gate must PASS on that."""
+    d, wt = _git_ticket_project("buggy\n", "fixed\n")
+    ok, failures = gate(d, "TICKET-001", workdir=wt)
+    assert ok, failures
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_gate_still_fails_when_the_worktree_and_base_both_pass():
+    """The fall-through credits only a test that FAILS on base, so a branch
+    whose test passes where base's passes too is still not a reproduction."""
+    d, wt = _git_ticket_project("fixed\n", "fixed\n")
+    ok, failures = gate(d, "TICKET-001", workdir=wt)
+    assert not ok, failures
+    assert any("exited 0" in f and "PASSES" in f for f in failures), failures
+    shutil.rmtree(d, ignore_errors=True)
+
+
 def test_gate_names_both_causes_when_the_test_exits_zero_on_base():
     """The base run carries the branch run's exit-0 ambiguity: `test_one`
     exits 0 on base without printing the node, which is a pass there or a
@@ -727,11 +750,13 @@ def test_the_base_run_covers_every_listed_test():
     (wt / "test_thing2.py").write_text("")
     subprocess.run("git add -A && git commit -qm second", shell=True, cwd=wt,
                    capture_output=True, text=True)
-    out = _base_findings(d, project_config(d), wt,
+    out, on_base = _base_findings(d, project_config(d), wt,
                          ["test_thing.py::test_broken",
                           "test_thing2.py::test_broken2"])
     for one in ("test_thing.py::test_broken", "test_thing2.py::test_broken2"):
         assert any(f.startswith(f"ok: `{one}` fails on base") for f in out), out
+    assert set(on_base) == {"test_thing.py::test_broken",
+                            "test_thing2.py::test_broken2"}, on_base
     shutil.rmtree(d, ignore_errors=True)
 
 

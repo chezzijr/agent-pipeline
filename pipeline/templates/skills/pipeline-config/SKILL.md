@@ -185,6 +185,26 @@ ticket's diff, and clears only when the source is touched. Use
 `CARGO_TARGET_DIR=~/.cache/cargo/$(basename $PWD)`, a `ccache` prefix
 per branch, or leave the cache unshared.
 
+Keying is not free: a cold build per ticket, and each keyed directory
+outlives its worktree (18 keys, 9.1G, 2 live worktrees, measured on
+one project). worktree_teardown runs before the dispatcher removes a
+worktree, and is where to reclaim the keyed directory.
+
+**A cache is shareable across worktrees only if its key excludes the checkout path,
+and most keys do not.** `sccache` hashes the rustc
+command line and cargo puts the target dir in it (`--out-dir`,
+`-L dependency=`), so per-checkout target dirs miss on every ticket:
+a build in `.../t1` compiles and stores, the same source in `.../t2`
+misses, and `.../t1` with its artifacts wiped hits. The
+`CARGO_INCREMENTAL=0` it needs also slows rebuilds inside one ticket.
+`ccache` normalises the path away with `base_dir`; most tools cannot.
+
+Three builds decide it for any toolchain: build in worktree A (expect
+a miss); build in B with the same source and flags (a hit means
+shareable); wipe A and rebuild A (a hit confirms the cache works at
+all, which is what makes the second build's miss attributable to the
+key).
+
 ### `worktree_teardown` -- reclaiming what the setup created
 
 Top level, under no table. Nothing ever reclaims what `worktree_setup`

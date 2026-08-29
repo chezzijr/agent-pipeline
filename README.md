@@ -357,6 +357,40 @@ burns validation attempts on it. Key the cache
 (`CARGO_TARGET_DIR=~/.cache/cargo/$(basename $PWD)`, `ccache` with a per-branch
 prefix) or leave it unshared.
 
+Keying is not free. Every ticket pays a cold build, and every keyed
+directory outlives the worktree it was named for -- 18 keys, 9.1G, 2 live
+worktrees, measured on one project. worktree_teardown runs before the
+dispatcher removes a worktree, and is where to reclaim the keyed directory.
+
+**A cache is shareable across worktrees only if its key excludes the checkout path,
+and most keys do not.** A content-addressed compiler cache looks like the
+escape hatch. `sccache` is not one: it hashes the rustc
+command line, and cargo puts the target directory in it (`--out-dir`,
+`-L dependency=`), so the per-checkout target dirs that avoid the
+stale-artifact trap guarantee a miss across tickets. Measured:
+
+```
+build | CARGO_TARGET_DIR              | sccache result
+------+-------------------------------+------------------------
+1st   | .../t1                        | miss (compiles, stores)
+2nd   | .../t2, same source and flags | miss
+3rd   | .../t1 again, artifacts wiped | hit
+```
+
+It also needs `CARGO_INCREMENTAL=0`, which slows repeated builds inside
+one ticket: net negative in both directions. `ccache` can normalise the
+path away (`base_dir`); most tools cannot.
+
+Three builds decide it for any toolchain:
+
+- Build in worktree A. Expect a miss.
+- Build in worktree B, same source and flags. A hit means the cache is
+  shareable across checkouts; a miss means its key carries the checkout
+  path.
+- Wipe A's artifacts and rebuild A. A hit confirms the cache works at
+  all, which is what makes the second build's miss attributable to the
+  key.
+
 Nothing ever reclaims what `worktree_setup` created, unless the project also
 sets `worktree_teardown`:
 
