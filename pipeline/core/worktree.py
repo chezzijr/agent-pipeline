@@ -89,9 +89,13 @@ def ensure_worktree(project: Path, meta: dict, cfg: dict) -> Path | None:
     return wt
 
 
-def drop_worktree(project: Path, meta: dict) -> None:
+def drop_worktree(project: Path, meta: dict, cfg: dict | None = None) -> None:
     wt = worktree(project, meta)
     if wt.is_dir():
+        if (cfg or {}).get("worktree_teardown"):
+            code, out = run_cmd(cfg["worktree_teardown"], wt)
+            if code:
+                print(f"  worktree_teardown failed for {meta['id']}: {out.strip()[:300]}")
         run_cmd(f"git worktree remove --force {shlex.quote(str(wt))}", project)
 
 
