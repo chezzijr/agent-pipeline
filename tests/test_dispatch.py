@@ -1099,6 +1099,49 @@ def test_a_merged_dispatcher_change_ends_the_daemon_loop_too():
     assert len(seen) == 1, f"expected serve() to exit after tick 1, got {len(seen)}"
 
 
+def test_serve_rotates_which_project_ticks_first():
+    """The share stops one project taking the whole cap, but whoever ticks
+    first still gets first refusal on a slot that just freed. `serve()` must
+    rotate which project it ticks first each pass."""
+    import tempfile
+
+    from pipeline.daemon import registry
+    from pipeline.daemon.server import Server
+
+    tmp = Path(tempfile.mkdtemp())
+    p1, p2 = project(), project()
+    store = Store(tmp / "events.db")
+    server = Server(store, tmp / "daemon.sock")
+    seen, orig_tick = [], supervisor.tick
+
+    class Stop(BaseException):     # serve() catches Exception around tick()
+        pass
+
+    def fake_tick(proj, hcfg, *a, **kw):
+        seen.append(str(proj))
+        if len(seen) >= 4:
+            raise Stop("rotation never changed the first project ticked")
+        return False
+
+    supervisor.tick = fake_tick
+    registry.register(p1)
+    registry.register(p2)
+    try:
+        supervisor.serve(0, "fake", 1, store, server, once=False)
+    except Stop:
+        pass
+    finally:
+        supervisor.tick = orig_tick
+        registry.unregister(p1)
+        registry.unregister(p2)
+        shutil.rmtree(p1, ignore_errors=True)
+        shutil.rmtree(p2, ignore_errors=True)
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    assert seen[0] != seen[2], f"pass 2 must not tick the same project first: {seen}"
+    assert set(seen[:2]) == set(seen[2:])
+
+
 def test_a_stale_dispatcher_reaps_its_children_before_it_exits():
     """The exit is at a tick boundary with no children running: a stale loop
     stops claiming tickets (`tick()` sees `stopping() is True`) and keeps

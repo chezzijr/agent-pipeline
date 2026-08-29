@@ -1557,6 +1557,7 @@ def serve(interval: int, harness_name: str, max_parallel: int, store, server,
                socket=str(server.path))
     print(f"pipelined {__version__}: pid {os.getpid()} on {server.path}")
     stale, moved = _source_watcher(), None
+    turn = 0
 
     def release(key: str) -> None:
         shut_down(Path(key), states.pop(key, {}))
@@ -1583,7 +1584,11 @@ def serve(interval: int, harness_name: str, max_parallel: int, store, server,
                     print(f"  {key}: release failed ({e.__class__.__name__}: {e})")
             machine_watch(wanted)   # -j is one budget for all of them
             worked = False
-            for key, proj in wanted.items():
+            keys = list(wanted)
+            keys = keys[turn % len(keys):] + keys[:turn % len(keys)] if keys else keys
+            turn += 1
+            for key in keys:
+                proj = wanted[key]
                 if key not in states:
                     fh = registry.lock(proj)
                     if fh is None:
