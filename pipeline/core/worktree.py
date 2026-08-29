@@ -4,8 +4,31 @@ import shlex
 import shutil
 import subprocess
 import tempfile
+import time
 from contextlib import contextmanager
 from pathlib import Path
+
+EAGAIN_TRIES = 4
+EAGAIN_BACKOFF = 0.25
+
+
+def retry_eagain(fn, tries: int = EAGAIN_TRIES, backoff: float = EAGAIN_BACKOFF, sleep=time.sleep):
+    """Call `fn()`, retrying a transient `BlockingIOError` with backoff.
+
+    `fork` returns EAGAIN when the machine is at its process limit
+    (systemd `TasksMax`, `RLIMIT_NPROC`); Python raises `BlockingIOError` and
+    the condition clears within a second. Every spawn primitive goes through
+    here, so one EAGAIN ends neither the stage, the tick, nor the loop.
+    """
+    for attempt in range(1, tries + 1):
+        try:
+            return fn()
+        except BlockingIOError as e:
+            if attempt == tries:
+                raise
+            delay = backoff * 2 ** (attempt - 1)
+            print(f"  spawn hit EAGAIN ({e}); retry {attempt}/{tries - 1} in {delay:.2f}s")
+            sleep(delay)
 
 
 def project_env() -> dict:

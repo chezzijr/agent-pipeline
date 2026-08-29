@@ -248,3 +248,34 @@ def test_mirror_ticket_is_a_no_op_without_a_worktree():
     assert W.mirror_ticket(d / ".project" / "tickets" / "TICKET-001.md", "x") is None
     assert W.mirror_ticket(d / "f.py", "x") is None
     shutil.rmtree(d, ignore_errors=True)
+
+
+def test_retry_eagain_retries_a_transient_blockingioerror_and_then_returns():
+    calls, slept = {"n": 0}, []
+
+    def flaky():
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise BlockingIOError(11, "Resource temporarily unavailable")
+        return "spawned"
+
+    result = W.retry_eagain(flaky, sleep=slept.append)
+    assert result == "spawned"
+    assert calls["n"] == 3
+    assert slept == [0.25, 0.5]
+
+
+def test_retry_eagain_gives_up_after_the_last_try():
+    calls, slept = {"n": 0}, []
+
+    def always_fails():
+        calls["n"] += 1
+        raise BlockingIOError(11, "Resource temporarily unavailable")
+
+    try:
+        W.retry_eagain(always_fails, sleep=slept.append)
+        raise AssertionError("retry_eagain must re-raise after the last try")
+    except BlockingIOError:
+        pass
+    assert calls["n"] == W.EAGAIN_TRIES == 4
+    assert slept == [0.25, 0.5, 1.0]
