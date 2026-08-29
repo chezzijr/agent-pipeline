@@ -436,6 +436,11 @@ charges `structural_gate_failures` instead, because `plan_validation_attempts`
 bounds bad plans and the gate never judged that plan. It stays at 2 whatever
 the class, the same shape as `lease_expiries` and `no_result`.
 
+A Tier A failure whose findings include `test file <path> does not exist`
+charges nothing at all. `gate_result()` returns `no-test-file` and the ticket
+escalates on the first one. Only `triage` may write `test_file`, so
+re-planning cannot repair it and a counter would only delay the human.
+
 `stale_regate` is the one counter a later pass credits back: a passing
 `revalidating` writes `stale_regate_cleared`, capped at the failures already
 charged, and the bound is compared against the difference. `pipeline resume
