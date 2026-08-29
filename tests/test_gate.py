@@ -151,6 +151,26 @@ def test_a_purely_structural_gate_failure_does_not_charge_a_plan_validation_atte
     shutil.rmtree(d)
 
 
+def test_a_nonexistent_test_file_does_not_charge_a_plan_validation_attempt():
+    """TICKET-087: a `test_file` whose path half names no file on disk (e.g.
+    a Rust module path `vm::tests::foo` with no `vm` file) is a typo triage
+    should have caught, not a bad plan. `structural_only` must read the
+    gate's "test file ... does not exist" finding as structural so
+    `gate_result` returns `fail`, not `bad-plan`, and `plan_validation_attempts`
+    is never charged for it."""
+    d = project(FIXTURE.replace("test_thing.py::test_broken", "vm::tests::foo"))
+    from pipeline.daemon.supervisor import gate_result
+    ok, failures = gate(d, "TICKET-001")
+    assert not ok
+    assert any("does not exist" in f for f in failures), failures
+    result = gate_result(ok, failures, "plan-validation")
+    nxt, counters = transition("plan-validation", result, {})
+    assert counters.get("plan_validation_attempts", 0) == 0, (
+        "a nonexistent test_file charged plan_validation_attempts: "
+        f"{counters}")
+    shutil.rmtree(d)
+
+
 def test_gate_blocks_a_plan_step_citing_an_undeclared_path():
     d = project(FIXTURE.replace("1. fix thing.py", "1. fix other.py"))
     ok, failures = gate(d, "TICKET-001")
