@@ -757,6 +757,25 @@ def test_a_bare_test_placeholder_is_refused_for_a_multi_test_ticket():
     shutil.rmtree(d, ignore_errors=True)
 
 
+def test_a_bare_rest_placeholder_is_refused_for_a_multi_test_ticket():
+    """`{rest}` shares the same substitution regex as `{test}`, `{path}` and
+    `{name}`, so it must share the same bare-placeholder refusal: a bare
+    `{rest}` in `test_suite_without_new` skips one test's rest value and
+    RUNS the other's when the ticket lists more than one test."""
+    d = project(FIXTURE.replace(
+        "test_file: test_thing.py::test_broken",
+        "test_file: [test_thing.py::test_broken, test_thing2.py::test_broken2]"))
+    (d / "test_thing2.py").write_text("")
+    (d / ".project" / "pipeline.toml").write_text(
+        'test_one = "echo {name}; exit 1"\n'
+        'test_suite = "true"\n'
+        'test_suite_without_new = "true --skip {rest}"\n')
+    ok, failures = gate(d, "TICKET-001")
+    assert not ok
+    assert any("{rest:" in f for f in failures), failures
+    shutil.rmtree(d, ignore_errors=True)
+
+
 def test_a_ticket_promoted_from_quick_review_meets_a_gate_it_cannot_pass():
     """`triage` can route a small ticket onto the cheap route: `chore` sets
     `cheap_route` and sends it straight to `implementing`, skipping

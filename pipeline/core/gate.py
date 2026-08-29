@@ -30,7 +30,7 @@ DEC_ID_RE = re.compile(r"\bDEC-\d{1,6}\b")
 
 # A bare `{test}` in `test_suite_without_new` substitutes every listed test
 # space-joined, and `pytest --deselect a b` deselects `a` and SELECTS `b`.
-BARE_PLACEHOLDER_RE = re.compile(r"[{](test|path|name)[}]")
+BARE_PLACEHOLDER_RE = re.compile(r"[{](test|path|name|rest)[}]")
 
 # The next two constants paraphrase `## Plan` in `pipeline/stages/planning.md`
 # and must be changed together.
