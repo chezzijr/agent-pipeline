@@ -136,6 +136,9 @@ STRUCTURAL_MARKS = (
     UNMATCHABLE_MARK,  # DEC-065: a new structural finding needs its own mark
 )
 
+# No other `gate()` finding opens with these two words.
+MISSING_TEST_MARK = "test file "
+
 
 def unmatchable(expect: str) -> str | None:
     """Why `expect` can never match a second run's output, or `None` if it
@@ -160,6 +163,32 @@ def structural_only(failures: list[str]) -> bool:
     Empty is False: no findings is a PASS, not this function's question.
     """
     return bool(failures) and all(f.startswith(STRUCTURAL_MARKS) for f in failures)
+
+
+# A second `startswith` allowlist, same shape as `STRUCTURAL_MARKS` and for
+# the same reason (DEC-065): a substantive finding can quote this text in a
+# captured-output fence, and a substring match would let a ticket forge its
+# own escalation.
+ENVIRONMENT_MARK = "ENVIRONMENT: "
+ENVIRONMENT_MARKS = (ENVIRONMENT_MARK,)
+
+
+def environment_only(failures: list[str]) -> bool:
+    """Are every one of `failures` an environment finding -- the suite red on
+    base too, not this branch's doing?
+
+    Empty is False: no findings is a PASS, not this function's question.
+    """
+    return bool(failures) and all(f.startswith(ENVIRONMENT_MARKS) for f in failures)
+
+
+def missing_test_file(failures: list[str]) -> bool:
+    """Does `failures` include a `test_file` naming no file?
+
+    That is a triage typo, not a bad plan, and `CLAIMS` gives the
+    `test_file` field to `triage` alone, so no re-plan can repair it.
+    """
+    return any(f.startswith(MISSING_TEST_MARK) for f in failures)
 
 
 def _cites(text: str, path: str) -> bool:
@@ -236,14 +265,15 @@ def _dedupe(text: str, seen: dict[str, str], where: str) -> str:
     return "\n".join(out)
 
 
-def _base_verdict(test: str, node: str, base: str, code: int, out: str) -> str:
+def _base_verdict(test: str, node: str, base: str, code: int, out: str) -> tuple[bool, str]:
     """One listed test's verdict on base. Split out of `_base_findings()`
-    so a list of tests shares one checkout and one copy pass."""
+    so a list of tests shares one checkout and one copy pass. The bool is
+    True exactly when this test FAILS on base."""
     if code == 0:
         # The branch run's ambiguity (TICKET-071), on base: the bug is already
         # fixed there, or the test is red for a reason base does not have, or
         # the selector matched no test. Base proves nothing either way.
-        return (f"`{test}` exited 0 on base `{base}`, so base proves nothing. "
+        return False, (f"`{test}` exited 0 on base `{base}`, so base proves nothing. "
                 f"Either it PASSES there -- the bug is already fixed on base, "
                 f"or the test is red for a reason base does not have -- or "
                 f"`test_one` matched no test at all; a runner that names a "
@@ -252,48 +282,73 @@ def _base_verdict(test: str, node: str, base: str, code: int, out: str) -> str:
     if node not in out:
         # same trap as the branch run: an import error exits non-zero too,
         # and here that reads as a successful reproduction
-        return (f"`{test}` exited non-zero on base `{base}` but its name "
+        return False, (f"`{test}` exited non-zero on base `{base}` but its name "
                 f"never appears in the output -- it errored rather than "
                 f"failed, so base proves nothing\n```\n{out[-1200:]}\n```")
-    return (f"ok: `{test}` fails on base `{base}` too -- the bug is not "
+    return True, (f"ok: `{test}` fails on base `{base}` too -- the bug is not "
             f"already fixed upstream\n```\n{out[-1200:]}\n```")
 
 
+def _unsafe_rel(tests: list[str]) -> str | None:
+    """The first of `tests` whose file half is not a plain relative path, or
+    `None`. SAFE_TEST bans shell metacharacters, not traversal -- and unlike
+    the branch run, which only reads, copying onto a base checkout WRITES
+    the path."""
+    for test in tests:
+        rel = test.split("::")[0]
+        if ".." in rel or rel.startswith("/"):
+            return test
+    return None
+
+
+def _copy_tests(wd: Path, base_wt: Path, tests: list[str]) -> None:
+    """Copy each test file `tests` names, from `wd` onto `base_wt`, once per
+    distinct file even when several node ids share it."""
+    for rel in dict.fromkeys(x.split("::")[0] for x in tests):
+        dst = base_wt / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(wd / rel, dst)
+
+
 def _base_findings(project: Path, cfg: dict, wd: Path,
-                   tests: list[str]) -> list[str]:
+                   tests: list[str]) -> tuple[list[str], dict[str, str]]:
     """A test that fails in the ticket's worktree proves the bug is HERE.
     Tier A wants more: that it fails on BASE, which is what makes it a
     reproduction rather than a branch that broke itself. The test itself
     only exists on the branch, so the branch's test file is copied onto a
     throwaway checkout of base: the branch's test, base's code. Every test
     the ticket lists shares that one checkout, and each is re-run on its
-    own -- one run of two tests could not say which of them failed."""
+    own -- one run of two tests could not say which of them failed.
+
+    Returns the findings list, plus a dict mapping each test that FAILS on
+    base to that base run's output. Membership of the dict is the durable
+    proof the bug is upstream, and the output is what `expect:` is matched
+    against for a test that already passes in the ticket's worktree."""
     if wd.resolve() == project.resolve():
-        return ["ok: base check skipped -- no ticket worktree was given, so "
-                "there is no branch to compare against base"]
-    for test in tests:
-        rel = test.split("::")[0]
-        if ".." in rel or rel.startswith("/"):
-            # SAFE_TEST bans shell metacharacters, not traversal -- and unlike
-            # the branch run, which only reads, this one WRITES the path.
-            return [f"`{test}` is not a plain relative path -- refusing to copy "
-                    f"it into a checkout of base"]
+        return (["ok: base check skipped -- no ticket worktree was given, so "
+                "there is no branch to compare against base"], {})
+    unsafe = _unsafe_rel(tests)
+    if unsafe:
+        # SAFE_TEST bans shell metacharacters, not traversal -- and unlike
+        # the branch run, which only reads, this one WRITES the path.
+        return ([f"`{unsafe}` is not a plain relative path -- refusing to copy "
+                f"it into a checkout of base"], {})
     base = base_ref(cfg)
     named = " ".join(f"`{x}`" for x in tests)
     verdicts = []
+    on_base: dict[str, str] = {}
     with base_checkout(project, cfg) as (base_wt, err):
         if base_wt is None:
-            return [f"could not check out base `{base}` to re-run {named}"
-                    f"\n```\n{err[-1200:]}\n```"]
-        for rel in dict.fromkeys(x.split("::")[0] for x in tests):
-            dst = base_wt / rel
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(wd / rel, dst)
+            return ([f"could not check out base `{base}` to re-run {named}"
+                    f"\n```\n{err[-1200:]}\n```"], {})
+        _copy_tests(wd, base_wt, tests)
         for test in tests:
             code, out = run_cmd(format_test_cmd(cfg["test_one"], test), base_wt)
-            verdicts.append(
-                _base_verdict(test, test.split("::")[-1], base, code, out))
-    return verdicts
+            hit, verdict = _base_verdict(test, test.split("::")[-1], base, code, out)
+            verdicts.append(verdict)
+            if hit:
+                on_base[test] = out
+    return verdicts, on_base
 
 
 # `test_suite_without_new` exiting non-zero is pre-existing breakage only when
@@ -323,6 +378,34 @@ def suite_ran(code: int, out: str) -> bool:
     if NO_TESTS_RE.search(out):
         return False
     return code in SUITE_FAILED_CODES or bool(SUITE_RAN_RE.search(out))
+
+
+def _base_suite(project: Path, cfg: dict, wd: Path,
+                 tests: list[str]) -> tuple[str | None, str]:
+    """Re-run `test_suite_without_new` on a throwaway checkout of base.
+    Returns `(output, "")` when the suite RAN and FAILED there too --
+    evidence the breakage is not this branch's doing. Returns `(None, why)`
+    otherwise, where `why` is empty when the suite is simply not red on base
+    and non-empty when the question is unproven (no worktree, an unsafe test
+    path, a base checkout that fails, or a run with no evidence it happened)
+    -- callers fail closed on a non-empty `why`."""
+    if wd.resolve() == project.resolve():
+        return None, ("no ticket worktree was given, so there is no branch "
+                       "to compare against base")
+    bad = _unsafe_rel(tests)
+    if bad:
+        return None, f"`{bad}` is not a plain relative path"
+    base = base_ref(cfg)
+    with base_checkout(project, cfg) as (base_wt, err):
+        if base_wt is None:
+            return None, f"base `{base}` could not be checked out: {err[-200:]}"
+        _copy_tests(wd, base_wt, tests)
+        code, out = run_cmd(format_tests_cmd(cfg["test_suite_without_new"], tests), base_wt)
+    if code != 0 and suite_ran(code, out):
+        return out, ""
+    if code == 0:
+        return None, ""
+    return None, f"the suite exited {code} on base `{base}` and reported no test result"
 
 
 def gate(project: Path, tid: str, workdir: Path | None = None) -> tuple[bool, list[str]]:
@@ -382,16 +465,49 @@ def gate(project: Path, tid: str, workdir: Path | None = None) -> tuple[bool, li
         for test in tests:
             test_path = wd / test.split("::")[0]
             if not test_path.is_file():
-                findings.append(f"test file {test_path} does not exist")
+                findings.append(f"{MISSING_TEST_MARK}{test_path} does not exist")
             else:
                 runnable.append(test)
         # `reproduced`, not `failed`: `gate()` binds that name below for
         # the findings that decide the verdict.
         reproduced: list[tuple[str, str]] = []
+        # exit 0 in the worktree carries no evidence of its own; the base run
+        # below decides it
+        passing: list[tuple[str, str]] = []
         for test in runnable:
             code, out = run_cmd(format_test_cmd(cfg["test_one"], test), wd)
             node = test.split("::")[-1]
             if code == 0:
+                passing.append((test, out))
+            elif node not in out:
+                # a missing dependency or an import error exits non-zero too, and
+                # looks exactly like a failing test unless you check for the name
+                findings.append(
+                    f"`{test}` exited non-zero but its name never appears in the "
+                    f"output -- it errored rather than failed\n```\n{out[-1200:]}\n```")
+            else:
+                reproduced.append((test, out))
+        # base does not carry the branch's fix, so its verdict does not depend
+        # on the branch's current state; a ticket resumed to `plan-validation`
+        # after `implementing` landed the fix has a worktree where `test_file`
+        # now PASSES, and the run must reach base before `expect:` is judged,
+        # because base's output is the only failing output such a test has
+        # (TICKET-090).
+        base: list[str] = []
+        on_base: dict[str, str] = {}
+        candidates = [x for x, _ in reproduced + passing]
+        if passing:
+            base, on_base = _base_findings(project, cfg, wd, candidates)
+        # `expect:` is ONE line of the ticket, and two tests covering two code
+        # paths fail with two different strings, so it must appear in at least
+        # one of them -- see `## Decisions`. The per-test guarantee above is
+        # the strong one and is unchanged: every listed test exits non-zero
+        # AND prints its own node name. For a test that already passes here,
+        # the failing output `expect:` is checked against is base's.
+        matched = (not expect or any(expect in o for _, o in reproduced)
+                   or any(expect in on_base.get(t, "") for t, _ in passing))
+        for test, out in passing:
+            if test not in on_base:
                 # Exit 0 has two causes and no portable signal separates them: a
                 # runner names a node only when the test FAILS (pytest prints a dot
                 # and a count), so a real pass and a selector that matched no test
@@ -402,20 +518,16 @@ def gate(project: Path, tid: str, workdir: Path | None = None) -> tuple[bool, li
                     f"it PASSES, or `test_one` matched no test at all; a runner that "
                     f"names a node only on failure makes the two identical here. Read "
                     f"the output to tell them apart\n```\n{out[-1200:]}\n```")
-            elif node not in out:
-                # a missing dependency or an import error exits non-zero too, and
-                # looks exactly like a failing test unless you check for the name
+            elif matched or bad:
                 findings.append(
-                    f"`{test}` exited non-zero but its name never appears in the "
-                    f"output -- it errored rather than failed\n```\n{out[-1200:]}\n```")
+                    f"ok: `{test}` exited 0 here and fails on base `{base_ref(cfg)}` "
+                    f"-- the branch already carries the fix, and base is where the "
+                    f"reproduction still holds")
             else:
-                reproduced.append((test, out))
-        # `expect:` is ONE line of the ticket, and two tests covering two code
-        # paths fail with two different strings, so it must appear in at least
-        # one of them -- see `## Decisions`. The per-test guarantee above is
-        # the strong one and is unchanged: every listed test exits non-zero
-        # AND prints its own node name.
-        matched = not expect or any(expect in o for _, o in reproduced)
+                findings.append(
+                    f"`{test}` exited 0 here and fails on base `{base_ref(cfg)}`, "
+                    f"but base's output does not mention the expected string "
+                    f"{expect!r}\n```\n{on_base[test][-1200:]}\n```")
         for test, out in reproduced:
             if matched:
                 findings.append(f"ok: `{test}` fails as required\n```\n{out[-1200:]}\n```")
@@ -447,8 +559,12 @@ def gate(project: Path, tid: str, workdir: Path | None = None) -> tuple[bool, li
                 findings.append(
                     f"`{test}` fails, but its output does not mention the expected "
                     f"string {expect!r}\n```\n{out[-1200:]}\n```")
-        if matched and reproduced:
-            findings += _base_findings(project, cfg, wd, [x for x, _ in reproduced])
+        if not passing and matched and reproduced:
+            # a non-empty `passing` already paid for the one checkout above,
+            # so this arm covers only the ordinary case where every listed
+            # test failed in the worktree.
+            base, _ = _base_findings(project, cfg, wd, candidates)
+        findings += base
         if runnable:
             names = " ".join(f"`{x}`" for x in runnable)
             bare = next((m for m in BARE_PLACEHOLDER_RE.finditer(
@@ -468,10 +584,28 @@ def gate(project: Path, tid: str, workdir: Path | None = None) -> tuple[bool, li
                 suite_cmd = format_tests_cmd(cfg["test_suite_without_new"], runnable)
                 code, out = run_cmd(suite_cmd, wd)
                 if code != 0 and suite_ran(code, out):
-                    findings.append(
-                        f"suite excluding {names} is RED -- pre-existing breakage, "
-                        f"fix that first\n```\n{out[-1200:]}\n```"
-                    )
+                    base_out, why = _base_suite(project, cfg, wd, runnable)
+                    if base_out is not None:
+                        findings.append(
+                            f"{ENVIRONMENT_MARK}suite excluding {names} is RED -- "
+                            f"pre-existing breakage, and it is RED on base "
+                            f"`{base_ref(cfg)}` too, so it is not this branch's "
+                            f"doing and no plan can fix it. Fix the environment "
+                            f"or base itself, then `pipeline resume {tid}`"
+                            f"\n```on base\n{base_out[-1200:]}\n```"
+                            f"\n```in the ticket's worktree\n{out[-1200:]}\n```"
+                        )
+                    elif not why:
+                        findings.append(
+                            f"suite excluding {names} is RED -- pre-existing breakage, "
+                            f"fix that first\n```\n{out[-1200:]}\n```"
+                        )
+                    else:
+                        findings.append(
+                            f"suite excluding {names} is RED -- pre-existing breakage, "
+                            f"fix that first\n```\n{out[-1200:]}\n```"
+                            f"\n(base was not consulted: {why})"
+                        )
                 elif code != 0:
                     findings.append(
                         f"could not run the suite excluding {names}: {suite_cmd!r} "

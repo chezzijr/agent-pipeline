@@ -21,7 +21,8 @@ from pipeline.core.config import (cap_config, compose_prompt,
                                   render, stage_cap, stage_config,
                                   stage_settings)
 from pipeline.core.fence import fenced_touches
-from pipeline.core.gate import gate, plan_steps, structural_only
+from pipeline.core.gate import (environment_only, gate, missing_test_file,
+                                plan_steps, structural_only)
 from pipeline.core.machine import (CLEANUP_STAGES, CONTROL_FIELDS,
                                    HUMAN_GATES, MAX_ATTEMPTS, TERMINAL,
                                    apply_claims, bound_for, conflict_holder,
@@ -961,12 +962,25 @@ def read_findings(rec: dict, code: int) -> tuple[bool, list[str]]:
 
 def gate_result(ok: bool, failures: list[str], stage: str) -> str:
     """The verdict string a Tier A gate's outcome charges. Only `plan-validation`
-    splits `fail` in two: `revalidating` always gets `fail`, because
-    `("revalidating", "bad-plan")` is an unknown pair that would escalate a
-    stale plan instead of charging `stale_regate` (DEC-029)."""
+    splits `fail` into four: a `test_file` naming no file (TICKET-087) returns
+    `no-test-file`, an all-`environment` list of findings (the suite red on
+    base too, TICKET-089) returns `environment`, `structural` findings keep
+    `fail`, and anything else is `bad-plan`. Both new verdicts are checked
+    before `structural_only()`, so a ticket whose plan is ALSO bad still
+    escalates instead of charging a counter no stage can spend (DEC-065).
+    `revalidating` always gets `fail`, because `("revalidating", "bad-plan")`,
+    `("revalidating", "no-test-file")` and `("revalidating", "environment")`
+    are all unknown pairs that would escalate a stale plan instead of charging
+    `stale_regate` (DEC-029)."""
     if ok:
         return "ok"
-    if stage == "plan-validation" and not structural_only(failures):
+    if stage != "plan-validation":
+        return "fail"
+    if missing_test_file(failures):
+        return "no-test-file"
+    if environment_only(failures):
+        return "environment"
+    if not structural_only(failures):
         return "bad-plan"
     return "fail"
 

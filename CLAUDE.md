@@ -120,6 +120,12 @@ still worth it: it prints one line per case, and the failure names the case.
   syntax error also exits non-zero with no test ever run, so `suite_ran()` in
   `pipeline/core/gate.py` gates the pre-existing-breakage verdict on evidence
   of a run, not just the exit code (TICKET-074).
+- **An exit-0 repro run in the worktree falls through to the base run.** A
+  ticket resumed to `plan-validation` after `implementing` landed the fix has
+  a worktree where `test_file` passes, and failing on that made Tier A
+  permanently unsatisfiable. `gate()` reports the exit-0 finding only when
+  the test does not also FAIL on base; failing on base is the durable proof
+  the branch already carries the fix (TICKET-090).
 - **`git worktree add -B` resets the branch.** Never use `-B`: recreating a
   worktree after a resume would silently discard the ticket's commits.
 - **`.project/` is excluded from the read-only tree snapshot**, because writing
@@ -262,13 +268,20 @@ still worth it: it prints one line per case, and the failure names the case.
   Tier B agent -- it emits no `stage_end`, or one run would put two rows in
   view 1's denominator. Moving the gate back inline stalls the select loop
   for the length of the project's suite, exactly the bug TICKET-061 fixed.
-- **`gate_result()` splits a Tier A failure at `plan-validation` into two
-  verdicts, `bad-plan` and `fail`.** `structural_only()` in
+- **`gate_result()` splits a Tier A failure at `plan-validation` into four
+  verdicts: `fail` (structural), `bad-plan` (substantive), `no-test-file`
+  (the `test_file` names no file) and `environment` (the suite is red on base
+  too) -- the last two escalate and charge nothing.** `structural_only()` in
   `pipeline/core/gate.py` classifies the findings against `STRUCTURAL_MARKS`, a
   `startswith` prefix allowlist: an unlisted finding reads as substantive on
   purpose, so a new structural finding in `gate()` needs its own mark or it
   silently charges `plan_validation_attempts` instead of
-  `structural_gate_failures` like a bad plan.
+  `structural_gate_failures` like a bad plan. `MISSING_TEST_MARK` and
+  `ENVIRONMENT_MARKS` are two more `startswith` allowlists beside it, checked
+  by `missing_test_file()` and `environment_only()` in that order, both before
+  `structural_only()`. Each escalates through an enumerated `transition()` row
+  that charges no counter, and both apply at `plan-validation` only:
+  `revalidating` still gets `fail`, whatever the findings say (DEC-029).
 - **The read-only allowlist has a per-project extension.** `[readonly] allow`
   in `.project/pipeline.toml` is exported as `PIPELINE_READONLY_ALLOW`, an
   argv-prefix list matched per shell segment. It never overrides

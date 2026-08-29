@@ -10,6 +10,7 @@ from pipeline.core import ticket as T
 from pipeline.core.config import project_config
 from pipeline.core.gate import _base_findings, _dedupe, gate, plan_steps
 from pipeline.core.machine import transition
+from pipeline.daemon.supervisor import gate_result
 
 
 def _set_digest(body: str) -> str:
@@ -147,6 +148,26 @@ def test_a_purely_structural_gate_failure_does_not_charge_a_plan_validation_atte
     nxt, counters = transition("plan-validation", "fail", {})
     assert counters.get("plan_validation_attempts", 0) == 0, (
         "a structural-only gate failure charged plan_validation_attempts: "
+        f"{counters}")
+    shutil.rmtree(d)
+
+
+def test_a_nonexistent_test_file_does_not_charge_a_plan_validation_attempt():
+    """TICKET-087: a `test_file` whose path half names no file on disk (e.g.
+    a Rust module path `vm::tests::foo` with no `vm` file) is a typo triage
+    should have caught, not a bad plan. `structural_only` must read the
+    gate's "test file ... does not exist" finding as structural so
+    `gate_result` returns `fail`, not `bad-plan`, and `plan_validation_attempts`
+    is never charged for it."""
+    d = project(FIXTURE.replace("test_thing.py::test_broken", "vm::tests::foo"))
+    from pipeline.daemon.supervisor import gate_result
+    ok, failures = gate(d, "TICKET-001")
+    assert not ok
+    assert any("does not exist" in f for f in failures), failures
+    result = gate_result(ok, failures, "plan-validation")
+    nxt, counters = transition("plan-validation", result, {})
+    assert counters.get("plan_validation_attempts", 0) == 0, (
+        "a nonexistent test_file charged plan_validation_attempts: "
         f"{counters}")
     shutil.rmtree(d)
 
@@ -668,6 +689,29 @@ def test_gate_blocks_a_test_that_passes_on_base():
     shutil.rmtree(d, ignore_errors=True)
 
 
+def test_gate_falls_through_to_base_when_the_worktree_test_already_passes():
+    """TICKET-090: a ticket resumed to `plan-validation` after `implementing`
+    has already landed the fix has a worktree where `test_file` now PASSES.
+    Today that reads as an unresolvable exit-0 ambiguity and the gate can
+    never pass again. It must instead fall through to the base check: base
+    still has the bug, which is the durable proof the branch already fixed
+    it, and the gate must PASS on that."""
+    d, wt = _git_ticket_project("buggy\n", "fixed\n")
+    ok, failures = gate(d, "TICKET-001", workdir=wt)
+    assert ok, failures
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_gate_still_fails_when_the_worktree_and_base_both_pass():
+    """The fall-through credits only a test that FAILS on base, so a branch
+    whose test passes where base's passes too is still not a reproduction."""
+    d, wt = _git_ticket_project("fixed\n", "fixed\n")
+    ok, failures = gate(d, "TICKET-001", workdir=wt)
+    assert not ok, failures
+    assert any("exited 0" in f and "PASSES" in f for f in failures), failures
+    shutil.rmtree(d, ignore_errors=True)
+
+
 def test_gate_names_both_causes_when_the_test_exits_zero_on_base():
     """The base run carries the branch run's exit-0 ambiguity: `test_one`
     exits 0 on base without printing the node, which is a pass there or a
@@ -706,11 +750,13 @@ def test_the_base_run_covers_every_listed_test():
     (wt / "test_thing2.py").write_text("")
     subprocess.run("git add -A && git commit -qm second", shell=True, cwd=wt,
                    capture_output=True, text=True)
-    out = _base_findings(d, project_config(d), wt,
+    out, on_base = _base_findings(d, project_config(d), wt,
                          ["test_thing.py::test_broken",
                           "test_thing2.py::test_broken2"])
     for one in ("test_thing.py::test_broken", "test_thing2.py::test_broken2"):
         assert any(f.startswith(f"ok: `{one}` fails on base") for f in out), out
+    assert set(on_base) == {"test_thing.py::test_broken",
+                            "test_thing2.py::test_broken2"}, on_base
     shutil.rmtree(d, ignore_errors=True)
 
 
@@ -1052,3 +1098,55 @@ def test_plan_steps_counts_only_unfenced_numbered_steps():
         "3. fix third.py\n"
     )
     assert plan_steps(plan) == 3
+
+
+def test_a_suite_red_identically_on_base_does_not_charge_plan_validation_attempts():
+    """TICKET-089: `test_suite_without_new` runs only in the ticket's worktree.
+    A suite that is red for a reason base ALSO has -- an environment problem,
+    not this ticket's doing -- must not be charged as a bad plan. Today
+    `gate()` never re-runs the suite on base, so the finding is indistinguishable
+    from a real pre-existing-breakage-caused-by-this-branch finding and
+    `gate_result()` charges `plan_validation_attempts` for it."""
+    d, wt = _git_ticket_project("buggy\n", "buggy\n")
+    (d / ".project" / "pipeline.toml").write_text(
+        'test_one = "echo test_broken; exit 1"\n'
+        'test_suite = "true"\n'
+        'test_suite_without_new = "echo 1 failed; exit 1"\n'
+        'base = "main"\n')
+    subprocess.run("git add -A && git commit -qm cfg", shell=True, cwd=d,
+                   capture_output=True, text=True)
+    ok, failures = gate(d, "TICKET-001", workdir=wt)
+    assert not ok
+    breakage = [f for f in failures if "RED -- pre-existing breakage" in f]
+    assert breakage, failures
+    res = gate_result(ok, failures, "plan-validation")
+    _, counters = transition("plan-validation", res, {})
+    assert counters.get("plan_validation_attempts", 0) == 0, (
+        f"suite failed identically on base too but still charged "
+        f"plan_validation_attempts: {counters}")
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_a_suite_red_only_in_the_worktree_still_charges_the_plan():
+    """TICKET-089: base is green, so the environment verdict must not fire --
+    today's verdict and today's charge both stand."""
+    d, wt = _git_ticket_project("buggy\n", "buggy\n")
+    (d / ".project" / "pipeline.toml").write_text(
+        'test_one = "echo test_broken; exit 1"\n'
+        'test_suite = "true"\n'
+        'test_suite_without_new = "! test -f broken"\n'
+        'base = "main"\n')
+    subprocess.run("git add -A && git commit -qm cfg", shell=True, cwd=d,
+                   capture_output=True, text=True)
+    (wt / "broken").write_text("")
+    subprocess.run("git add -A && git commit -qm broken", shell=True, cwd=wt,
+                   capture_output=True, text=True)
+    ok, failures = gate(d, "TICKET-001", workdir=wt)
+    assert not ok
+    assert any("RED -- pre-existing breakage" in f for f in failures), failures
+    assert not any(f.startswith("ENVIRONMENT: ") for f in failures), failures
+    res = gate_result(ok, failures, "plan-validation")
+    assert res == "bad-plan"
+    _, counters = transition("plan-validation", res, {})
+    assert counters["plan_validation_attempts"] == 1
+    shutil.rmtree(d, ignore_errors=True)

@@ -53,6 +53,12 @@ Put the test's id in your result file as `test_file:` (e.g.
 the frontmatter -- you must not edit frontmatter yourself. Every later stage
 depends on this field, so a triage that omits it has not finished.
 
+Before you write `test_file`, check the path half of every test id --
+everything before `::`. Run `test -f <path> && echo ok` for each one. A path
+that prints nothing is not a file, so the id is wrong: fix it now. The Tier A
+gate escalates the ticket to a human for a `test_file` naming no file,
+because only `triage` may write that field and no later stage can repair it.
+
 A bug that needs more than one failing test to reproduce writes `test_file`
 as a list -- one test or a list, e.g.
 `test_file: [tests/test_a.py::test_first, tests/test_b.py::test_second]`.

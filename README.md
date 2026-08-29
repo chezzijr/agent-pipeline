@@ -357,6 +357,40 @@ burns validation attempts on it. Key the cache
 (`CARGO_TARGET_DIR=~/.cache/cargo/$(basename $PWD)`, `ccache` with a per-branch
 prefix) or leave it unshared.
 
+Keying is not free. Every ticket pays a cold build, and every keyed
+directory outlives the worktree it was named for -- 18 keys, 9.1G, 2 live
+worktrees, measured on one project. worktree_teardown runs before the
+dispatcher removes a worktree, and is where to reclaim the keyed directory.
+
+**A cache is shareable across worktrees only if its key excludes the checkout path,
+and most keys do not.** A content-addressed compiler cache looks like the
+escape hatch. `sccache` is not one: it hashes the rustc
+command line, and cargo puts the target directory in it (`--out-dir`,
+`-L dependency=`), so the per-checkout target dirs that avoid the
+stale-artifact trap guarantee a miss across tickets. Measured:
+
+```
+build | CARGO_TARGET_DIR              | sccache result
+------+-------------------------------+------------------------
+1st   | .../t1                        | miss (compiles, stores)
+2nd   | .../t2, same source and flags | miss
+3rd   | .../t1 again, artifacts wiped | hit
+```
+
+It also needs `CARGO_INCREMENTAL=0`, which slows repeated builds inside
+one ticket: net negative in both directions. `ccache` can normalise the
+path away (`base_dir`); most tools cannot.
+
+Three builds decide it for any toolchain:
+
+- Build in worktree A. Expect a miss.
+- Build in worktree B, same source and flags. A hit means the cache is
+  shareable across checkouts; a miss means its key carries the checkout
+  path.
+- Wipe A's artifacts and rebuild A. A hit confirms the cache works at
+  all, which is what makes the second build's miss attributable to the
+  key.
+
 Nothing ever reclaims what `worktree_setup` created, unless the project also
 sets `worktree_teardown`:
 
@@ -448,6 +482,16 @@ plan line that is not a numbered step, a step citing no declared file --
 charges `structural_gate_failures` instead, because `plan_validation_attempts`
 bounds bad plans and the gate never judged that plan. It stays at 2 whatever
 the class, the same shape as `lease_expiries` and `no_result`.
+
+A Tier A failure whose findings include `test file <path> does not exist`
+charges nothing at all. `gate_result()` returns `no-test-file` and the ticket
+escalates on the first one. Only `triage` may write `test_file`, so
+re-planning cannot repair it and a counter would only delay the human.
+
+A Tier A failure at `plan-validation` whose findings are all `ENVIRONMENT: `
+findings -- `test_suite_without_new` is red on base too, not this branch's
+doing -- escalates to a human and charges no counter, because no re-plan can
+fix an environment that is already broken on base.
 
 `stale_regate` is the one counter a later pass credits back: a passing
 `revalidating` writes `stale_regate_cleared`, capped at the failures already
