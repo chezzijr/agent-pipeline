@@ -1724,3 +1724,50 @@ def test_the_session_entry_omits_cost_when_no_result_event_arrived():
     assert "- cost:" not in msg
     assert "- tokens:" not in msg
     shutil.rmtree(d, ignore_errors=True)
+
+
+def test_a_transient_blockingioerror_from_tick_must_not_kill_every_inflight_child():
+    """TICKET-086: `run()` does not wrap its `tick()` call, so a transient
+    `BlockingIOError` (fork returning EAGAIN) reaches `finally:
+    shut_down(project, inflight)`, which SIGTERMs every other ticket still
+    running -- exactly the failure `serve()` already avoids per project.
+    Expected: the loop survives a transient `BlockingIOError` from `tick()`
+    and every OTHER inflight child keeps running, so `killed` stays empty."""
+    d = project()
+    killed = {}
+
+    def fake_lock(project):
+        class L:
+            def close(self):
+                pass
+        return L()
+
+    def fake_shut_down(project, inflight):
+        killed.update(inflight)
+
+    other_rec = {"proc": None}
+    calls = {"n": 0}
+
+    def fake_tick(project, hcfg, inflight, max_parallel, poller, emit, stopping):
+        inflight["TICKET-999"] = other_rec
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise BlockingIOError(11, "Resource temporarily unavailable")
+        return False
+
+    from pipeline.daemon import registry as R
+
+    orig_lock, orig_tick, orig_shut_down = R.lock, supervisor.tick, supervisor.shut_down
+    R.lock = fake_lock
+    supervisor.tick = fake_tick
+    supervisor.shut_down = fake_shut_down
+    try:
+        supervisor.run(d, once=True, interval=1, harness_name="fake")
+    finally:
+        R.lock, supervisor.tick, supervisor.shut_down = (
+            orig_lock, orig_tick, orig_shut_down)
+        shutil.rmtree(d, ignore_errors=True)
+
+    assert not killed, (
+        "a transient BlockingIOError from one tick() must not kill every "
+        f"other inflight ticket's child, but shut_down saw {list(killed)}")
