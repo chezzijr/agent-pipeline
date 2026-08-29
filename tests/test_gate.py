@@ -10,6 +10,7 @@ from pipeline.core import ticket as T
 from pipeline.core.config import project_config
 from pipeline.core.gate import _base_findings, _dedupe, gate, plan_steps
 from pipeline.core.machine import transition
+from pipeline.daemon.supervisor import gate_result
 
 
 def _set_digest(body: str) -> str:
@@ -1052,3 +1053,30 @@ def test_plan_steps_counts_only_unfenced_numbered_steps():
         "3. fix third.py\n"
     )
     assert plan_steps(plan) == 3
+
+
+def test_a_suite_red_identically_on_base_does_not_charge_plan_validation_attempts():
+    """TICKET-089: `test_suite_without_new` runs only in the ticket's worktree.
+    A suite that is red for a reason base ALSO has -- an environment problem,
+    not this ticket's doing -- must not be charged as a bad plan. Today
+    `gate()` never re-runs the suite on base, so the finding is indistinguishable
+    from a real pre-existing-breakage-caused-by-this-branch finding and
+    `gate_result()` charges `plan_validation_attempts` for it."""
+    d, wt = _git_ticket_project("buggy\n", "buggy\n")
+    (d / ".project" / "pipeline.toml").write_text(
+        'test_one = "echo test_broken; exit 1"\n'
+        'test_suite = "true"\n'
+        'test_suite_without_new = "echo 1 failed; exit 1"\n'
+        'base = "main"\n')
+    subprocess.run("git add -A && git commit -qm cfg", shell=True, cwd=d,
+                   capture_output=True, text=True)
+    ok, failures = gate(d, "TICKET-001", workdir=wt)
+    assert not ok
+    breakage = [f for f in failures if "RED -- pre-existing breakage" in f]
+    assert breakage, failures
+    res = gate_result(ok, failures, "plan-validation")
+    _, counters = transition("plan-validation", res, {})
+    assert counters.get("plan_validation_attempts", 0) == 0, (
+        f"suite failed identically on base too but still charged "
+        f"plan_validation_attempts: {counters}")
+    shutil.rmtree(d, ignore_errors=True)
