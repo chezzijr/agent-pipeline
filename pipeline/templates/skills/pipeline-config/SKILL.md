@@ -182,6 +182,21 @@ ticket's diff, and clears only when the source is touched. Use
 `CARGO_TARGET_DIR=~/.cache/cargo/$(basename $PWD)`, a `ccache` prefix
 per branch, or leave the cache unshared.
 
+### `worktree_teardown` -- reclaiming what the setup created
+
+Top level, under no table. Nothing ever reclaims what `worktree_setup`
+created unless a project sets this key. It runs in the same checkout,
+just before that checkout is removed, from both removal paths: a
+finished ticket's worktree, and the gate's throwaway checkout of `base`:
+
+```toml
+worktree_teardown = "rm -rf ~/.cache/cargo/$(basename $PWD)"
+```
+
+`$(basename $PWD)` is the same string `worktree_setup` saw in that same
+checkout, so a keyed cache matches by construction. In the gate
+checkout that string is always the literal `base`, never a ticket id.
+
 ### `.project/stages/<name>.extra.md` -- prose for one stage
 
 A file, not a key. Its text is appended after the packaged stage prompt

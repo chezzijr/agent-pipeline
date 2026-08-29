@@ -357,6 +357,19 @@ burns validation attempts on it. Key the cache
 (`CARGO_TARGET_DIR=~/.cache/cargo/$(basename $PWD)`, `ccache` with a per-branch
 prefix) or leave it unshared.
 
+Nothing ever reclaims what `worktree_setup` created, unless the project also
+sets `worktree_teardown`:
+
+```toml
+worktree_teardown = "rm -rf ~/.cache/cargo/$(basename $PWD)"
+```
+
+It runs in the same checkout, just before that checkout is removed, from both
+removal paths: a finished ticket's worktree, and the gate's throwaway checkout
+of `base`. `$(basename $PWD)` is the same string `worktree_setup` saw, so a
+keyed cache matches by construction. In the gate checkout that string is
+always the literal `base`, never a ticket id.
+
 ## Watching a run
 
 Every spawn gets a session id and a log:

@@ -59,6 +59,15 @@ base                    = "main"
 # (CARGO_TARGET_DIR=~/.cache/cargo/$(basename $PWD), a ccache prefix
 # per branch) or leave it unshared.
 
+# Reclaims what `worktree_setup` created. Runs in the same checkout, just
+# before that checkout is removed -- from BOTH removal paths, a finished
+# ticket's worktree and the gate's throwaway checkout of `base`.
+# `$(basename $PWD)` is the same string it was in `worktree_setup`, so a
+# keyed cache matches by construction and no key is ever stored separately.
+# In the gate checkout that string is always the literal `base`, never a
+# ticket id.
+# worktree_teardown = "rm -rf ~/.cache/cargo/$(basename $PWD)"
+
 # Per-project stage overrides. A [stages.<name>] table is merged shallow onto
 # that stage's packaged frontmatter -- a key here replaces the packaged one,
 # it does not extend it (a `skills` list included).
