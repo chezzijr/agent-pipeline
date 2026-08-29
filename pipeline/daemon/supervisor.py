@@ -1251,13 +1251,12 @@ def _start_cap(project: Path, max_parallel: int) -> int:
 
     `project_max_parallel()` can raise `PipelineError` on a bad value, and
     `project_config()` underneath it can also raise `tomllib.TOMLDecodeError`
-    (a `ValueError`) on a malformed `.project/pipeline.toml`. This is the only
-    place that call happens: `tick()` must not raise either onward. `run()`
-    (`pipeline/daemon/supervisor.py:1352`) does not wrap its `tick()` call, so
-    a raise there would reach `finally: shut_down(project, inflight)` and
-    SIGTERM every inflight child. A bad value is printed and ignored instead,
-    falling back to `max_parallel` -- exactly the behaviour before this key
-    existed.
+    (a `ValueError`) on a malformed `.project/pipeline.toml`. `run()` catches
+    per tick since TICKET-086, and this local catch stays because it keeps
+    the fault out of the tick and names the offending value, where the
+    generic catch names only the exception class. A bad value is printed and
+    ignored instead, falling back to `max_parallel` -- exactly the behaviour
+    before this key existed.
     """
     try:
         cap = project_max_parallel(project)
@@ -1343,10 +1342,12 @@ def _harness_reloader(name: str):
     is unguarded -- an unknown harness must still fail before the caller
     takes the project lock. Every later read keeps the last good dict on any
     exception, because a per-tick read turns a broken or half-written
-    `.toml` into a runtime fault where today it is only a startup fault, and
-    `run()` does not wrap its `tick()` call. A warning prints only when its
-    message changes, so a file that stays broken does not print once a
-    second."""
+    `.toml` into a runtime fault where today it is only a startup fault.
+    `run()` catches per tick since TICKET-086, and this local catch stays
+    because it keeps the fault out of the tick and names the offending
+    file, where the generic catch names only the exception class. A warning
+    prints only when its message changes, so a file that stays broken does
+    not print once a second."""
     cfg = harness(name)
     state = {"cfg": cfg, "err": None}
 
