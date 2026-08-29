@@ -720,6 +720,36 @@ def test_a_malformed_project_pipeline_toml_never_leaves_tick(capsys):
     shutil.rmtree(d, ignore_errors=True)
 
 
+def test_the_daemons_max_parallel_is_not_machine_wide():
+    """TICKET-094: `-j` is passed unchanged into every registered project's own
+    `tick()`, each with its own `inflight` dict, so N projects multiply the
+    daemon's `-j` instead of sharing it. With a machine cap of 1 and two
+    projects each holding two queued triage tickets, the total number of
+    inflight children across both projects must never exceed 1."""
+    max_parallel = 1
+    projects = []
+    for i in range(2):
+        d, sh = git_project()
+        for n, fname in (("001", "thing.py"), ("002", "other.py")):
+            (d / f".project/tickets/TICKET-{n}.md").write_text(
+                FIXTURE.replace("stage: plan-validation", "stage: triage")
+                .replace("id: TICKET-001", f"id: TICKET-{n}")
+                .replace("branch: ticket/001", f"branch: ticket/{n}")
+                .replace("files_declared: [thing.py]", f"files_declared: [{fname}]"))
+        projects.append(d)
+
+    inflights = [{} for _ in projects]
+    for d, inflight in zip(projects, inflights):
+        supervisor.tick(d, harness("fake"), inflight, max_parallel)
+
+    total = sum(len(i) for i in inflights)
+    for d in projects:
+        shutil.rmtree(d, ignore_errors=True)
+    assert total <= max_parallel, \
+        f"machine cap is {max_parallel}, but {total} children are inflight " \
+        f"across {len(projects)} projects"
+
+
 def test_two_tickets_never_merge_in_the_same_tick():
     """Both would `git merge base` against the same base; the first
     `--ff-only` to land moves base, and the second -- a fully verified,
