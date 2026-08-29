@@ -231,6 +231,27 @@ def test_note_appends_at_any_stage_without_touching_control_fields():
     shutil.rmtree(d)
 
 
+def test_note_claims_a_lease_only_when_one_is_actually_held():
+    """`{}` is the empty lease every unleased ticket carries, and a dict is
+    truthy -- so `if t.lease` claimed a stage was holding one on a ticket
+    that has never been spawned. `lease_active()` is the total reader."""
+    d = Path(tempfile.mkdtemp())
+    cli(d, "new", "t")
+    path = d / ".project/tickets/TICKET-001.md"
+
+    r = cli(d, "note", "TICKET-001", "no stage is running")
+    assert r.returncode == 0, r.stderr
+    assert "holds a lease" not in r.stdout, r.stdout
+
+    t = Ticket.load(path)
+    t.take_lease("implementing-1")
+    t.save()
+    r = cli(d, "note", "TICKET-001", "a stage is running")
+    assert r.returncode == 0, r.stderr
+    assert "holds a lease" in r.stdout, r.stdout
+    shutil.rmtree(d)
+
+
 def test_resume_help_and_readme_name_the_note_flag():
     r = subprocess.run([sys.executable, "-m", "pipeline", "resume", "--help"],
                         cwd=ROOT, capture_output=True, text=True)

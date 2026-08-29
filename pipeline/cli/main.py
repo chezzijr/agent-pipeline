@@ -239,7 +239,7 @@ def cmd_note(args) -> None:
     t.save()
     print(f"{args.id}: note added"
           + (f" (`{t.stage}` holds a lease; it reaches the stage on its next spawn)"
-             if t.lease else ""))
+             if t.lease_active() else ""))
 
 
 def cmd_answer(args) -> None:
