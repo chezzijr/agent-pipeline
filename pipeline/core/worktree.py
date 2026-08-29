@@ -89,9 +89,13 @@ def ensure_worktree(project: Path, meta: dict, cfg: dict) -> Path | None:
     return wt
 
 
-def drop_worktree(project: Path, meta: dict) -> None:
+def drop_worktree(project: Path, meta: dict, cfg: dict | None = None) -> None:
     wt = worktree(project, meta)
     if wt.is_dir():
+        if (cfg or {}).get("worktree_teardown"):
+            code, out = run_cmd(cfg["worktree_teardown"], wt)
+            if code:
+                print(f"  worktree_teardown failed for {meta['id']}: {out.strip()[:300]}")
         run_cmd(f"git worktree remove --force {shlex.quote(str(wt))}", project)
 
 
@@ -117,6 +121,10 @@ def base_checkout(project: Path, cfg: dict):
             yield wt, ""
     finally:
         if not code:
+            if cfg.get("worktree_teardown"):
+                code2, out2 = run_cmd(cfg["worktree_teardown"], wt)
+                if code2:
+                    print(f"  worktree_teardown failed in the base checkout: {out2.strip()[:300]}")
             run_cmd(f"git worktree remove --force {shlex.quote(str(wt))}", project)
         shutil.rmtree(tmp, ignore_errors=True)
 

@@ -165,6 +165,23 @@ def structural_only(failures: list[str]) -> bool:
     return bool(failures) and all(f.startswith(STRUCTURAL_MARKS) for f in failures)
 
 
+# A second `startswith` allowlist, same shape as `STRUCTURAL_MARKS` and for
+# the same reason (DEC-065): a substantive finding can quote this text in a
+# captured-output fence, and a substring match would let a ticket forge its
+# own escalation.
+ENVIRONMENT_MARK = "ENVIRONMENT: "
+ENVIRONMENT_MARKS = (ENVIRONMENT_MARK,)
+
+
+def environment_only(failures: list[str]) -> bool:
+    """Are every one of `failures` an environment finding -- the suite red on
+    base too, not this branch's doing?
+
+    Empty is False: no findings is a PASS, not this function's question.
+    """
+    return bool(failures) and all(f.startswith(ENVIRONMENT_MARKS) for f in failures)
+
+
 def missing_test_file(failures: list[str]) -> bool:
     """Does `failures` include a `test_file` naming no file?
 
@@ -271,6 +288,27 @@ def _base_verdict(test: str, node: str, base: str, code: int, out: str) -> str:
             f"already fixed upstream\n```\n{out[-1200:]}\n```")
 
 
+def _unsafe_rel(tests: list[str]) -> str | None:
+    """The first of `tests` whose file half is not a plain relative path, or
+    `None`. SAFE_TEST bans shell metacharacters, not traversal -- and unlike
+    the branch run, which only reads, copying onto a base checkout WRITES
+    the path."""
+    for test in tests:
+        rel = test.split("::")[0]
+        if ".." in rel or rel.startswith("/"):
+            return test
+    return None
+
+
+def _copy_tests(wd: Path, base_wt: Path, tests: list[str]) -> None:
+    """Copy each test file `tests` names, from `wd` onto `base_wt`, once per
+    distinct file even when several node ids share it."""
+    for rel in dict.fromkeys(x.split("::")[0] for x in tests):
+        dst = base_wt / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(wd / rel, dst)
+
+
 def _base_findings(project: Path, cfg: dict, wd: Path,
                    tests: list[str]) -> list[str]:
     """A test that fails in the ticket's worktree proves the bug is HERE.
@@ -283,13 +321,12 @@ def _base_findings(project: Path, cfg: dict, wd: Path,
     if wd.resolve() == project.resolve():
         return ["ok: base check skipped -- no ticket worktree was given, so "
                 "there is no branch to compare against base"]
-    for test in tests:
-        rel = test.split("::")[0]
-        if ".." in rel or rel.startswith("/"):
-            # SAFE_TEST bans shell metacharacters, not traversal -- and unlike
-            # the branch run, which only reads, this one WRITES the path.
-            return [f"`{test}` is not a plain relative path -- refusing to copy "
-                    f"it into a checkout of base"]
+    unsafe = _unsafe_rel(tests)
+    if unsafe:
+        # SAFE_TEST bans shell metacharacters, not traversal -- and unlike
+        # the branch run, which only reads, this one WRITES the path.
+        return [f"`{unsafe}` is not a plain relative path -- refusing to copy "
+                f"it into a checkout of base"]
     base = base_ref(cfg)
     named = " ".join(f"`{x}`" for x in tests)
     verdicts = []
@@ -297,10 +334,7 @@ def _base_findings(project: Path, cfg: dict, wd: Path,
         if base_wt is None:
             return [f"could not check out base `{base}` to re-run {named}"
                     f"\n```\n{err[-1200:]}\n```"]
-        for rel in dict.fromkeys(x.split("::")[0] for x in tests):
-            dst = base_wt / rel
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(wd / rel, dst)
+        _copy_tests(wd, base_wt, tests)
         for test in tests:
             code, out = run_cmd(format_test_cmd(cfg["test_one"], test), base_wt)
             verdicts.append(
@@ -335,6 +369,34 @@ def suite_ran(code: int, out: str) -> bool:
     if NO_TESTS_RE.search(out):
         return False
     return code in SUITE_FAILED_CODES or bool(SUITE_RAN_RE.search(out))
+
+
+def _base_suite(project: Path, cfg: dict, wd: Path,
+                 tests: list[str]) -> tuple[str | None, str]:
+    """Re-run `test_suite_without_new` on a throwaway checkout of base.
+    Returns `(output, "")` when the suite RAN and FAILED there too --
+    evidence the breakage is not this branch's doing. Returns `(None, why)`
+    otherwise, where `why` is empty when the suite is simply not red on base
+    and non-empty when the question is unproven (no worktree, an unsafe test
+    path, a base checkout that fails, or a run with no evidence it happened)
+    -- callers fail closed on a non-empty `why`."""
+    if wd.resolve() == project.resolve():
+        return None, ("no ticket worktree was given, so there is no branch "
+                       "to compare against base")
+    bad = _unsafe_rel(tests)
+    if bad:
+        return None, f"`{bad}` is not a plain relative path"
+    base = base_ref(cfg)
+    with base_checkout(project, cfg) as (base_wt, err):
+        if base_wt is None:
+            return None, f"base `{base}` could not be checked out: {err[-200:]}"
+        _copy_tests(wd, base_wt, tests)
+        code, out = run_cmd(format_tests_cmd(cfg["test_suite_without_new"], tests), base_wt)
+    if code != 0 and suite_ran(code, out):
+        return out, ""
+    if code == 0:
+        return None, ""
+    return None, f"the suite exited {code} on base `{base}` and reported no test result"
 
 
 def gate(project: Path, tid: str, workdir: Path | None = None) -> tuple[bool, list[str]]:
@@ -480,10 +542,28 @@ def gate(project: Path, tid: str, workdir: Path | None = None) -> tuple[bool, li
                 suite_cmd = format_tests_cmd(cfg["test_suite_without_new"], runnable)
                 code, out = run_cmd(suite_cmd, wd)
                 if code != 0 and suite_ran(code, out):
-                    findings.append(
-                        f"suite excluding {names} is RED -- pre-existing breakage, "
-                        f"fix that first\n```\n{out[-1200:]}\n```"
-                    )
+                    base_out, why = _base_suite(project, cfg, wd, runnable)
+                    if base_out is not None:
+                        findings.append(
+                            f"{ENVIRONMENT_MARK}suite excluding {names} is RED -- "
+                            f"pre-existing breakage, and it is RED on base "
+                            f"`{base_ref(cfg)}` too, so it is not this branch's "
+                            f"doing and no plan can fix it. Fix the environment "
+                            f"or base itself, then `pipeline resume {tid}`"
+                            f"\n```on base\n{base_out[-1200:]}\n```"
+                            f"\n```in the ticket's worktree\n{out[-1200:]}\n```"
+                        )
+                    elif not why:
+                        findings.append(
+                            f"suite excluding {names} is RED -- pre-existing breakage, "
+                            f"fix that first\n```\n{out[-1200:]}\n```"
+                        )
+                    else:
+                        findings.append(
+                            f"suite excluding {names} is RED -- pre-existing breakage, "
+                            f"fix that first\n```\n{out[-1200:]}\n```"
+                            f"\n(base was not consulted: {why})"
+                        )
                 elif code != 0:
                     findings.append(
                         f"could not run the suite excluding {names}: {suite_cmd!r} "

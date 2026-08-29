@@ -33,7 +33,7 @@ Your three commands must satisfy exactly this:
 | `test_suite` | run everything | `verifying` passes only on exit 0 |
 | `test_suite_without_new` | run everything **except** every listed test, in one run | non-zero **and** a reported test result means pre-existing breakage |
 
-Three traps behind that table:
+Four traps behind that table:
 
 - `<path>` must be a real file. The gate copies it onto a checkout of `base`
   and re-runs `test_one` there, to prove the bug is not already fixed upstream.
@@ -51,6 +51,9 @@ Three traps behind that table:
   containing `3 failed`, `Ran 7 tests`, `test result:`, or a line starting
   `FAIL`. A runner that exits otherwise on failure and prints none of those
   must be wrapped, the same way the selector trap above is.
+- `test_suite_without_new` is re-run on a checkout of `base` whenever it is
+  red in the ticket's worktree. A suite red on both is reported as an
+  `ENVIRONMENT: ` problem, not as pre-existing breakage.
 
 `{test}` is the whole `<path>::<name>` value; `{path}` and `{name}` are its
 two halves. `{rest}` is everything after the FIRST `::` -- a Rust/Go/JVM
@@ -181,6 +184,21 @@ another's build: a test goes red for a reason that is not in that
 ticket's diff, and clears only when the source is touched. Use
 `CARGO_TARGET_DIR=~/.cache/cargo/$(basename $PWD)`, a `ccache` prefix
 per branch, or leave the cache unshared.
+
+### `worktree_teardown` -- reclaiming what the setup created
+
+Top level, under no table. Nothing ever reclaims what `worktree_setup`
+created unless a project sets this key. It runs in the same checkout,
+just before that checkout is removed, from both removal paths: a
+finished ticket's worktree, and the gate's throwaway checkout of `base`:
+
+```toml
+worktree_teardown = "rm -rf ~/.cache/cargo/$(basename $PWD)"
+```
+
+`$(basename $PWD)` is the same string `worktree_setup` saw in that same
+checkout, so a keyed cache matches by construction. In the gate
+checkout that string is always the literal `base`, never a ticket id.
 
 ### `.project/stages/<name>.extra.md` -- prose for one stage
 

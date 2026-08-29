@@ -357,6 +357,19 @@ burns validation attempts on it. Key the cache
 (`CARGO_TARGET_DIR=~/.cache/cargo/$(basename $PWD)`, `ccache` with a per-branch
 prefix) or leave it unshared.
 
+Nothing ever reclaims what `worktree_setup` created, unless the project also
+sets `worktree_teardown`:
+
+```toml
+worktree_teardown = "rm -rf ~/.cache/cargo/$(basename $PWD)"
+```
+
+It runs in the same checkout, just before that checkout is removed, from both
+removal paths: a finished ticket's worktree, and the gate's throwaway checkout
+of `base`. `$(basename $PWD)` is the same string `worktree_setup` saw, so a
+keyed cache matches by construction. In the gate checkout that string is
+always the literal `base`, never a ticket id.
+
 ## Watching a run
 
 Every spawn gets a session id and a log:
@@ -440,6 +453,11 @@ A Tier A failure whose findings include `test file <path> does not exist`
 charges nothing at all. `gate_result()` returns `no-test-file` and the ticket
 escalates on the first one. Only `triage` may write `test_file`, so
 re-planning cannot repair it and a counter would only delay the human.
+
+A Tier A failure at `plan-validation` whose findings are all `ENVIRONMENT: `
+findings -- `test_suite_without_new` is red on base too, not this branch's
+doing -- escalates to a human and charges no counter, because no re-plan can
+fix an environment that is already broken on base.
 
 `stale_regate` is the one counter a later pass credits back: a passing
 `revalidating` writes `stale_regate_cleared`, capped at the failures already

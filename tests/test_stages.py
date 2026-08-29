@@ -399,7 +399,8 @@ def test_the_config_skill_names_every_knob_the_code_reads():
     `.project/pipeline.toml`."""
     skill = C.SKILLS_DIR / "pipeline-config" / "SKILL.md"
     text = skill.read_text()
-    for knob in ("max_usd", "scale_usd", "worktree_setup", "extra.md", "pinned"):
+    for knob in ("max_usd", "scale_usd", "worktree_setup", "worktree_teardown",
+                 "extra.md", "pinned"):
         assert knob in text, f"{skill} does not mention {knob!r}"
 
 
@@ -410,6 +411,8 @@ def test_the_config_template_documents_worktree_setup():
     text = C.CONFIG_TEMPLATE.read_text()
     assert "worktree_setup" in text, (
         f"{C.CONFIG_TEMPLATE} does not document worktree_setup")
+    assert "worktree_teardown" in text, (
+        f"{C.CONFIG_TEMPLATE} does not document worktree_teardown")
 
 
 def test_stage_config_can_take_a_per_project_override(tmp_path):

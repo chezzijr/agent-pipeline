@@ -174,7 +174,14 @@ def transition(stage: str, result: str, counters: dict, klass: str = "bugfix"):
             # the ticket's `test_file` names no file. `CLAIMS` gives that
             # field to `triage` alone, so no counter is charged and no stage
             # is retried -- a human repairs the field or re-runs triage.
-            return "escalated", counters
+            return "escalated", c
+        case ("plan-validation", "environment"):
+            # the suite is red on base too, so it is neither a bad plan nor a
+            # formatting slip -- no re-plan can fix an environment that is
+            # already broken on base. No counter is charged. This row is
+            # explicit rather than left to the unknown-pair fallback, which
+            # would escalate identically but without a row a reader can find.
+            return "escalated", c
         case ("revalidating", "ok"):
             return forgive("stale_regate", "implementing")
         case ("revalidating", "fail"):

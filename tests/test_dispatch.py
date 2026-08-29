@@ -58,6 +58,37 @@ def test_a_done_ticket_does_release_its_worktree():
     shutil.rmtree(d, ignore_errors=True)
 
 
+def test_a_done_ticket_runs_worktree_teardown():
+    """The dispatcher's cleanup path must pass the project config through to
+    `drop_worktree()`, or a project's `worktree_teardown` never runs."""
+    d, _ = git_project()
+    meta = {"id": "TICKET-001", "branch": "ticket/001"}
+    marker = Path(tempfile.mkdtemp()) / "TICKET-001.marker"
+    marker.write_text("keyed cache\n")
+    with open(d / ".project" / "pipeline.toml", "a") as f:
+        f.write(f'worktree_teardown = "rm -f {marker}"\n')
+    wt = supervisor.ensure_worktree(d, meta, {"base": "main"})
+    (d / ".project/tickets/TICKET-001.md").write_text(
+        FIXTURE.replace("stage: plan-validation", "stage: done"))
+    supervisor.start(d, d / ".project/tickets/TICKET-001.md", harness("fake"), {})
+    assert not marker.exists(), "worktree_teardown never ran through the dispatcher cleanup path"
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_a_done_ticket_without_a_config_still_releases_its_worktree():
+    """`project_config()` raises for a project with no `.project/pipeline.toml`.
+    The cleanup path must fall back rather than strand the worktree."""
+    d, _ = git_project()
+    meta = {"id": "TICKET-001", "branch": "ticket/001"}
+    wt = supervisor.ensure_worktree(d, meta, {"base": "main"})
+    (d / ".project" / "pipeline.toml").unlink()
+    (d / ".project/tickets/TICKET-001.md").write_text(
+        FIXTURE.replace("stage: plan-validation", "stage: done"))
+    supervisor.start(d, d / ".project/tickets/TICKET-001.md", harness("fake"), {})
+    assert not wt.is_dir(), "a missing project config stranded a finished ticket's worktree"
+    shutil.rmtree(d, ignore_errors=True)
+
+
 def test_a_broken_project_config_escalates_one_ticket_not_the_process():
     """`project_config` used to `sys.exit(1)`, so one unconfigured project took
     the whole loop -- and every other ticket's agent -- down with it."""
@@ -1909,3 +1940,21 @@ def test_a_spawn_that_keeps_failing_escalates_one_ticket_and_keeps_the_loop():
     finally:
         supervisor.spawn = orig
         shutil.rmtree(d, ignore_errors=True)
+
+
+def test_environment_only_classifies_a_suite_red_on_base_and_nothing_else():
+    from pipeline.core.gate import environment_only, ENVIRONMENT_MARK
+    from pipeline.daemon.supervisor import gate_result
+    env = [ENVIRONMENT_MARK + "suite excluding `t` is RED -- pre-existing "
+           "breakage, and it is RED on base `main` too"]
+    assert environment_only(env) is True
+    assert environment_only([]) is False
+    assert environment_only(env + ["`files_declared` is empty"]) is False
+    assert environment_only(
+        ["the plan quotes " + ENVIRONMENT_MARK + " in its own output"]) is False
+
+    assert gate_result(False, env, "plan-validation") == "environment"
+    assert gate_result(False, env, "revalidating") == "fail"
+    assert gate_result(
+        False, env + ["`files_declared` is empty"], "plan-validation") == "bad-plan"
+    assert gate_result(True, [], "plan-validation") == "ok"
