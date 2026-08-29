@@ -407,6 +407,17 @@ def test_the_config_template_documents_worktree_setup():
         f"{C.CONFIG_TEMPLATE} does not document worktree_teardown")
 
 
+def test_the_file_ticket_skill_requires_a_code_anchor_and_a_docs_only_shape():
+    """TICKET-098: the summary guidance never says to anchor the mechanism
+    in code (a `path:line` plus a quoted snippet), and has no shape for a
+    docs-only ticket like TICKET-084's, which asserted the skill's own text
+    in a test."""
+    skill = C.SKILL_TEMPLATE
+    text = skill.read_text()
+    assert "path:line" in text, f"{skill} does not require a path:line anchor"
+    assert "docs-only" in text, f"{skill} does not name the docs-only shape"
+
+
 def test_stage_config_can_take_a_per_project_override(tmp_path):
     """TICKET-038: `stage_config()` resolves against the packaged stage only,
     with no way for a project to add a model, tool or skill of its own. A
