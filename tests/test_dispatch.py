@@ -1825,3 +1825,22 @@ def test_spawn_command_survives_a_transient_blockingioerror_from_fork():
         supervisor.subprocess = orig
         shutil.rmtree(d, ignore_errors=True)
     assert calls["n"] == 2
+
+
+def test_a_spawn_that_keeps_failing_escalates_one_ticket_and_keeps_the_loop():
+    d, _ = git_project()
+    path = d / ".project" / "tickets" / "TICKET-001.md"
+    path.write_text(FIXTURE.replace("stage: plan-validation", "stage: implementing"))
+
+    def always_fails(*a, **kw):
+        raise BlockingIOError(11, "Resource temporarily unavailable")
+
+    orig = supervisor.spawn
+    supervisor.spawn = always_fails
+    try:
+        result = supervisor.start(d, path, harness("fake"), {})
+        assert result == (True, None)
+        assert Ticket.load(path).stage == "escalated"
+    finally:
+        supervisor.spawn = orig
+        shutil.rmtree(d, ignore_errors=True)

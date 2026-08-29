@@ -779,7 +779,10 @@ def start(project: Path, path: Path, hcfg: dict, inflight: dict,
         # crash mid-command leaves nothing for the expiry path to recover
         t.take_lease(f"{stage}-{os.getpid()}")
         t.save()
-        rec = spawn_command(project, wt, tid, stage, cmd, kind, emit, env=env)
+        try:
+            rec = spawn_command(project, wt, tid, stage, cmd, kind, emit, env=env)
+        except OSError as e:
+            return bail(f"spawn failed: {e}")
         # `meta` is not optional: start()'s own overlap check reads it off every
         # in-flight record
         rec["path"], rec["tid"], rec["meta"], rec["before"] = path, tid, t, None
@@ -856,13 +859,12 @@ def start(project: Path, path: Path, hcfg: dict, inflight: dict,
     drop_result(project, tid)  # L3: never let a previous run's verdict be reused
     try:
         rec = spawn(project, wt, tid, stage, hcfg, poller, emit)
-    except PipelineError as e:
-        # The lease is already taken. Letting this out propagates through
-        # tick() and run(), `finally: shut_down` terminates every OTHER
-        # in-flight agent, and the process dies -- the exact failure the
-        # `project_config` branch above exists to prevent, and invariant 6
-        # forbids. A harness that cannot register hooks is a fact about this
-        # ticket's stage; escalate the ticket, keep the loop.
+    except (PipelineError, OSError) as e:
+        # The lease is already taken. Letting this out leaves the ticket
+        # holding a lease whose holder pid is the live dispatcher, so nothing
+        # retries it until the lease expires 30 minutes later. A harness that
+        # cannot register hooks, or a fork that cannot get a pid, is a fact
+        # about this ticket's stage; escalate the ticket, keep the loop.
         return bail(str(e))
     rec["path"] = path
     rec["tid"] = tid
