@@ -511,6 +511,8 @@ def render(data: dict) -> str:
     if data["gate_failures"]:
         for f in data["gate_failures"]:
             out.append(f"  {f['n']:>3}  {f['finding']}")
+        out.append("  a finding that repeats is a missing project rule: pin it in "
+                  ".project/stages/<stage>.extra.md (read from HEAD -- commit it)")
     else:
         out.append("  no FAIL gate events in this window")
 
