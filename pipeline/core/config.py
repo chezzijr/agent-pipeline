@@ -182,19 +182,28 @@ def sync_pins(project: Path) -> list[Path]:
     return removed
 
 
-TEST_PLACEHOLDER_RE = re.compile(r"\{(test|path|name)(?::([^{}]*))?\}")
+TEST_PLACEHOLDER_RE = re.compile(r"\{(test|path|name|rest)(?::([^{}]*))?\}")
 
 
 def selector_parts(test: str) -> dict:
-    """One `<path>::<name>` test id split into the three placeholder values.
+    """One `<path>::<name>` test id split into the four placeholder values.
+
+    `rest` is everything after the FIRST `::`, falling back to the whole id
+    when there is no `::` -- the module selector a Rust/Go/JVM runner wants,
+    while `path` stays the file the gate copies.
 
     Not named `test_parts`: pytest collects any module-level `test*` name a
     test module imported and runs it as a test with a missing fixture."""
-    return {"test": test, "path": test.split("::")[0], "name": test.split("::")[-1]}
+    return {
+        "test": test,
+        "path": test.split("::")[0],
+        "name": test.split("::")[-1],
+        "rest": test.split("::", 1)[-1],
+    }
 
 
 def format_tests_cmd(template: str, tests: list) -> str:
-    """Substitute `{test}`, `{path}` and `{name}` for a ticket's whole list.
+    """Substitute `{test}`, `{path}`, `{name}` and `{rest}` for a ticket's whole list.
 
     A bare `{test}` is every test, space-joined. `{test:<prefix>}` repeats
     `<prefix>` before each one: `pytest --deselect` takes a single value at

@@ -367,3 +367,11 @@ def test_selector_parts_has_a_rest_placeholder_for_non_pytest_selectors():
 
     cmd = format_test_cmd("cargo test {rest}", "src/vm.rs::vm::tests::foo")
     assert cmd == "cargo test vm::tests::foo"
+
+
+def test_selector_parts_rest_falls_back_to_the_whole_value_without_a_separator():
+    """A pytest selector has no `::` to split on the first occurrence of, so
+    `rest` must degrade to the whole id like `path` and `name` already do --
+    an empty `{rest}` would make `cargo test ''` match every test."""
+    assert selector_parts("tests/t.py")["rest"] == "tests/t.py"
+    assert format_test_cmd("cargo test {rest}", "tests/t.py") == "cargo test tests/t.py"
