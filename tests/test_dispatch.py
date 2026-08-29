@@ -1771,3 +1771,57 @@ def test_a_transient_blockingioerror_from_tick_must_not_kill_every_inflight_chil
     assert not killed, (
         "a transient BlockingIOError from one tick() must not kill every "
         f"other inflight ticket's child, but shut_down saw {list(killed)}")
+
+
+def test_a_spawn_survives_a_transient_blockingioerror_from_fork():
+    d = project()
+    calls = {"n": 0}
+    real_popen = subprocess.Popen
+
+    class Shim:
+        PIPE = subprocess.PIPE
+        STDOUT = subprocess.STDOUT
+
+        def Popen(self, *a, **kw):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise BlockingIOError(11, "Resource temporarily unavailable")
+            return real_popen(*a, **kw)
+
+    orig = supervisor.subprocess
+    supervisor.subprocess = Shim()
+    try:
+        rec = supervisor.spawn(d, d, "TICKET-001", "review", harness("fake"))
+        rec["proc"].wait()
+        supervisor.close_child(rec)
+    finally:
+        supervisor.subprocess = orig
+        shutil.rmtree(d, ignore_errors=True)
+    assert calls["n"] == 2
+
+
+def test_spawn_command_survives_a_transient_blockingioerror_from_fork():
+    d = project()
+    calls = {"n": 0}
+    real_popen = subprocess.Popen
+
+    class Shim:
+        PIPE = subprocess.PIPE
+        STDOUT = subprocess.STDOUT
+
+        def Popen(self, *a, **kw):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise BlockingIOError(11, "Resource temporarily unavailable")
+            return real_popen(*a, **kw)
+
+    orig = supervisor.subprocess
+    supervisor.subprocess = Shim()
+    try:
+        rec = supervisor.spawn_command(d, d, "TICKET-001", "verifying", "true")
+        rec["proc"].wait()
+        rec["fh"].close()
+    finally:
+        supervisor.subprocess = orig
+        shutil.rmtree(d, ignore_errors=True)
+    assert calls["n"] == 2

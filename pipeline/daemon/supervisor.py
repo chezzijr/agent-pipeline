@@ -32,7 +32,7 @@ from pipeline.core.ticket import (Ticket, all_tickets, drop_result,
                                   tickets_dir, validate_meta)
 from pipeline.core.worktree import (base_ref, dirty_snapshot, drop_worktree,
                                     ensure_worktree, git_ignored, project_env,
-                                    run_cmd, strip_settings_sources,
+                                    retry_eagain, run_cmd, strip_settings_sources,
                                     tree_snapshot, worktree)
 from pipeline.daemon import registry
 from pipeline.daemon.server import Poller
@@ -493,9 +493,9 @@ def spawn(project: Path, wt: Path, tid: str, stage: str, hcfg: dict,
         # direct `spawn()` call, or a caller that predates the daemon --
         # redirect straight to the log, because an undrained pipe deadlocks
         # the child at 64K.
-        proc = subprocess.Popen(cmd, shell=True, cwd=wt,
-                                stdout=subprocess.PIPE if poller else fh,
-                                stderr=subprocess.STDOUT, env=env)
+        proc = retry_eagain(lambda: subprocess.Popen(
+            cmd, shell=True, cwd=wt, stdout=subprocess.PIPE if poller else fh,
+            stderr=subprocess.STDOUT, env=env))
         pipe = proc.stdout
     mode = "interactive" if interactive else "batch"
     rec = {"proc": proc, "fh": fh, "prompt": prompt, "settings": settings,
@@ -574,8 +574,9 @@ def spawn_command(project: Path, wt: Path, tid: str, stage: str, cmd: str,
     fh = log.open("w")
     fh.write(f"$ {cmd}\n\n")
     fh.flush()
-    proc = subprocess.Popen(cmd, shell=True, cwd=wt, stdout=fh,
-                            stderr=subprocess.STDOUT, env=env or project_env())
+    proc = retry_eagain(lambda: subprocess.Popen(
+        cmd, shell=True, cwd=wt, stdout=fh,
+        stderr=subprocess.STDOUT, env=env or project_env()))
     print(f"  start {tid}: {stage} (script) pid {proc.pid} -> {log.name}")
     emit("stage_start", ticket=tid, stage=stage, model=None, mode=kind,
          pid=proc.pid, log=str(log), wt=str(wt))
