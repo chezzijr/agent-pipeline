@@ -1761,12 +1761,12 @@ def test_the_session_entry_omits_cost_when_no_result_event_arrived():
 
 
 def test_a_transient_blockingioerror_from_tick_must_not_kill_every_inflight_child():
-    """TICKET-086: `run()` does not wrap its `tick()` call, so a transient
-    `BlockingIOError` (fork returning EAGAIN) reaches `finally:
-    shut_down(project, inflight)`, which SIGTERMs every other ticket still
-    running -- exactly the failure `serve()` already avoids per project.
-    Expected: the loop survives a transient `BlockingIOError` from `tick()`
-    and every OTHER inflight child keeps running, so `killed` stays empty."""
+    """TICKET-086: `run()` now wraps its `tick()` call, so a transient
+    `BlockingIOError` (fork returning EAGAIN) does not reach `finally:
+    shut_down(project, inflight)` and SIGTERM every other ticket still
+    running -- exactly the failure `serve()` already avoided per project.
+    Expected: `tick()` runs again after the raise, with `TICKET-999` still
+    inflight and un-SIGTERMed, and the run then drains and returns."""
     d = project()
     killed = {}
 
@@ -1781,12 +1781,15 @@ def test_a_transient_blockingioerror_from_tick_must_not_kill_every_inflight_chil
 
     other_rec = {"proc": None}
     calls = {"n": 0}
+    seen = []
 
     def fake_tick(project, hcfg, inflight, max_parallel, poller, emit, stopping):
-        inflight["TICKET-999"] = other_rec
         calls["n"] += 1
         if calls["n"] == 1:
+            inflight["TICKET-999"] = other_rec
             raise BlockingIOError(11, "Resource temporarily unavailable")
+        seen.append(sorted(inflight))
+        inflight.clear()
         return False
 
     from pipeline.daemon import registry as R
@@ -1802,6 +1805,8 @@ def test_a_transient_blockingioerror_from_tick_must_not_kill_every_inflight_chil
             orig_lock, orig_tick, orig_shut_down)
         shutil.rmtree(d, ignore_errors=True)
 
+    assert calls["n"] >= 2, f"expected tick() to run again after the raise, got {calls['n']} calls"
+    assert seen[0] == ["TICKET-999"], f"expected TICKET-999 still inflight on tick 2, got {seen}"
     assert not killed, (
         "a transient BlockingIOError from one tick() must not kill every "
         f"other inflight ticket's child, but shut_down saw {list(killed)}")

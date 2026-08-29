@@ -1430,8 +1430,18 @@ def run(project: Path, once: bool, interval: int, harness_name: str,
                 print(f"  dispatcher source changed ({moved}) -- ending the "
                       f"loop so a restart runs the merged code")
                 return
-            worked = tick(project, reload(), inflight, max_parallel, poller,
-                          emit, (lambda: True) if moved else stopping)
+            try:
+                worked = tick(project, reload(), inflight, max_parallel, poller,
+                              emit, (lambda: True) if moved else stopping)
+            except Exception as e:
+                # one failing tick must never reach `finally: shut_down(project,
+                # inflight)` and SIGTERM every OTHER ticket's agent -- `serve()`
+                # has caught per project since it existed (invariant 6). A test
+                # that detects a runaway loop from a fake `tick()` must raise a
+                # BaseException subclass or this catch eats it: see
+                # test_run_does_not_swallow_a_loop_detector_that_subclasses_baseexception
+                print(f"  {project}: tick failed ({e.__class__.__name__}: {e})")
+                worked = False
             if once and not inflight and not worked:
                 return  # --once drains the queue, it does not do a single pass
             poller.poll(1 if inflight else interval)
