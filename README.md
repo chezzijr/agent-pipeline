@@ -74,6 +74,7 @@ pipeline --project ~/code/myproject resume  TICKET-001 \
 pipeline --project ~/code/myproject resume  TICKET-001 \
     --stage planning --grant plan_validation_attempts   # hand back one spent attempt, not the whole budget
 pipeline --project ~/code/myproject resume  TICKET-001 --stage planning --note "the escalation was a flaky test"
+pipeline --project ~/code/myproject skills --refresh   # bring this project's skill copies up to the packaged templates
 ```
 
 `init` also installs `.claude/skills/file-ticket/SKILL.md` -- the protocol a
@@ -82,6 +83,12 @@ which is how a session sets `test_one`, `test_suite` and `test_suite_without_new
 for a project pytest's defaults do not fit, and proves they work before saying so.
 It prints where it put each. An existing file is kept, so a project that
 customised one keeps its version.
+
+`init` names an existing copy's state: `stale` when it is untouched since
+install but the packaged template has since changed, or `customised` when the
+project edited it. `pipeline skills` reports the same states without
+re-running `init`. `--refresh` rewrites only a stale copy; `--refresh --force`
+is required to overwrite a customised one.
 
 Once `.project/` is committed, `pipeline.toml` is read from git `HEAD`, so an
 edit takes effect at the next commit -- a ticket working on a branch must not

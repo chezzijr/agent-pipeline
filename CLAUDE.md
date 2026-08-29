@@ -336,6 +336,11 @@ still worth it: it prints one line per case, and the failure names the case.
   skips the helper reopens TICKET-086, and a test that detects a runaway loop
   by raising from a fake `tick()` must raise a `BaseException` subclass, or
   either catch eats it and the test hangs instead of failing.
+- **`init` records the sha256 of each skill it writes in
+  `<project>/.project/skills.json`.** That record is the only way
+  `skill_status()` tells a stale copy from a customised one; a copy with no
+  record reads as `unknown` and is never rewritten without `--force`. A
+  symlinked copy, which is this repo's own layout, is never written at all.
 
 ## Conventions
 
