@@ -34,6 +34,14 @@ def test_plan_validation_can_mark_an_item_unverified():
         "plan-validation is never told about the per-project readonly allowlist"
 
 
+def test_triage_checks_the_test_file_path_exists():
+    text = (C.STAGES_DIR / "triage.md").read_text()
+    assert "test -f" in text, \
+        "triage is never told to check that the path half of test_file is a file"
+    assert "escalat" in text.lower(), \
+        "triage is never told to check that the path half of test_file is a file"
+
+
 def test_composed_prompt_has_common_rules_and_no_frontmatter():
     f = C.compose_prompt("review")
     text = f.read_text()
