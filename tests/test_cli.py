@@ -493,6 +493,32 @@ def test_init_keeps_a_customised_file_ticket_skill():
     shutil.rmtree(d, ignore_errors=True)
 
 
+def test_reinit_does_not_detect_a_packaged_skill_update():
+    """A scaffolded project's skill copy is a one-time write: `init` only
+    checks the file exists, never whether it matches the packaged template.
+    So when the packaged `file-ticket` skill changes (a real upstream edit,
+    not a project customisation), a project scaffolded before the change
+    silently keeps the old copy forever, and `init` never says so."""
+    from pipeline.core.config import SKILL_TEMPLATE
+    d = Path(tempfile.mkdtemp())
+    r = cli(d, "init")
+    assert r.returncode == 0, r.stderr
+    skill = d / ".claude" / "skills" / "file-ticket" / "SKILL.md"
+    original = SKILL_TEMPLATE.read_text()
+    try:
+        SKILL_TEMPLATE.write_text(original + "\n<!-- upstream update -->\n")
+        r = cli(d, "init")
+        assert r.returncode == 0, r.stderr
+        assert skill.read_text() != SKILL_TEMPLATE.read_text(), (
+            "the scaffolded copy and the packaged template have drifted")
+        assert "stale" in r.stdout or "differs" in r.stdout or "drift" in r.stdout, (
+            f"expected `init` to report the drift between {skill} and "
+            f"{SKILL_TEMPLATE}, got: {r.stdout!r}")
+    finally:
+        SKILL_TEMPLATE.write_text(original)
+    shutil.rmtree(d, ignore_errors=True)
+
+
 def test_a_human_gate_records_the_moment_the_human_acted():
     """View 6 measures time parked in a human gate: entering it is a
     `transition` event, and leaving it was "the next transition on that
