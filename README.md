@@ -449,6 +449,11 @@ charges `structural_gate_failures` instead, because `plan_validation_attempts`
 bounds bad plans and the gate never judged that plan. It stays at 2 whatever
 the class, the same shape as `lease_expiries` and `no_result`.
 
+A Tier A failure at `plan-validation` whose findings are all `ENVIRONMENT: `
+findings -- `test_suite_without_new` is red on base too, not this branch's
+doing -- escalates to a human and charges no counter, because no re-plan can
+fix an environment that is already broken on base.
+
 `stale_regate` is the one counter a later pass credits back: a passing
 `revalidating` writes `stale_regate_cleared`, capped at the failures already
 charged, and the bound is compared against the difference. `pipeline resume
