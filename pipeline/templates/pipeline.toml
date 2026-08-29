@@ -18,23 +18,27 @@ test_suite_without_new  = "pytest {test:--deselect }"
 #   * `test_suite_without_new` must run everything BUT that test. A red run
 #     must exit 1 or 101, or print a test count, or the gate reports "could
 #     not run" instead of pre-existing breakage.
-# Each of {test}, {path} and {name} is shlex.quote'd and substituted; every
-# other brace -- ${t##*::}, awk '{print $1}' -- reaches the shell as written.
+#   * {rest} is everything after the FIRST :: -- the module selector a
+#     Rust/Go/JVM runner wants, while {path} stays the file the gate copies
+# Each of {test}, {path}, {name} and {rest} is shlex.quote'd and substituted;
+# every other brace -- ${t##*::}, awk '{print $1}' -- reaches the shell as
+# written.
 #
 # `test_file` may hold a list -- a bug needing more than one failing test to
 # reproduce. `test_one` runs once PER test in the list; `test_suite_without_new`
-# runs once for ALL of them. A bare `{test}`, `{path}` or `{name}` substitutes
-# every value, space-joined. `{test:<prefix>}` repeats `<prefix>` before each
-# value -- the only way a flag that takes one value at a time (like pytest's
-# `--deselect`) can exclude more than one test in a single run. `{test:}` is
-# the space-joined form written out, for a runner that takes several values
-# after one flag.
+# runs once for ALL of them. A bare `{test}`, `{path}`, `{name}` or `{rest}`
+# substitutes every value, space-joined. `{test:<prefix>}` repeats `<prefix>`
+# before each value -- the only way a flag that takes one value at a time
+# (like pytest's `--deselect`) can exclude more than one test in a single
+# run. `{test:}` is the space-joined form written out, for a runner that
+# takes several values after one flag.
 #
 # Cargo, verified end to end against `cargo test`. `--skip` takes one value at
 # a time, so a two-test ticket needs `{name:--skip }`:
 # test_one               = "cargo test {name}"
 # test_suite             = "cargo test"
 # test_suite_without_new = "cargo test -- {name:--skip }"
+# test_one               = "cargo test {rest}"   # src/vm.rs::vm::tests::foo
 
 # The branch tickets are cut from, and the one Tier A re-runs {test} against.
 base                    = "main"

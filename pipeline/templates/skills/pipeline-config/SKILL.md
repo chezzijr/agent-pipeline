@@ -16,8 +16,8 @@ yourself before you write anything.
 
 `test_file` holds one test, `<path>::<name>` (e.g.
 `tests/repro.rs::test_add_is_wrong`), or a list of them, for a bug that needs
-more than one failing test to reproduce. `{test}`, `{path}` and `{name}` are
-substituted with a regex, not `str.format`, after `shlex.quote`. For a single
+more than one failing test to reproduce. `{test}`, `{path}`, `{name}` and
+`{rest}` are substituted with a regex, not `str.format`, after `shlex.quote`. For a single
 test each is a bare value. For a list, a bare placeholder is every value
 space-joined; `{test:<prefix>}` repeats `<prefix>` before each value, which is
 the only way a flag that takes one value at a time (like pytest's
@@ -53,8 +53,11 @@ Three traps behind that table:
   must be wrapped, the same way the selector trap above is.
 
 `{test}` is the whole `<path>::<name>` value; `{path}` and `{name}` are its
-two halves. All three are `shlex.quote`d and substituted; every other brace
-reaches the shell unchanged.
+two halves. `{rest}` is everything after the FIRST `::` -- a Rust/Go/JVM
+selector `src/vm.rs::vm::tests::foo` keeps `{path}` a real file
+(`src/vm.rs`) while `{rest}` is `vm::tests::foo`. All four are
+`shlex.quote`d and substituted; every other brace reaches the shell
+unchanged.
 
 ```toml
 # cargo
@@ -64,7 +67,9 @@ test_suite_without_new = "cargo test -- --skip {name}"
 ```
 
 `--skip` takes one value at a time, so a two-test ticket needs
-`cargo test -- {name:--skip }` instead.
+`cargo test -- {name:--skip }` instead. A multi-segment selector like
+`src/vm.rs::vm::tests::foo` needs `{rest}`, not `{name}`, as the module
+path: `test_one = "cargo test {rest}"`.
 
 ## Prove it before you claim it works
 
@@ -77,10 +82,10 @@ python3 - <<'PY'
 import re, shlex, subprocess, tomllib, pathlib
 cfg = tomllib.loads(pathlib.Path(".project/pipeline.toml").read_text())
 tests = ["tests/repro.rs::test_add_is_wrong"]     # <- your real failing test(s)
-RE = re.compile(r"\{(test|path|name)(?::([^{}]*))?\}")
+RE = re.compile(r"\{(test|path|name|rest)(?::([^{}]*))?\}")
 def fill(template, ts):
     def sub(m):
-        parts = [{"test": t, "path": t.split("::")[0], "name": t.split("::")[-1]}[m.group(1)] for t in ts]
+        parts = [{"test": t, "path": t.split("::")[0], "name": t.split("::")[-1], "rest": t.split("::", 1)[-1]}[m.group(1)] for t in ts]
         return " ".join((m.group(2) or "") + shlex.quote(v) for v in dict.fromkeys(parts))
     return RE.sub(sub, template)
 def run(c):
