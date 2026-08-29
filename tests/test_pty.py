@@ -527,6 +527,34 @@ def test_the_geometry_marker_round_trips_and_clamps():
     assert s.display[0].strip() == "hi"
 
 
+def test_the_headless_notice_prints_once_per_process_not_per_ticket(capsys):
+    """TICKET-096: two spawns of the same interactive stage in one process,
+    with nothing attached, must print the headless notice once. Today it
+    reprints on every spawn, burying the per-ticket lines in a notice that is
+    true of the whole setup, not the ticket."""
+    tmp = Path(tempfile.mkdtemp())
+    plain = Poller()
+    try:
+        capsys.readouterr()
+        rec = supervisor.spawn(tmp, tmp, "TICKET-001", "planning",
+                               harness("fake"), plain)
+        rec["proc"].wait()
+        supervisor.close_child(rec)
+        rec = supervisor.spawn(tmp, tmp, "TICKET-002", "planning",
+                               harness("fake"), plain)
+        rec["proc"].wait()
+        supervisor.close_child(rec)
+        out = capsys.readouterr().out
+        count = out.count("is interactive, but")
+        assert count == 1, \
+            f"expected the headless notice once per process, got {count}: {out!r}"
+    finally:
+        rec["proc"].terminate()
+        rec["proc"].wait()
+        supervisor.close_child(rec)
+        plain.close()
+
+
 def test_an_interactive_spawn_survives_a_transient_blockingioerror_from_fork():
     calls = {"n": 0}
     real_fork = pty.fork
