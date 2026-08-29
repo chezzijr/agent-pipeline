@@ -8,11 +8,11 @@ from pathlib import Path
 
 from pipeline.core import PipelineError, reset_notices
 from pipeline.core.config import (cap_config, format_test_cmd,
-                                  format_tests_cmd, harness, pin_dir,
-                                  pin_path, project_config,
+                                  format_tests_cmd, harness, install_skill,
+                                  pin_dir, pin_path, project_config,
                                   project_max_parallel, render,
                                   selector_failure, selector_parts,
-                                  stage_config, stage_extra,
+                                  skill_status, stage_config, stage_extra,
                                   suite_failure)
 from pipeline.daemon.registry import config_dir
 from tests.helpers import ROOT, git_project
@@ -433,3 +433,21 @@ def test_selector_parts_rest_falls_back_to_the_whole_value_without_a_separator()
     an empty `{rest}` would make `cargo test ''` match every test."""
     assert selector_parts("tests/t.py")["rest"] == "tests/t.py"
     assert format_test_cmd("cargo test {rest}", "tests/t.py") == "cargo test tests/t.py"
+
+
+def test_skill_status_reads_an_unrecorded_difference_as_unknown():
+    """A copy that differs from the packaged template with no install record
+    (a project scaffolded before `skills.json` existed) must not read as
+    `stale` -- `stale` implies a known-good install that drifted, and nothing
+    here knows that. Installing it records the digest, so the same copy then
+    reads `current`."""
+    d = Path(tempfile.mkdtemp())
+    skill = d / ".claude" / "skills" / "file-ticket" / "SKILL.md"
+    skill.parent.mkdir(parents=True)
+    skill.write_text("# ours\n")
+    states = {name: state for name, _, state in skill_status(d)}
+    assert states["file-ticket"] == "unknown", states
+
+    install_skill(d, "file-ticket")
+    states = {name: state for name, _, state in skill_status(d)}
+    assert states["file-ticket"] == "current", states

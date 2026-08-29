@@ -190,6 +190,76 @@ def sync_pins(project: Path) -> list[Path]:
     return removed
 
 
+SKILL_MARKS = ".project/skills.json"
+
+
+def project_skill(project: Path, name: str) -> Path:
+    return project / ".claude" / "skills" / name / "SKILL.md"
+
+
+def skill_digest(text: str) -> str:
+    return hashlib.sha256(text.encode()).hexdigest()
+
+
+def skill_marks(project: Path) -> dict:
+    """The digest `init` recorded for each skill it installed, or `{}` when
+    there is no manifest, it is unreadable, or it is not a dict of strings --
+    so an unrecorded copy always reads as unknown, never as pristine."""
+    p = project / SKILL_MARKS
+    try:
+        marks = json.loads(p.read_text())
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(marks, dict) or not all(isinstance(v, str) for v in marks.values()):
+        return {}
+    return marks
+
+
+def mark_skill(project: Path, name: str, text: str) -> None:
+    marks = {**skill_marks(project), name: skill_digest(text)}
+    p = project / SKILL_MARKS
+    p.parent.mkdir(parents=True, exist_ok=True)
+    write_atomic(p, json.dumps(marks, indent=2, sort_keys=True) + "\n")
+
+
+def skill_status(project: Path) -> list[tuple[str, Path, str]]:
+    """One `(name, dst, state)` per packaged skill: `linked` (a symlink --
+    never rewritten, checked FIRST so a symlinked copy is never mistaken for
+    a content state), `absent` (not installed), `current` (matches the
+    packaged template), `stale` (differs from the template but matches the
+    recorded install), `customised` (differs from both), `unknown` (differs,
+    no record)."""
+    marks = skill_marks(project)
+    out = []
+    for src in sorted(SKILLS_DIR.iterdir()):
+        name = src.name
+        dst = project_skill(project, name)
+        template = (src / "SKILL.md").read_text()
+        if dst.is_symlink():
+            state = "linked"
+        elif not dst.is_file():
+            state = "absent"
+        elif dst.read_text() == template:
+            state = "current"
+        elif marks.get(name) == skill_digest(dst.read_text()):
+            state = "stale"
+        elif name in marks:
+            state = "customised"
+        else:
+            state = "unknown"
+        out.append((name, dst, state))
+    return out
+
+
+def install_skill(project: Path, name: str) -> Path:
+    text = (SKILLS_DIR / name / "SKILL.md").read_text()
+    dst = project_skill(project, name)
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    write_atomic(dst, text)
+    mark_skill(project, name, text)
+    return dst
+
+
 TEST_PLACEHOLDER_RE = re.compile(r"\{(test|path|name|rest)(?::([^{}]*))?\}")
 
 
