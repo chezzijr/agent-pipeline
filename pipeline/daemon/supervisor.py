@@ -684,8 +684,8 @@ def unwind_cmd(sha: str) -> str:
             f"git reset --hard {q} && git clean -fd\n")
 
 
-def note_wait(t: Ticket, held: tuple[str, str] | None) -> None:
-    """Record why `files_conflict` is holding `t`, so `ls` can say so.
+def note_wait(t: Ticket, held: dict | None) -> None:
+    """Record why `start()` is holding `t`, so `ls` can say so.
 
     Advisory display only, never read back as control flow. Writes only when
     the reason changes -- `ticket_rows()` computes `stale` from this file's
@@ -696,9 +696,9 @@ def note_wait(t: Ticket, held: tuple[str, str] | None) -> None:
             t.save()
         return
     prev = t.extra.get("waiting")
-    if isinstance(prev, dict) and prev.get("on") == held[0] and prev.get("file") == held[1]:
+    if isinstance(prev, dict) and {k: v for k, v in prev.items() if k != "since"} == held:
         return
-    t.extra["waiting"] = {"on": held[0], "file": held[1], "since": now().isoformat()}
+    t.extra["waiting"] = {**held, "since": now().isoformat()}
     t.save()
 
 
@@ -771,7 +771,7 @@ def start(project: Path, path: Path, hcfg: dict, inflight: dict,
 
     held = conflict_holder(t.frontmatter(),
                            [r["meta"].frontmatter() for r in inflight.values()])
-    note_wait(t, held)  # also clears a stale reason once the holder is gone
+    note_wait(t, {"on": held[0], "file": held[1]} if held else None)
     if held is not None:
         return False, None  # wait, do not fail -- cheap ordering without a scheduler
 
