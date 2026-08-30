@@ -64,6 +64,20 @@ GUARDED = {
     "make": {"test", "check", "lint"},
 }
 PY_MODULES_OK = {"pytest", "unittest", "tox", "nox"}
+# a sed line number or `$`, optionally a range, then `p` -- no anchors here,
+# because the only call site is SED_PRINT.fullmatch(), never .match(): a
+# start-only match would allow "40,70p;s/a/b/w out.txt", which writes past
+# the `p` through sed's `s///w` (TICKET-106).
+SED_PRINT = re.compile(r"(\d+|\$)(,(\d+|\$))?p")
+
+
+def sed_is_a_line_print(args: list[str]) -> bool:
+    """True only for `sed -n <line/range>p <file>...`. Requires `-n`, a
+    script that is exactly one line-print (fullmatch), and every operand
+    after it a bare filename -- no second flag, no `-e`, no `-f`, no `w`."""
+    return (len(args) >= 3 and args[0] == "-n"
+            and SED_PRINT.fullmatch(args[1]) is not None
+            and all(a and not a.startswith("-") for a in args[2:]))
 
 
 def split_segments(tokens: list[str]) -> list[list[str]]:
@@ -306,10 +320,17 @@ def readonly_rules(segs: list[list[str]], raw: str) -> str | None:
                 return "git worktree: only `list` is read-only"
             continue
 
-        # sed is off the allowlist on purpose -- TICKET-057. Its script
-        # writes by routes no option regex covers; the reason is spelled
-        # out because the generic one sends an agent to refile the ticket.
+        # sed is off the allowlist by name -- TICKET-057 -- except one
+        # allowlisted shape: `sed -n <line/range>p <file>...`. That is an
+        # allowlist of a known-safe form, not a blocklist of writing flags
+        # (invariant 4): sed_is_a_line_print() requires a full match against
+        # SED_PRINT, so a script that continues past the `p` (a `;` or a
+        # `w`) is refused, same as every other sed shape. The reason below
+        # is spelled out because the generic one sends an agent to refile
+        # the ticket.
         if name == "sed":
+            if sed_is_a_line_print(args):
+                continue
             return ("sed is not read-only: a sed script writes with `w`, "
                     "`s///w` and GNU `e` -- use head, tail or grep to read")
         if name in READ_TOOLS or name in TEST_RUNNERS:
