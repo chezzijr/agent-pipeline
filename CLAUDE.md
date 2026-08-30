@@ -192,7 +192,11 @@ still worth it: it prints one line per case, and the failure names the case.
   `ls`, before anything has validated anything.
 - **Only one merge runs at a time.** Two tickets merging in one tick both
   `git merge base`, and the first fast-forward moves base under the second.
-  `start()` waits, exactly like `files_conflict` does.
+  `start()` waits, exactly like `files_conflict` does. `start()` also holds a
+  `merging` ticket behind any ticket parked at a `HUMAN_GATES` stage whose
+  `files_declared` overlap -- `conflict_holder()`'s `inflight` list never sees
+  a parked ticket, so `parked_meta()` reads those tickets off disk and the
+  wait is reported through the same `waiting` key (TICKET-105).
 - **Ordering has two sources, and only one is a proxy.** `files_conflict`
   orders two tickets that declare the same file; `depends_on` in a ticket's
   frontmatter orders two that share no file at all. `start()` consults
@@ -207,7 +211,11 @@ still worth it: it prints one line per case, and the failure names the case.
   then the `git merge --no-edit <base>` that was always there. The rebase
   keeps base's history linear. The merge decides, because `git rebase`
   refuses a worktree with unstaged changes that `git merge` lands. A conflict
-  still escalates and nothing resolves one.
+  still escalates and nothing resolves one. A `git rev-list --count`
+  comparison guards the rebase: `git rebase` silently skips or empties a
+  branch commit whose patch already landed on base, and the guard restores
+  the pre-rebase tip rather than let a dropped commit vanish, so the merge
+  below lands it as a merge commit instead (TICKET-105).
 - **Snapshot before `Popen`, not after.** A baseline taken while the agent is
   already running bakes in whatever it wrote first.
 - **`--once` drains the queue**, it does not do one pass. A synchronous advance
