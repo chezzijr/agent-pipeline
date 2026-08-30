@@ -89,11 +89,15 @@ BLOCKED_READONLY = [
     "sed -n 's/a/Z/w /tmp/out.txt' f.txt",
     "sed -f /tmp/script.sed f.txt",
     "sed 's/a/b/' thing.py",
-    "sed -n '10,20p' README.md",
     "sed -E 's/a+/b/' thing.py",
     # TICKET-106: real descriptor duplication, not the raw regex's false negative
     "ls >& out.txt",
     "echo hi>out.txt", "cat a>>b", "echo x 1>f",
+    "sed -n 's/a/b/w out.txt' f.rs", "sed -i 's/a/b/' f.rs",
+    "sed -n 40,70p f.rs > out.txt",
+    # human answer 2026-08-30 14:42:11Z: each begins with a valid line print, then writes
+    "sed -n '40,70p;s/a/b/w out.txt' f.rs",
+    "sed -n '40,70p;w out.txt' f.rs",
 ]
 ALLOWED_READONLY = [
     "pytest -x", "git diff main...HEAD", "grep -rn foo .", "git log --oneline",
@@ -109,6 +113,8 @@ ALLOWED_READONLY = [
     "grep 'a > b' file.txt",
     "awk 'NR>=40 && NR<=70' f.rs",
     "jq '.a>1' f",
+    "sed -n 40,70p f.rs", "sed -n 12p f.rs", "sed -n '$p' f.rs",
+    "sed -n '10,20p' README.md",
 ]
 PROJECT_PREFIXES = [["pipeline", "ls"], ["pipeline", "status"],
                      ["./pipeline/hooks/test_dangerous_commands.py"]]
@@ -246,10 +252,11 @@ def test_the_reason_strings_the_criteria_name():
     TICKET-057's acceptance criteria, so pin the strings themselves."""
     sed_reason = ("sed is not read-only: a sed script writes with `w`, "
                   "`s///w` and GNU `e` -- use head, tail or grep to read")
-    for cmd in ("sed -n '10,20p' README.md", "sed -i s/a/b/ x.py",
+    for cmd in ("sed -i s/a/b/ x.py",
                 "sed --in s/a/Z/ f.txt", "sed -n 's/a/Z/w /tmp/out.txt' f.txt",
                 "sed -f /tmp/script.sed f.txt"):
         assert guard.verdict(cmd, True) == sed_reason, cmd
+    assert guard.verdict("sed -n '10,20p' README.md", True) is None
     assert guard.verdict("sed -i s/a/b/ thing.py", False) is None
     assert "backslash" in guard.verdict("pytest -x \\\ntests/test_x.py", True)
     assert guard.verdict("echo hi \\\\\nsudo rm -rf /etc", False) == \
