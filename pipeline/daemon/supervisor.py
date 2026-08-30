@@ -651,13 +651,28 @@ def merge_cmd(project: Path, t: Ticket, cfg: dict) -> str:
     unstaged changes.`, exit 128) that `git merge` lands. `git rebase --abort`
     restores the branch on any rebase failure, and the unchanged merge below
     decides. After a successful rebase the merge prints `Already up to date.`.
+
+    `git rebase` also skips a branch commit whose patch is already applied on
+    base, printing `warning: skipped previously applied commit <sha>`, and
+    drops one that replays empty -- both by default. That happens to a
+    ticket parked at a human gate when another change lands the identical
+    content on base first; the rebase then reports success with none of the
+    ticket's own history left to replay, and the merge that follows lands
+    nothing of the ticket's. The `git rev-list --count` guard compares the
+    branch's own commit count across the rebase and, if it dropped, resets
+    to the pre-rebase tip so `git merge --no-edit {base}` lands the original
+    commit as a merge commit instead of silently losing it.
     """
     # Only one merge runs at a time (see `start()`), so the base this reads is
     # the base the fast-forward below lands on, and nothing races the main
     # checkout's index.lock either.
     base = shlex.quote(base_ref(cfg))
     proj = shlex.quote(str(project))
-    return (f"git rebase {base} || git rebase --abort 2>/dev/null\n"
+    return (f'pre=$(git rev-parse HEAD); n=$(git rev-list --count {base}..HEAD); '
+            f"git rebase {base} || git rebase --abort 2>/dev/null\n"
+            f'[ "$(git rev-list --count {base}..HEAD)" -ge "$n" ] || '
+            f'{{ echo "rebase dropped a commit already on {base} -- restoring $pre '
+            f'so the merge lands it"; git reset --hard "$pre"; }}\n'
             f"git merge --no-edit {base} || exit 1\n"
             f"head=$(git -C {proj} rev-parse --abbrev-ref HEAD) || exit 1\n"
             f'[ "$head" = {base} ] || {{ echo "main checkout is parked on'
