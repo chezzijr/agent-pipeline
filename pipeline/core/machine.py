@@ -283,7 +283,12 @@ def transition(stage: str, result: str, counters: dict, klass: str = "bugfix"):
 # Frontmatter the dispatcher owns outright. An agent that changes any of these
 # has broken the contract, and the ticket is escalated rather than trusted.
 CONTROL_FIELDS = {"id", "stage", "class", "branch", "counters", "lease",
-                  "approved_by", "approved_at"}
+                  "approved_by", "approved_at",
+                  # `depends_on` is the human's, not a stage's -- it is in no
+                  # `CLAIMS` entry, so a stage's sidecar cannot set it, and
+                  # listing it here turns an agent's frontmatter write from a
+                  # silent revert into an escalation.
+                  "depends_on"}
 
 # Which stage is allowed to set which frontmatter field. Without this any
 # stage could rewrite `files_declared` -- a reviewer shrinking the set would

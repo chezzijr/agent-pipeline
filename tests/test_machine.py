@@ -192,6 +192,8 @@ def test_control_fields_are_the_dispatchers_alone():
     assert {"stage", "counters", "branch", "id", "lease"} <= M.CONTROL_FIELDS
     for field in ("test_file", "files_declared"):
         assert field not in M.CONTROL_FIELDS, f"{field} is claimed via the sidecar"
+    assert "depends_on" in M.CONTROL_FIELDS, "a stage that edits the ordering must escalate, not be reverted"
+    assert "depends_on" not in M.CLAIMS, "the human who files the batch owns the ordering"
 
 
 def test_escalated_tickets_keep_their_worktree():
