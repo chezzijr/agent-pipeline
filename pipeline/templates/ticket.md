@@ -5,6 +5,7 @@ class: {{class}}
 branch: {{branch}}
 test_file: null
 files_declared: []
+depends_on: {{depends_on}}
 counters: {plan_validation_attempts: 0, review_loops: 0, blocked_count: 0, lease_expiries: 0}
 lease: {holder: null, expires: null}
 ---

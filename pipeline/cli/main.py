@@ -19,7 +19,7 @@ from pipeline.core.config import (CONFIG_TEMPLATE, TICKET_TEMPLATE,
                                   suite_failure, sync_pins)
 from pipeline.core.gate import gate
 from pipeline.core.machine import KNOWN_STAGES, cleared_key
-from pipeline.core.ticket import Ticket, now, tickets_dir
+from pipeline.core.ticket import SAFE_ID, Ticket, now, tickets_dir
 from pipeline.core.worktree import exclude_project_dir, worktree
 from pipeline.daemon import registry
 from pipeline.daemon.server import (STALE_HOURS, socket_path, ticket_rows,
@@ -97,6 +97,10 @@ def cmd_init(args) -> None:
 
 def cmd_new(args) -> None:
     project = proj(args)
+    deps = [x.strip() for x in (args.depends_on or "").split(",") if x.strip()]
+    for one in deps:
+        if not SAFE_ID.match(one):
+            die(f"--depends-on {one!r} is not TICKET-<digits>")
     d = tickets_dir(project)
     d.mkdir(parents=True, exist_ok=True)
     n = 1 + max((int(m.group(1)) for p in d.glob("TICKET-*.md")
@@ -105,7 +109,8 @@ def cmd_new(args) -> None:
     tpl = TICKET_TEMPLATE.read_text()
     (d / f"{tid}.md").write_text(
         tpl.replace("{{id}}", tid).replace("{{class}}", args.cls)
-           .replace("{{branch}}", f"ticket/{n:03d}").replace("{{title}}", args.title))
+           .replace("{{branch}}", f"ticket/{n:03d}").replace("{{title}}", args.title)
+           .replace("{{depends_on}}", "[" + ", ".join(deps) + "]"))
     print(d / f"{tid}.md")
 
 
@@ -678,7 +683,10 @@ def main() -> None:
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     p = sub.add_parser("init"); p.add_argument("dir", nargs="?", default=None); p.add_argument("--private", action="store_true", help="hide .project/ from git in this clone only (.git/info/exclude)"); p.set_defaults(fn=cmd_init)
-    p = sub.add_parser("new"); p.add_argument("title"); p.add_argument("--class", dest="cls", default="bugfix"); p.set_defaults(fn=cmd_new)
+    p = sub.add_parser("new"); p.add_argument("title"); p.add_argument("--class", dest="cls", default="bugfix")
+    p.add_argument("--depends-on", dest="depends_on", default="",
+                    help="comma-separated ticket ids that must reach `done` before this one is claimed")
+    p.set_defaults(fn=cmd_new)
     p = sub.add_parser("gate"); p.add_argument("id"); p.add_argument("--findings", help="write {ok, findings} JSON here; the dispatcher's gate child reads it back"); p.set_defaults(fn=cmd_gate)
     p = sub.add_parser("config", help="where the dispatcher reads this project's pipeline.toml"); p.add_argument("--sync", action="store_true", help="adopt the working tree's config on a project git will never have"); p.set_defaults(fn=cmd_config)
     p = sub.add_parser("skills", help="is this project's skill copy current with the packaged template"); p.add_argument("--refresh", action="store_true", help="rewrite a stale copy from the packaged template; a customised copy is kept"); p.add_argument("--force", action="store_true", help="with --refresh, overwrite a customised copy too"); p.set_defaults(fn=cmd_skills)

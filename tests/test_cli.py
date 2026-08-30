@@ -323,6 +323,17 @@ def test_cli_new_then_ls():
     shutil.rmtree(d)
 
 
+def test_cli_new_records_a_declared_dependency():
+    d = Path(tempfile.mkdtemp())
+    cli(d, "new", "first", "--class", "bugfix")
+    r = cli(d, "new", "second", "--depends-on", "TICKET-001")
+    assert r.returncode == 0, r.stderr
+    assert "depends_on: [TICKET-001]" in (d / ".project/tickets/TICKET-002.md").read_text()
+    r = cli(d, "new", "third", "--depends-on", "not-a-ticket")
+    assert r.returncode != 0
+    shutil.rmtree(d)
+
+
 def test_ls_says_running_is_unknown_when_no_daemon_answers():
     """No daemon means every row's `running`/`mode` is unknown, not idle --
     `ls` must say so once, not per row."""
