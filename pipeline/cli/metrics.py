@@ -1,6 +1,6 @@
-"""Six views over the append-only event log DEC-011 froze.
+"""Seven views over the append-only event log DEC-011 froze.
 
-No ORM, no plotting: six SQL strings and a `render()`. SQL does the grouping
+No ORM, no plotting: seven SQL strings and a `render()`. SQL does the grouping
 and filtering; `statistics.median` does the percentiles SQLite has no
 function for short of an extension (three lines of Python beats a
 correlated-subquery puzzle).
@@ -27,8 +27,9 @@ from datetime import datetime
 from pathlib import Path
 
 from pipeline.core import PipelineError
-from pipeline.core.machine import HUMAN_GATES, TERMINAL
+from pipeline.core.machine import HUMAN_GATES, TERMINAL, transition
 from pipeline.daemon.store import db_path
+from pipeline.daemon.supervisor import gate_result
 
 # -- price table -----------------------------------------------------------
 # $ per MILLION tokens. Config, not a query literal: a wrong number here is a
@@ -45,6 +46,7 @@ PRICE_PER_MTOK = {
     "claude-haiku-4-5":  {"input": 1.00,  "output": 5.00},
 }
 DEFAULT_PRICE = {"input": 3.00, "output": 15.00}  # unrecognised model: sonnet-tier guess
+GATE_ROUNDS_TOP = 10
 
 
 def estimate_cost(model: str | None, usage: dict) -> float:
@@ -391,6 +393,38 @@ def parked_summary(conn: sqlite3.Connection, since: float = 0.0,
             "by_gate": by_gate}
 
 
+# -- view 7: gate rounds per ticket -------------------------------------
+def charged_round(stage: str, data: dict) -> bool:
+    """Whether one `gate` event charged a counter, asked of `transition()`
+    itself rather than restated here -- a new verdict added to
+    `gate_result()`/`transition()` needs no edit in this file. A PASS at
+    `plan-validation` is a phase (DEC-061) and charges nothing; some FAIL
+    verdicts (`no-test-file`, `environment`) also escalate without
+    charging (DEC-029), and `transition()` is the single source of truth
+    for which."""
+    ok = str(data.get("verdict") or "").upper() == "PASS"
+    findings = list(data.get("findings") or [])
+    _next, counters = transition(stage or "", gate_result(ok, findings, stage or ""), {})
+    return bool(counters)
+
+
+def gate_rounds(conn: sqlite3.Connection, since: float = 0.0,
+                project: str | None = None) -> list[dict]:
+    sql = _EV + """
+    SELECT project, ticket, stage, data FROM ev
+    WHERE kind='gate' AND ticket IS NOT NULL
+    """
+    rows: dict[tuple[str, str], dict] = {}
+    for r in _rows(conn, sql, since, project):
+        d = json.loads(r["data"]) if isinstance(r["data"], str) else r["data"]
+        key = (r["project"], r["ticket"])
+        row = rows.setdefault(key, {"project": r["project"], "ticket": r["ticket"],
+                                    "rounds": 0, "charged": 0})
+        row["rounds"] += 1
+        row["charged"] += 1 if charged_round(r["stage"], d) else 0
+    return sorted(rows.values(), key=lambda a: (-a["rounds"], a["project"], a["ticket"]))
+
+
 # -- header: the project scope, not a seventh view --------------------------
 def project_scope(conn: sqlite3.Connection, since: float = 0.0,
                   project: str | None = None) -> dict:
@@ -415,6 +449,7 @@ def collect(conn: sqlite3.Connection, since: float = 0.0,
                  "merged_tickets": len(merged_tickets(conn, since, project)),
                  "by_stage": cost_by_stage(conn, since, project)},
         "gate_failures": gate_failure_reasons(conn, since, project),
+        "gate_rounds": gate_rounds(conn, since, project),
         "guard_blocks": guard_blocks(conn, since, project),
         "parked": {"spans": parked_spans(conn, since, project),
                    "summary": parked_summary(conn, since, project)},
@@ -515,6 +550,18 @@ def render(data: dict) -> str:
                   ".project/stages/<stage>.extra.md (read from HEAD -- commit it)")
     else:
         out.append("  no FAIL gate events in this window")
+
+    out.append("gate rounds (Tier A runs per ticket; a PASS at plan-validation charges no counter):")
+    gr = data["gate_rounds"]
+    if gr:
+        for r in gr[:GATE_ROUNDS_TOP]:
+            label = r["ticket"] if scope["project"] else f"{Path(r['project']).name}/{r['ticket']}"
+            out.append(f"  {label:<24} {r['rounds']:>3} rounds {r['charged']:>3} charged")
+        uncharged = sum(r["rounds"] - r["charged"] for r in gr)
+        total = sum(r["rounds"] for r in gr)
+        out.append(f"  {uncharged} of {total} rounds charged no counter -- churn no other view sees")
+    else:
+        out.append("  no gate events in this window")
 
     out.append("guard blocks:")
     gb = data["guard_blocks"]

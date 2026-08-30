@@ -165,6 +165,54 @@ def test_gate_rounds_counts_every_gate_run_not_just_charged_attempts():
     s.close()
 
 
+def test_gate_rounds_leaves_view_1s_escalation_denominator_alone():
+    # TICKET-103: a PASS at plan-validation is a phase (DEC-061), not a
+    # stage_end, so view 1's denominator must not move when view 7 counts
+    # gate rounds. One stage_end + three gate events -> view 1 sees 1 run,
+    # view 7 sees 3 rounds, for the same ticket.
+    s = _log()
+    _at(s, BASE + 0, "stage_end", ticket="TICKET-501", stage="plan-validation",
+       result="ok", next_stage="awaiting-approval", exit_code=0)
+    _at(s, BASE + 1, "gate", ticket="TICKET-501", stage="plan-validation",
+       verdict="pass", findings=[])
+    _at(s, BASE + 2, "gate", ticket="TICKET-501", stage="plan-validation",
+       verdict="pass", findings=[])
+    _at(s, BASE + 3, "gate", ticket="TICKET-501", stage="plan-validation",
+       verdict="fail", findings=["files_declared is empty"])
+
+    conn = metrics.connect(s.path)
+    try:
+        esc = next(r for r in metrics.escalation_rates(conn) if r["stage"] == "plan-validation")
+        assert esc["runs"] == 1, esc
+        row = next(r for r in metrics.gate_rounds(conn) if r["ticket"] == "TICKET-501")
+        assert row["rounds"] == 3, row
+    finally:
+        conn.close()
+    s.close()
+
+
+def test_render_reports_gate_rounds_and_uncharged_churn():
+    # TICKET-103: render() must surface both the per-ticket round count and
+    # the uncharged-churn line -- 2 of 3 rounds charge no counter (the two
+    # PASS verdicts at plan-validation), only the FAIL does.
+    s = _log()
+    _at(s, BASE + 0, "gate", ticket="TICKET-502", stage="plan-validation",
+       verdict="pass", findings=[])
+    _at(s, BASE + 1, "gate", ticket="TICKET-502", stage="plan-validation",
+       verdict="pass", findings=[])
+    _at(s, BASE + 2, "gate", ticket="TICKET-502", stage="plan-validation",
+       verdict="fail", findings=["files_declared is empty"])
+
+    conn = metrics.connect(s.path)
+    try:
+        text = metrics.render(metrics.collect(conn))
+        assert "gate rounds" in text
+        assert "2 of 3 rounds charged no counter" in text
+    finally:
+        conn.close()
+    s.close()
+
+
 def test_parse_since_relative_and_iso():
     now = time.time()
     assert abs(metrics.parse_since("24h") - (now - 86400)) < 5
