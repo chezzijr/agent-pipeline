@@ -26,8 +26,8 @@ from pipeline.core.gate import (environment_only, gate, missing_test_file,
 from pipeline.core.machine import (CLEANUP_STAGES, CONTROL_FIELDS,
                                    HUMAN_GATES, MAX_ATTEMPTS, TERMINAL,
                                    apply_claims, bound_for, conflict_holder,
-                                   transition)
-from pipeline.core.ticket import (Ticket, all_tickets, drop_result,
+                                   dep_holder, dep_unsatisfiable, transition)
+from pipeline.core.ticket import (Ticket, all_tickets, as_list, drop_result,
                                   now, read_result, record_decision,
                                   result_file, stage_view, ticket_path,
                                   tickets_dir, validate_meta)
@@ -682,6 +682,27 @@ def unwind_cmd(sha: str) -> str:
             f'ancestor of HEAD -- refusing to unwind"; exit 1; }}\n'
             f"git log --oneline {q}..HEAD\n"
             f"git reset --hard {q} && git clean -fd\n")
+
+
+def dep_graph(project: Path) -> tuple[dict[str, list[str]], dict[str, str]]:
+    """Every ticket's `depends_on` and `stage`, read off disk.
+
+    `conflict_holder()` consults `inflight` alone, and a dependency parked at
+    a human gate holds no record there (DEC-029). Called only for a ticket
+    that declares `depends_on`, so a project that declares none pays
+    nothing. An unreadable ticket is skipped: a dependency on one reads as
+    missing, which escalates the dependent rather than parking it forever.
+    """
+    deps: dict[str, list[str]] = {}
+    stages: dict[str, str] = {}
+    for p in all_tickets(project):
+        try:
+            o = Ticket.load(p)
+        except PipelineError:
+            continue
+        stages[o.id] = o.stage
+        deps[o.id] = [str(x) for x in as_list(o.extra.get("depends_on"))]
+    return deps, stages
 
 
 def note_wait(t: Ticket, held: dict | None) -> None:
