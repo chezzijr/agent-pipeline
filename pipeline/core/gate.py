@@ -139,6 +139,25 @@ STRUCTURAL_MARKS = (
 # No other `gate()` finding opens with these two words.
 MISSING_TEST_MARK = "test file "
 
+# Two stages, two constants, deliberately not one. `GATE_STAGE` is the stage
+# this gate writes its thread entry under; `RULE_STAGE` is the stage whose
+# prose file a repeated finding must be pinned in. The gate JUDGES a plan;
+# `planning` WRITES it, and a rule pinned where the judge reads it cannot
+# stop the plan repeating the mistake.
+GATE_STAGE = "plan-validation"
+RULE_STAGE = "planning"
+GATE_EXTRA = f".project/stages/{RULE_STAGE}.extra.md"  # .project/stages/planning.extra.md
+# A repeat is counted within ONE ticket's thread, which is all `gate()` can
+# see: it runs as a spawned child (`gate_cmd()`) with no handle on the event
+# log, so a cross-ticket count needs a different mechanism -- not one grown
+# here. The wording is `pipeline/cli/metrics.py`'s gate-failure pointer
+# (DEC-093), so the operator meets one sentence in both places; "read from
+# HEAD" is load-bearing, because `stage_extra()` reads the file from HEAD.
+REPEAT_NOTE = (
+    "  -- this finding has now fired {n} times on this ticket. A finding "
+    "that repeats is a missing project rule: pin it in `{extra}` "
+    "(read from HEAD -- commit it)")
+
 
 def unmatchable(expect: str) -> str | None:
     """Why `expect` can never match a second run's output, or `None` if it
@@ -206,6 +225,44 @@ def _entry_ref(raw: str) -> str:
 
 def _ref(where: str) -> str:
     return f"*-- identical output, already quoted in {where} --*"
+
+
+def _head(finding: str) -> str:
+    """A finding's identity: its first line.
+
+    Not the whole text, which is what `_dedupe()` matches a FENCE on
+    (DEC-046). A finding's fenced output is rewritten into a one-line
+    reference the moment the thread already holds it, so a whole-text key
+    would never match the repeat it exists to catch. Every finding `gate()`
+    builds carries its distinguishing prose -- the test, the path, the
+    criterion -- on the first line, and opens any fence on a later one."""
+    return finding.split("\n", 1)[0].strip()
+
+
+def _count_findings(text: str, counts: dict[str, int]) -> None:
+    """Add one `gate` entry's findings to `counts`, keyed by `_head()`.
+
+    `gate()` writes them as `- {f}`, so an unindented `- ` line outside a
+    fence is a finding and nothing else is. `_fenced()` per DEC-016 is what
+    keeps a `- ` line inside captured test output from counting as one."""
+    lines = text.splitlines()
+    for line, fenced in zip(lines, _fenced(lines)):
+        if not fenced and line.startswith("- "):
+            k = line[2:].strip()
+            counts[k] = counts.get(k, 0) + 1
+
+
+def _repeat_note(finding: str, prior: dict[str, int]) -> str:
+    """`finding`, plus the pointer to `GATE_EXTRA` once it has fired before
+    on this ticket. The note is a separate INDENTED line appended at the
+    END: `STRUCTURAL_MARKS`, `MISSING_TEST_MARK` and `ENVIRONMENT_MARKS` are
+    `startswith` allowlists (DEC-087), so a prefix would reclassify the
+    verdict, and an unindented `- ` line would be re-read as a finding of
+    its own by `_count_findings()` on the next run."""
+    n = prior.get(_head(finding), 0) + 1
+    if n < 2:
+        return finding
+    return finding + "\n" + REPEAT_NOTE.format(n=n, extra=GATE_EXTRA)
 
 
 def plan_steps(plan: str) -> int:
@@ -773,15 +830,24 @@ def gate(project: Path, tid: str, workdir: Path | None = None) -> tuple[bool, li
         findings.append(f"acceptance criterion names no test: {c} -- {CRIT_RULE}")
 
     seen: dict[str, str] = {}
+    prior: dict[str, int] = {}
     for e in t.thread():
         for _, _, body in _blocks(e.text):
             if body.strip():
                 seen.setdefault(body, _entry_ref(e.raw))
+        # `advance()` copies the same findings into a `transition` entry;
+        # counting every kind would count every repeat twice.
+        if e.kind == "gate":
+            _count_findings(e.text, prior)
     findings = [_dedupe(f, seen, "this entry, above") for f in findings]
+    # An `ok:` finding is not a rule to pin, so it never gets the note. The
+    # note is appended AFTER `_dedupe()`, which never rewrites a first line.
+    findings = [f if f.startswith("ok:") else _repeat_note(f, prior)
+                for f in findings]
 
     failed = [f for f in findings if not f.startswith("ok:")]
     verdict = "PASS" if not failed else "FAIL"
-    t.append("plan-validation", "gate", "**Tier A gate: %s**\n\n%s" % (
+    t.append(GATE_STAGE, "gate", "**Tier A gate: %s**\n\n%s" % (
         verdict, "\n".join(f"- {f}" for f in findings) or "- (no checks ran)"),
         verdict=verdict)
     t.save()

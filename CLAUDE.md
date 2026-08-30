@@ -226,7 +226,16 @@ still worth it: it prints one line per case, and the failure names the case.
   byte-identical to one the thread already holds, and `_dedupe()` replaces
   the copy with a pointer to the entry that carries it. Never fix thread
   growth by truncating or summarising the fence -- `pipeline/stages/_common.md`
-  rule 7 requires verbatim output.
+  rule 7 requires verbatim output. A finding that fires again on the SAME
+  ticket also gains one indented line naming
+  `.project/stages/planning.extra.md` and the count so far. It names
+  `planning`, not the gate's own `plan-validation`, because the stage that
+  WRITES a plan is the one a repeated finding is a missing rule for;
+  `GATE_STAGE` and `RULE_STAGE` in `pipeline/core/gate.py` keep the two apart.
+  `_count_findings()` keys the count on the finding's FIRST line, because
+  `_dedupe()` has already rewritten the fence by then, and it counts
+  `kind == "gate"` entries only, because `advance()` copies the same findings
+  into a `transition` entry.
 - **The harness `.toml` is re-read once per tick**, by `_harness_reloader()`
   in `pipeline/daemon/supervisor.py`. Before this, `run()` and `serve()` each
   read it once above their loop, so a harness change that merged mid-run

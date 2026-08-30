@@ -133,14 +133,17 @@ def test_gate_blocks_a_plan_of_prose():
 
 def test_a_repeated_finding_names_the_extra_md_file_and_the_repeat_count():
     """TICKET-102: a finding that fires again on the same ticket must point
-    at `.project/stages/<stage>.extra.md` and say how many times it has now
-    fired. Today the second run repeats the bare finding verbatim, with no
-    mention of `.project/stages/` at all."""
+    at `.project/stages/planning.extra.md` and say how many times it has now
+    fired. `planning` and not the gate's own `plan-validation`: the finding
+    fires where the plan is judged, but a rule pinned where the judge reads
+    it cannot stop the plan repeating the mistake. Today the second run
+    repeats the bare finding verbatim, with no mention of `.project/stages/`
+    at all."""
     d = project(_set_digest(""))
     gate(d, "TICKET-001")
     ok, failures = gate(d, "TICKET-001")
     assert not ok
-    assert any(".project/stages/plan-validation.extra.md" in f for f in failures), failures
+    assert any(".project/stages/planning.extra.md" in f for f in failures), failures
     assert any("2" in f for f in failures), failures
     shutil.rmtree(d)
 
@@ -150,6 +153,60 @@ def test_a_first_time_finding_does_not_mention_extra_md():
     ok, failures = gate(d, "TICKET-001")
     assert not ok
     assert not any(".project/stages/" in f for f in failures), failures
+    shutil.rmtree(d)
+
+
+def test_the_repeat_note_names_planning_and_the_entry_keeps_its_own_stage():
+    """The note points at the stage that WRITES the plan; the thread entry
+    stays under the stage that judged it. One constant for each, so a later
+    edit cannot collapse them back into one."""
+    d = project(_set_digest(""))
+    gate(d, "TICKET-001")
+    ok, failures = gate(d, "TICKET-001")
+    assert not ok
+    assert any(".project/stages/planning.extra.md" in f for f in failures), failures
+    assert not any("plan-validation.extra.md" in f for f in failures), failures
+    thread = T.sections((d / ".project/tickets/TICKET-001.md").read_text())["Thread"]
+    assert "· plan-validation · gate" in thread, thread
+    shutil.rmtree(d)
+
+
+def test_a_repeated_finding_with_output_keeps_its_deduped_reference():
+    """The repeat note must not cost the ticket its evidence: a finding
+    carrying a fence is deduped (DEC-046) AND annotated, which is only
+    possible because the repeat is keyed on the finding's first line."""
+    d = project(FIXTURE.replace("expect: test_broken", "expect: absent_marker"))
+    gate(d, "TICKET-001")
+    ok, failures = gate(d, "TICKET-001")
+    assert not ok
+    noted = [f for f in failures if "fired 2 times" in f]
+    assert noted, failures
+    assert "identical output" in noted[0], noted[0]
+    assert ".project/stages/planning.extra.md" in noted[0], noted[0]
+    shutil.rmtree(d)
+
+
+def test_the_repeat_count_climbs_on_each_further_gate_run():
+    """A third run says three, not two: the note is written as an indented
+    continuation line, so `_count_findings()` never reads it back as a
+    finding of its own."""
+    d = project(_set_digest(""))
+    gate(d, "TICKET-001")
+    gate(d, "TICKET-001")
+    ok, failures = gate(d, "TICKET-001")
+    assert not ok
+    assert any("fired 3 times" in f for f in failures), failures
+    shutil.rmtree(d)
+
+
+def test_a_passing_gate_run_never_writes_the_repeat_note():
+    """An `ok:` finding repeats on every re-gate by construction -- it is
+    the evidence the gate passed, not a rule to pin."""
+    d = project()
+    assert gate(d, "TICKET-001")[0]
+    assert gate(d, "TICKET-001")[0]
+    thread = T.sections((d / ".project/tickets/TICKET-001.md").read_text())["Thread"]
+    assert ".project/stages/" not in thread, thread
     shutil.rmtree(d)
 
 
