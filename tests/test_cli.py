@@ -848,3 +848,55 @@ def test_decisions_command_lists_decision_records():
     r = cli(d, "decisions")
     assert r.returncode == 0, r.stderr
     shutil.rmtree(d, ignore_errors=True)
+
+
+def test_decisions_marks_superseded_reads_one_and_searches_bodies():
+    """TICKET-101: the listing names the id that replaced a superseded
+    record, `decisions DEC-x` prints one record whole, and `--grep` searches
+    record text. Row IDS are what a --grep assertion compares: the state
+    column legitimately holds an id that no row belongs to."""
+    d = Path(tempfile.mkdtemp())
+    dec = d / ".project" / "decisions"
+    dec.mkdir(parents=True)
+    (dec / "DEC-003.md").write_text(
+        "# DEC-003" + "\n\n" + "- ticket: TICKET-003 (bugfix)" + "\n"
+        + "- decided: 2026-01-01" + "\n\n"
+        + "keep the explicit flush; without it the buffer leaks" + "\n\n"
+        + "<!-- pipeline:superseded-by -->" + "\n"
+        + "- superseded-by: DEC-011 (moved into the writer, 2026-01-02)" + "\n")
+    (dec / "DEC-011.md").write_text(
+        "# DEC-011" + "\n\n" + "- ticket: TICKET-011 (feature)" + "\n"
+        + "- decided: 2026-01-02" + "\n\n"
+        + "the writer owns the eviction order" + "\n")
+
+    r = cli(d, "decisions")
+    assert r.returncode == 0, r.stderr
+    rows = {ln.split()[0]: ln for ln in r.stdout.splitlines()
+            if ln.startswith("DEC-")}
+    assert set(rows) == {"DEC-003", "DEC-011"}, r.stdout
+    assert "superseded by DEC-011" in rows["DEC-003"], rows
+    assert "TICKET-003" in rows["DEC-003"], rows
+    assert "buffer leaks" in rows["DEC-003"], rows
+    assert "active" in rows["DEC-011"], rows
+    assert "the writer owns the eviction order" in rows["DEC-011"], rows
+
+    r = cli(d, "decisions", "--grep", "BUFFER LEAKS")   # case-insensitive
+    assert r.returncode == 0, r.stderr
+    hit = {ln.split()[0] for ln in r.stdout.splitlines() if ln.startswith("DEC-")}
+    assert hit == {"DEC-003"}, r.stdout   # ids, not raw stdout
+
+    r = cli(d, "decisions", "--grep", "zzzznotarecord")
+    assert r.returncode == 0, r.stderr
+    assert "no decision records matching" in r.stdout, r.stdout
+
+    r = cli(d, "decisions", "DEC-003")
+    assert r.returncode == 0, r.stderr
+    assert "- superseded-by: DEC-011" in r.stdout, r.stdout
+
+    r = cli(d, "decisions", "DEC-404")
+    assert r.returncode == 1, r
+    assert "no decision record DEC-404" in r.stderr, r.stderr
+
+    r = cli(d, "decisions", "../../etc/passwd")
+    assert r.returncode == 1 and "not a decision id" in r.stderr, r
+    shutil.rmtree(d, ignore_errors=True)

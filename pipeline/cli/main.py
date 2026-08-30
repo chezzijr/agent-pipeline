@@ -19,7 +19,8 @@ from pipeline.core.config import (CONFIG_TEMPLATE, TICKET_TEMPLATE,
                                   suite_failure, sync_pins)
 from pipeline.core.gate import gate
 from pipeline.core.machine import KNOWN_STAGES, cleared_key
-from pipeline.core.ticket import SAFE_ID, Ticket, now, tickets_dir
+from pipeline.core.ticket import (SAFE_DEC_ID, SAFE_ID, Ticket, all_decisions,
+                                   decisions_dir, now, tickets_dir)
 from pipeline.core.worktree import exclude_project_dir, worktree
 from pipeline.daemon import registry
 from pipeline.daemon.server import (STALE_HOURS, socket_path, ticket_rows,
@@ -200,6 +201,48 @@ def plan_text(t: Ticket) -> str:
 
 def cmd_plan(args) -> None:
     print(plan_text(Ticket.find(proj(args), args.id)))
+
+
+def decision_row(d) -> str:
+    """One listing line: id, state, ticket, first body line.
+
+    A superseded record's state column names the id that REPLACED it. The
+    record stays listed because it is still the reason something was once
+    done that way, and the reader needs the replacement. So a row's own id
+    is its FIRST field, and a test over this listing asserts on that field
+    -- the state column legitimately holds an id no row belongs to.
+    """
+    if d.superseded:
+        state = f"superseded by {d.superseded_by}" if d.superseded_by else "superseded"
+    else:
+        state = "active"
+    return f"{d.id}  {state:<22}  {d.ticket:<14}  {d.title}"
+
+
+def cmd_decisions(args) -> None:
+    project = proj(args)
+    if args.id:
+        # `id` reaches a path, so it is checked before it touches one --
+        # CLAUDE.md invariant 5, the rule record_decision() already follows.
+        if not SAFE_DEC_ID.match(args.id):
+            die(f"not a decision id: {args.id!r}")
+        for d in all_decisions(project):
+            if d.id == args.id:
+                print(d.text.rstrip())
+                return
+        die(f"no decision record {args.id}")
+    rows = all_decisions(project)
+    if args.grep:
+        needle = args.grep.lower()
+        rows = [d for d in rows if needle in d.text.lower()]
+        if not rows:
+            print(f"no decision records matching {args.grep!r}")
+            return
+    if not rows:
+        print(f"no decision records in {decisions_dir(project)}")
+        return
+    for d in rows:
+        print(decision_row(d))
 
 
 def record(project: Path, t: Ticket, frm: str, result: str) -> None:
@@ -691,6 +734,7 @@ def main() -> None:
     p = sub.add_parser("config", help="where the dispatcher reads this project's pipeline.toml"); p.add_argument("--sync", action="store_true", help="adopt the working tree's config on a project git will never have"); p.set_defaults(fn=cmd_config)
     p = sub.add_parser("skills", help="is this project's skill copy current with the packaged template"); p.add_argument("--refresh", action="store_true", help="rewrite a stale copy from the packaged template; a customised copy is kept"); p.add_argument("--force", action="store_true", help="with --refresh, overwrite a customised copy too"); p.set_defaults(fn=cmd_skills)
     p = sub.add_parser("plan"); p.add_argument("id"); p.set_defaults(fn=cmd_plan)
+    p = sub.add_parser("decisions", help="what earlier tickets decided, superseded records included"); p.add_argument("id", nargs="?", help="print this record in full, e.g. DEC-011"); p.add_argument("--grep", metavar="TEXT", help="list only records whose text contains TEXT (case-insensitive)"); p.set_defaults(fn=cmd_decisions)
     p = sub.add_parser("approve"); p.add_argument("id"); p.add_argument("--by"); p.set_defaults(fn=cmd_approve)
     p = sub.add_parser("reject"); p.add_argument("id"); p.add_argument("reason"); p.set_defaults(fn=cmd_reject)
     p = sub.add_parser("note"); p.add_argument("id"); p.add_argument("text"); p.set_defaults(fn=cmd_note)
