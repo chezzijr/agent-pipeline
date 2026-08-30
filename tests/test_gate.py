@@ -452,6 +452,34 @@ def test_gate_base_suite_does_not_inherit_a_branch_defect_via_copied_test_file()
     shutil.rmtree(d)
 
 
+def test_gate_still_reports_environment_when_base_lacks_the_branchs_test_file():
+    """TICKET-104: the base suite run no longer copies the branch's test
+    files, so a ticket whose test file is new leaves base without it. The
+    TICKET-089 verdict must survive that -- a suite red on both for a reason
+    neither branch introduced is still environment."""
+    d = Path(tempfile.mkdtemp())
+    sh = lambda c, cwd=d: subprocess.run(c, shell=True, cwd=cwd,
+                                         capture_output=True, text=True)
+    sh("git init -qb main && git config user.email t@t && git config user.name t")
+    (d / ".project" / "tickets").mkdir(parents=True)
+    (d / ".project" / "pipeline.toml").write_text(
+        'test_one = "echo test_broken; exit 1"\n'
+        'test_suite = "true"\n'
+        'test_suite_without_new = "echo 1 failed; exit 1"\n'
+        'base = "main"\n')
+    (d / ".project" / "tickets" / "TICKET-001.md").write_text(FIXTURE)
+    sh("git add -A && git commit -qm init")
+    wt = d / ".worktrees" / "TICKET-001"
+    sh(f"git worktree add -q -b ticket/001 {wt} main")
+    (wt / "test_thing.py").write_text("def test_broken(): assert False")
+    sh("git add -A && git commit -qm branch", cwd=wt)
+    ok, failures = gate(d, "TICKET-001", workdir=wt)
+    assert not ok
+    assert any(f.startswith("ENVIRONMENT: ") for f in failures), failures
+    assert gate_result(ok, failures, "plan-validation") == "environment", failures
+    shutil.rmtree(d, ignore_errors=True)
+
+
 def test_numbered_criteria_are_checked_in_both_marker_forms():
     """Fails today: a `1)` criterion naming no test produces no finding.
 

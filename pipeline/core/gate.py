@@ -360,7 +360,8 @@ def _unsafe_rel(tests: list[str]) -> str | None:
 
 def _copy_tests(wd: Path, base_wt: Path, tests: list[str]) -> None:
     """Copy each test file `tests` names, from `wd` onto `base_wt`, once per
-    distinct file even when several node ids share it."""
+    distinct file even when several node ids share it. Called by
+    _base_findings() only; _base_suite() must not call it (TICKET-104)."""
     for rel in dict.fromkeys(x.split("::")[0] for x in tests):
         dst = base_wt / rel
         dst.parent.mkdir(parents=True, exist_ok=True)
@@ -445,7 +446,9 @@ def _base_suite(project: Path, cfg: dict, wd: Path,
     otherwise, where `why` is empty when the suite is simply not red on base
     and non-empty when the question is unproven (no worktree, an unsafe test
     path, a base checkout that fails, or a run with no evidence it happened)
-    -- callers fail closed on a non-empty `why`."""
+    -- callers fail closed on a non-empty `why`. The branch's test files are
+    NOT copied onto that checkout: _base_findings() copies them so the
+    ticket's node exists on base at all, and this run must not (TICKET-104)."""
     if wd.resolve() == project.resolve():
         return None, ("no ticket worktree was given, so there is no branch "
                        "to compare against base")
@@ -456,7 +459,14 @@ def _base_suite(project: Path, cfg: dict, wd: Path,
     with base_checkout(project, cfg) as (base_wt, err):
         if base_wt is None:
             return None, f"base `{base}` could not be checked out: {err[-200:]}"
-        _copy_tests(wd, base_wt, tests)
+        # Base runs its OWN test files here (TICKET-104). Copying the branch's
+        # carries a defect the branch introduced in shared test code onto base,
+        # the suite comes back red there for a reason base never had, and
+        # gate() reports the branch's own bug as an environment problem no
+        # plan can fix. The ticket's own nodes are excluded by
+        # test_suite_without_new's selector; one naming a node base does not
+        # have is a no-op (pytest: --deselect nosuch.py::test_x exits 0).
+        # _base_findings() still copies -- DEC-017.
         code, out = run_cmd(format_tests_cmd(cfg["test_suite_without_new"], tests), base_wt)
     if code != 0 and suite_ran(code, out):
         return out, ""
