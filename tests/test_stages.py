@@ -503,3 +503,16 @@ def test_a_project_appends_prose_to_a_stage_prompt(tmp_path):
         assert "EXTRA-MARKER-4471" not in path.read_text()
     finally:
         extra.unlink()
+
+
+def test_the_docs_name_the_decisions_command():
+    """TICKET-101: `pipeline decisions` is how a reader finds a record
+    without knowing an id first, and an undocumented command is one nobody
+    runs. Both audiences need it: the README for the operator, the
+    file-ticket skill for a session about to file a ticket."""
+    readme = (Path(__file__).resolve().parent.parent / "README.md").read_text()
+    assert "decisions --grep" in readme, "README.md does not document `decisions --grep`"
+    assert "decisions DEC-011" in readme, "README.md does not document reading one record"
+    skill = C.SKILL_TEMPLATE.read_text()
+    assert "pipeline decisions" in skill, (
+        f"{C.SKILL_TEMPLATE} does not name `pipeline decisions`")

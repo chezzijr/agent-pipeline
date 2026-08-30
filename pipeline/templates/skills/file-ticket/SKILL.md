@@ -179,6 +179,7 @@ Then tell the user what to expect and how to watch:
 
 ```sh
 pipeline ls                      # stage of every ticket
+pipeline decisions               # what earlier tickets already decided
 pipeline tui                     # live view; a/r/A act on the human gates
 pipeline logs TICKET-003 -f      # one stage's stream
 ```

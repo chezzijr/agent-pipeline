@@ -67,6 +67,9 @@ pipeline --project ~/code/myproject run       # dispatcher loop, no daemon; inte
 
 pipeline --project ~/code/myproject ls
 pipeline --project ~/code/myproject plan TICKET-001    # the plan, its acceptance criteria and its rollback, nothing else
+pipeline --project ~/code/myproject decisions               # every record: id, state, ticket, first line
+pipeline --project ~/code/myproject decisions DEC-011       # print one record in full
+pipeline --project ~/code/myproject decisions --grep flush  # only records whose text matches
 pipeline --project ~/code/myproject approve TICKET-001   # -> revalidating, or -> merging from awaiting-merge
 pipeline --project ~/code/myproject reject  TICKET-001 "ignores cache invalidation"
 pipeline --project ~/code/myproject resume  TICKET-001 \
@@ -107,6 +110,8 @@ watching it. Plain `run` keeps polling.
 `.project/` is committed by default: the tickets and especially
 `.project/decisions/` are a record, and `planning` greps the decisions so it
 does not re-litigate a choice somebody already made.
+
+`pipeline decisions` reads that set without your knowing an id first: one line per record with its id, whether it is active or superseded, the ticket it came from and its first body line. A superseded record stays in the listing, marked with the id that replaced it, because it is still the reason something was once done that way. `pipeline decisions DEC-011` prints one record in full, and `pipeline decisions --grep flush` lists the records whose text matches.
 
 That is wrong for a repo where you are the only one running the pipeline.
 `pipeline init --private` writes `.project/` into `.git/info/exclude`, which is
