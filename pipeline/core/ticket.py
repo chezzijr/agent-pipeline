@@ -52,6 +52,14 @@ def lease_expiry(exp) -> datetime | None:
     return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
 
 
+def as_list(v) -> list:
+    """A scalar, a list, or nothing, as a list. A ticket file writes both
+    `test_file` and `depends_on` either way."""
+    if not v:
+        return []
+    return list(v) if isinstance(v, list) else [v]
+
+
 def as_test_list(v) -> list:
     """`test_file` as a list, whatever shape it was written in.
 
@@ -61,9 +69,7 @@ def as_test_list(v) -> list:
     reproduce holds a YAML list instead. Not named `test_list`, because
     pytest collects a module-level `test*` name a test module imported.
     """
-    if not v:
-        return []
-    return list(v) if isinstance(v, list) else [v]
+    return as_list(v)
 
 
 def validate_meta(meta: dict) -> list[str]:
@@ -83,6 +89,9 @@ def validate_meta(meta: dict) -> list[str]:
     for f in meta.get("files_declared") or []:
         if not SAFE_FILE.match(str(f)) or ".." in str(f) or str(f).startswith("/"):
             bad.append(f"files_declared entry {f!r} is not a plain relative path")
+    for dep in as_list(meta.get("depends_on")):
+        if not SAFE_ID.match(str(dep)):
+            bad.append(f"depends_on entry {dep!r} is not TICKET-<digits>")
     # The lease decides whether a second agent is spawned onto a live stage, so
     # a shape nobody can read is as unusable as a hostile branch name. It was
     # the one field this function never looked at (CLAUDE.md invariant 5 named

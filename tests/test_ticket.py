@@ -86,6 +86,17 @@ def test_frontmatter_that_reaches_a_shell_is_validated():
     assert T.validate_meta({**ok, "files_declared": ["/etc/passwd"]})
 
 
+def test_depends_on_is_validated_like_every_other_agent_reachable_field():
+    assert T.validate_meta({"id": "TICKET-001", "branch": "ticket/001",
+                             "depends_on": "TICKET-002"}) == []
+    assert T.validate_meta({"id": "TICKET-001", "branch": "ticket/001",
+                             "depends_on": ["TICKET-002", "$(rm -rf /)"]}) == [
+        "depends_on entry '$(rm -rf /)' is not TICKET-<digits>"]
+    assert T.as_list("TICKET-002") == ["TICKET-002"]
+    assert T.as_list(None) == []
+    assert T.as_list(["a"]) == ["a"]
+
+
 def test_test_file_holds_one_test_or_a_list():
     """TICKET-066: a bug needing two failing tests records both, and each
     entry is validated on its own. A single string still works and is
