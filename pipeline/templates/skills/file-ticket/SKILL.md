@@ -16,6 +16,7 @@ inside a system built to stop agents guessing.
 | Section | Who fills it |
 |---|---|
 | frontmatter `class` | you |
+| frontmatter `depends_on` | you |
 | `## Summary` | you |
 | `## Reproduction` | **triage agent** — it writes a real failing test and records the exact error |
 | `## Digest`, `## Decisions checked`, `## Plan`, `## Acceptance criteria`, `## Rollback` | **planning agent** |
@@ -130,9 +131,18 @@ location you already had open. Give the line number you saw and the commit
 you saw it on; a line that has since moved still lands triage within a few
 lines of the code.
 
-**Do not touch the frontmatter beyond `class`.** `stage`, `branch`, `counters` and
-`lease` belong to the dispatcher, and a ticket whose control fields look edited is
-escalated rather than trusted.
+**Do not touch the frontmatter beyond `class` and `depends_on`.** `stage`, `branch`,
+`counters` and `lease` belong to the dispatcher, and a ticket whose control fields look
+edited is escalated rather than trusted.
+
+**Ordering: `depends_on` names the tickets that must reach `done` first.** Write it as
+`depends_on: [TICKET-023]` or pass `pipeline new --depends-on TICKET-023`, and only when
+the later ticket's work genuinely cannot be planned until the earlier one lands — prose
+in `## Summary` saying "land TICKET-023 first" enforces nothing. The dispatcher WAITS
+rather than failing, `pipeline ls` names what a ticket waits on, and a dependency that
+is missing, `escalated`, `rejected`, or part of a cycle escalates the dependent instead
+of hanging. Two tickets that touch the same file are already ordered by
+`files_declared`; do not restate that as a dependency.
 
 ### 4. Hand it over
 
