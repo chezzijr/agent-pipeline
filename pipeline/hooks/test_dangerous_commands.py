@@ -93,6 +93,8 @@ ALLOWED_READONLY = [
     'grep -rn "a\nb" .',
     "cat a.py\ncat b.py",
     "grep -rn 'a\\.b' src/",
+    # TICKET-106: a `>` inside a quoted string is not a redirection
+    "grep 'a > b' file.txt",
 ]
 PROJECT_PREFIXES = [["pipeline", "ls"], ["pipeline", "status"],
                      ["./pipeline/hooks/test_dangerous_commands.py"]]
