@@ -139,6 +139,32 @@ def test_metrics_views_over_a_canned_event_log():
         conn.close()
 
 
+def test_gate_rounds_counts_every_gate_run_not_just_charged_attempts():
+    # TICKET-103: a Tier A PASS at plan-validation is a phase, not a
+    # stage_end, so charged counters (plan_validation_attempts,
+    # structural_gate_failures) can undercount gate churn. Three `gate`
+    # events -- 2 PASS, 1 FAIL -- must report 3 rounds and 1 charged
+    # (only the FAIL charges a counter; a PASS at plan-validation never
+    # does, per finish_gate()/GATE_PASS).
+    s = _log()
+    _at(s, BASE + 0, "gate", ticket="TICKET-500", stage="plan-validation",
+       verdict="pass", findings=[])
+    _at(s, BASE + 1, "gate", ticket="TICKET-500", stage="plan-validation",
+       verdict="fail", findings=["files_declared is empty"])
+    _at(s, BASE + 2, "gate", ticket="TICKET-500", stage="plan-validation",
+       verdict="pass", findings=[])
+
+    conn = metrics.connect(s.path)
+    try:
+        rounds = metrics.gate_rounds(conn)
+        row = next(r for r in rounds if r["ticket"] == "TICKET-500")
+        assert row["rounds"] == 3, row
+        assert row["charged"] == 1, row
+    finally:
+        conn.close()
+    s.close()
+
+
 def test_parse_since_relative_and_iso():
     now = time.time()
     assert abs(metrics.parse_since("24h") - (now - 86400)) < 5
