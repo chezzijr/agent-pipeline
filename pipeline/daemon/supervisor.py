@@ -786,6 +786,20 @@ def start(project: Path, path: Path, hcfg: dict, inflight: dict,
         t.release_lease()
         t.save()  # persist now: later returns skip the save
 
+    # A declared dependency orders two tickets that share no file, which
+    # `conflict_holder()` cannot see. Checked above `new` so a blocked ticket
+    # is never even claimed, and waiting -- never failing -- exactly like the
+    # file overlap below.
+    if t.extra.get("depends_on"):
+        deps, stages = dep_graph(project)
+        dead = dep_unsatisfiable(tid, deps, stages)
+        if dead:
+            return bail(dead)
+        dep = dep_holder(tid, deps, stages)
+        if dep is not None:
+            note_wait(t, {"on": dep[0], "stage": dep[1]})
+            return False, None
+
     if stage == "new":
         advance(project, t, "new", "dispatcher pickup", emit, agent=False)
         return True, None
