@@ -1485,6 +1485,31 @@ def test_a_ticket_parked_at_a_human_gate_holds_no_file_claim():
     shutil.rmtree(d, ignore_errors=True)
 
 
+def test_a_merge_waits_behind_a_ticket_parked_at_a_human_gate():
+    """TICKET-105: `conflict_holder()` sees `inflight` only, so a ticket parked
+    at a human gate (e.g. `awaiting-approval`) holds no claim on its
+    `files_declared` while `start()` decides whether another ticket can merge.
+    A second ticket declaring the same file must wait behind the parked one
+    instead of landing its merge."""
+    d = project()
+    t1 = Ticket.find(d, "TICKET-001")
+    t1.stage = "awaiting-approval"
+    t1.save()
+    (d / ".project/tickets/TICKET-002.md").write_text(
+        FIXTURE.replace("id: TICKET-001", "id: TICKET-002")
+               .replace("branch: ticket/001", "branch: ticket/002")
+               .replace("stage: plan-validation", "stage: merging"))
+
+    did, rec = supervisor.start(d, d / ".project/tickets/TICKET-002.md", harness("fake"), {})
+
+    assert (did, rec) == (False, None), (
+        "a merge must wait behind a ticket parked at a human gate whose "
+        f"files_declared overlap, got (did, rec) = {(did, rec)!r}")
+    waiting = Ticket.find(d, "TICKET-002").extra["waiting"]
+    assert waiting["on"] == "TICKET-001" and waiting["file"] == "thing.py", (
+        f"waiting must name the parked holder and the shared file, got {waiting!r}")
+
+
 def test_the_unwind_refuses_a_sha_that_is_not_on_the_branch():
     """`unwind_cmd()` resets a branch to a recorded tip -- but only if that tip
     is really on the branch. A stale or hand-edited sha must refuse rather than

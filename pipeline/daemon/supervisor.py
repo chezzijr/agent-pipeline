@@ -705,6 +705,26 @@ def dep_graph(project: Path) -> tuple[dict[str, list[str]], dict[str, str]]:
     return deps, stages
 
 
+def parked_meta(project: Path, tid: str) -> list[dict]:
+    """Every OTHER ticket parked at a `HUMAN_GATES` stage, read off disk.
+
+    A parked ticket holds no `inflight` record (DEC-029), so
+    `conflict_holder()` never sees its `files_declared` claim. Read only at
+    `merging`: ordering a running ticket's `triage` through `verifying`
+    against a ticket that may wait on a human for a long time is the change
+    DEC-029 declined. An unreadable ticket is skipped, like `dep_graph()`.
+    """
+    out = []
+    for p in all_tickets(project):
+        try:
+            o = Ticket.load(p)
+        except PipelineError:
+            continue
+        if o.id != tid and o.stage in HUMAN_GATES:
+            out.append(o.frontmatter())
+    return out
+
+
 def note_wait(t: Ticket, held: dict | None) -> None:
     """Record why `start()` is holding `t`, so `ls` can say so.
 
@@ -806,6 +826,8 @@ def start(project: Path, path: Path, hcfg: dict, inflight: dict,
 
     held = conflict_holder(t.frontmatter(),
                            [r["meta"].frontmatter() for r in inflight.values()])
+    if held is None and stage == "merging":
+        held = conflict_holder(t.frontmatter(), parked_meta(project, tid))
     note_wait(t, {"on": held[0], "file": held[1]} if held else None)
     if held is not None:
         return False, None  # wait, do not fail -- cheap ordering without a scheduler
