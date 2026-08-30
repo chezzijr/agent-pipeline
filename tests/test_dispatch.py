@@ -17,6 +17,7 @@ from pipeline.cli.main import cmd_approve
 from pipeline.core.config import harness
 from pipeline.core.ticket import Ticket
 from pipeline.daemon import supervisor
+from pipeline.daemon.server import ticket_rows, waiting_text
 
 
 def test_escalation_clears_the_lease_so_a_human_can_resume():
@@ -2133,4 +2134,37 @@ def test_a_ticket_cannot_declare_that_another_must_land_first():
         "TICKET-002 declared depends_on: TICKET-001, which is still at "
         "`implementing`, but start() advanced it anyway -- nothing in "
         "start() reads a dependency field")
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_a_dependency_that_cannot_land_escalates_rather_than_waiting_forever():
+    d, _ = git_project()
+    dependent = FIXTURE.replace("stage: plan-validation", "stage: new") \
+        .replace("---\n\n## Summary", "depends_on: [TICKET-404]\n---\n\n## Summary")
+    path = d / ".project/tickets/TICKET-001.md"
+    path.write_text(dependent)
+
+    did, _ = supervisor.start(d, path, harness("fake"), {})
+
+    assert did is True
+    assert Ticket.load(path).stage == "escalated"
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_ls_names_the_ticket_a_dependency_is_waiting_on():
+    d, _ = git_project()
+    blocker = FIXTURE.replace("stage: plan-validation", "stage: implementing")
+    (d / ".project/tickets/TICKET-001.md").write_text(blocker)
+    dependent = FIXTURE.replace("id: TICKET-001", "id: TICKET-002") \
+        .replace("branch: ticket/001", "branch: ticket/002") \
+        .replace("stage: plan-validation", "stage: new") \
+        .replace("---\n\n## Summary", "depends_on: TICKET-001\n---\n\n## Summary")
+    path = d / ".project/tickets/TICKET-002.md"
+    path.write_text(dependent)
+
+    supervisor.start(d, path, harness("fake"), {})
+
+    row = [r for r in ticket_rows(d) if r["id"] == "TICKET-002"][0]
+    assert waiting_text(row["waiting"]).startswith(
+        "waiting on TICKET-001 (depends_on, at implementing)")
     shutil.rmtree(d, ignore_errors=True)
