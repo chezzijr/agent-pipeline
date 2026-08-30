@@ -87,10 +87,18 @@ def _dim(req: dict, key: str) -> int:
 
 
 def waiting_text(w) -> str:
-    """`ls`'s one-line rendering of a `waiting` reason, or `""` for none."""
-    if not (isinstance(w, dict) and w.get("on") and w.get("file")):
+    """`ls`'s one-line rendering of a `waiting` reason, or `""` for none.
+
+    Two reasons reach this: a file overlap, which names the file, and a
+    declared `depends_on`, which names the stage the dependency sits at."""
+    if not (isinstance(w, dict) and w.get("on")):
         return ""
-    text = f"waiting on {w['on']} ({w['file']})"
+    if w.get("file"):
+        text = f"waiting on {w['on']} ({w['file']})"
+    elif w.get("stage"):
+        text = f"waiting on {w['on']} (depends_on, at {w['stage']})"
+    else:
+        return ""
     since = lease_expiry(w.get("since"))
     if since is None:
         return text

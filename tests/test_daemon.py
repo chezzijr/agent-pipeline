@@ -541,6 +541,14 @@ def test_an_unreadable_wait_reason_does_not_break_ls():
         "waiting on TICKET-002 (thing.py)", "a missing `since` renders no age"
 
 
+def test_waiting_text_renders_a_declared_dependency():
+    assert waiting_text({"on": "TICKET-001", "stage": "implementing"}) == \
+        "waiting on TICKET-001 (depends_on, at implementing)"
+    assert waiting_text({"on": "TICKET-001", "file": "thing.py"}) == \
+        "waiting on TICKET-001 (thing.py)"
+    assert waiting_text({"on": "TICKET-001"}) == ""
+
+
 def test_a_ticket_held_by_files_conflict_reads_the_same_as_an_idle_one():
     """TICKET-048: `files_conflict()` makes `start()` return `(False, None)`
     without touching the held ticket, so nothing records that it is waiting
