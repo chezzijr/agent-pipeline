@@ -1439,6 +1439,52 @@ def test_a_ticket_held_at_merging_is_rebased_before_the_merge_is_attempted():
     shutil.rmtree(d, ignore_errors=True)
 
 
+def test_a_ticket_parked_at_a_human_gate_holds_no_file_claim():
+    """TICKET-105: `conflict_holder()` only sees `inflight.values()`, and a
+    ticket sitting at a `HUMAN_GATES` stage like `awaiting-merge` was never
+    given a running child -- `start()` returns `(False, None)` for it before
+    reaching the worktree/spawn code, so it is never added to `inflight`.
+
+    A second ticket declaring the SAME file is therefore never held by
+    `files_conflict()`. If that second ticket lands the identical change
+    directly on base while the first still waits for human approval, the
+    first ticket's own commit becomes a no-op patch. `git rebase` silently
+    DROPS an empty commit by default, so `merge_cmd()`'s
+    `git rebase {base} || git rebase --abort` step discards TICKET-001's
+    branch commit before the `git merge --ff-only` step ever runs, and the
+    merge reports success with none of TICKET-001's own history landed."""
+    d, sh = git_project()
+    path = d / ".project/tickets/TICKET-001.md"
+    path.write_text(FIXTURE.replace("stage: plan-validation", "stage: merging"))
+    wt = supervisor.ensure_worktree(
+        d, {"id": "TICKET-001", "branch": "ticket/001"}, {"base": "main"})
+    (wt / "thing.py").write_text("the fix\n")
+    _commit(wt, "'TICKET-001: the fix'")
+    ticket_sha = subprocess.run(
+        "git rev-parse HEAD", shell=True, cwd=wt,
+        capture_output=True, text=True).stdout.strip()
+
+    # TICKET-001 sits at `awaiting-merge`/`merging` waiting for a human.
+    # Meanwhile an unrelated ticket lands the SAME change directly on base --
+    # `files_conflict()` never held it, because TICKET-001 was never inflight.
+    (d / "thing.py").write_text("the fix\n")
+    sh("git add -A && git commit -qm 'other ticket: same fix, landed first'")
+
+    did, rec = supervisor.start(d, path, harness("fake"), {})
+    assert did and rec and rec["kind"] == "merge"
+    rec["proc"].wait()
+    supervisor.finish(d, rec)
+
+    main_shas = sh("git log main --format=%H").stdout
+    assert ticket_sha in main_shas, (
+        "TICKET-001's own commit did not land on base -- the rebase step in "
+        "merge_cmd() silently dropped it as an empty/no-op patch because an "
+        "unrelated ticket landed the identical change while TICKET-001 sat "
+        f"at a human gate. git log main --format=%H returned: {main_shas!r}"
+    )
+    shutil.rmtree(d, ignore_errors=True)
+
+
 def test_the_unwind_refuses_a_sha_that_is_not_on_the_branch():
     """`unwind_cmd()` resets a branch to a recorded tip -- but only if that tip
     is really on the branch. A stale or hand-edited sha must refuse rather than
