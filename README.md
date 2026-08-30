@@ -505,7 +505,9 @@ re-planning cannot repair it and a counter would only delay the human.
 A Tier A failure at `plan-validation` whose findings are all `ENVIRONMENT: `
 findings -- `test_suite_without_new` is red on base too, not this branch's
 doing -- escalates to a human and charges no counter, because no re-plan can
-fix an environment that is already broken on base.
+fix an environment that is already broken on base. That base run uses base's
+own test files -- the branch's are not copied onto it -- so a defect the
+branch introduced in a test file cannot make base look broken.
 
 `stale_regate` is the one counter a later pass credits back: a passing
 `revalidating` writes `stale_regate_cleared`, capped at the failures already

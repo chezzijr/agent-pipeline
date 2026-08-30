@@ -126,6 +126,15 @@ still worth it: it prints one line per case, and the failure names the case.
   permanently unsatisfiable. `gate()` reports the exit-0 finding only when
   the test does not also FAIL on base; failing on base is the durable proof
   the branch already carries the fix (TICKET-090).
+- **The base SUITE run uses base's own test files; only the per-test base run
+  copies the branch's.** `_base_findings()` copies the ticket's test file
+  onto the base checkout, because the new node does not exist on base at all
+  (DEC-017). `_base_suite()` must not: a defect the branch introduced in
+  shared code in that same file rides along, base comes back red for a
+  reason its own file never had, and `gate()` reports the branch's own bug as
+  `ENVIRONMENT` -- "not this branch's doing" -- escalating and charging
+  nothing (TICKET-104). The ticket's nodes are kept out of the base run by
+  `test_suite_without_new`'s selector instead.
 - **`git worktree add -B` resets the branch.** Never use `-B`: recreating a
   worktree after a resume would silently discard the ticket's commits.
 - **`.project/` is excluded from the read-only tree snapshot**, because writing

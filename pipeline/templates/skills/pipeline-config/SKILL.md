@@ -53,7 +53,12 @@ Four traps behind that table:
   must be wrapped, the same way the selector trap above is.
 - `test_suite_without_new` is re-run on a checkout of `base` whenever it is
   red in the ticket's worktree. A suite red on both is reported as an
-  `ENVIRONMENT: ` problem, not as pre-existing breakage.
+  `ENVIRONMENT: ` problem, not as pre-existing breakage. Base runs its own
+  test files -- the branch's are not copied onto base for that run -- so
+  your selector alone keeps the ticket's nodes out of it, and that selector
+  must be a no-op when it names a test base does not have yet (pytest's
+  `--deselect` is; a runner that errors on an unknown selector must be
+  wrapped, like the selector trap above).
 
 `{test}` is the whole `<path>::<name>` value; `{path}` and `{name}` are its
 two halves. `{rest}` is everything after the FIRST `::` -- a Rust/Go/JVM
