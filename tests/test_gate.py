@@ -131,6 +131,28 @@ def test_gate_blocks_a_plan_of_prose():
     shutil.rmtree(d)
 
 
+def test_a_repeated_finding_names_the_extra_md_file_and_the_repeat_count():
+    """TICKET-102: a finding that fires again on the same ticket must point
+    at `.project/stages/<stage>.extra.md` and say how many times it has now
+    fired. Today the second run repeats the bare finding verbatim, with no
+    mention of `.project/stages/` at all."""
+    d = project(_set_digest(""))
+    gate(d, "TICKET-001")
+    ok, failures = gate(d, "TICKET-001")
+    assert not ok
+    assert any(".project/stages/plan-validation.extra.md" in f for f in failures), failures
+    assert any("2" in f for f in failures), failures
+    shutil.rmtree(d)
+
+
+def test_a_first_time_finding_does_not_mention_extra_md():
+    d = project(_set_digest(""))
+    ok, failures = gate(d, "TICKET-001")
+    assert not ok
+    assert not any(".project/stages/" in f for f in failures), failures
+    shutil.rmtree(d)
+
+
 def test_a_purely_structural_gate_failure_does_not_charge_a_plan_validation_attempt():
     """TICKET-065: a prose line above the numbered step fails Tier A on
     format alone -- the gate never judges the plan's content. `files_declared`
