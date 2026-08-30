@@ -549,3 +549,46 @@ def test_the_stage_view_keeps_every_human_entry():
     assert "earlier entries omitted" in view, (
         "the view omitted entries without saying so -- DEC-016")
     shutil.rmtree(d)
+
+
+def test_all_decisions_lists_a_superseded_record_and_skips_a_symlink():
+    """TICKET-101: `active_decisions()` answers what still BINDS a plan; a
+    listing needs what EXISTS, superseded records included, because a
+    superseded record is still the reason something was once done that way.
+    DEC-018 keeps a planted symlink out of both."""
+    d = project()
+    dec = d / ".project" / "decisions"
+    dec.mkdir(parents=True, exist_ok=True)
+    (dec / "DEC-003.md").write_text(
+        "# DEC-003" + "\n\n" + "- ticket: TICKET-003 (bugfix)" + "\n"
+        + "- decided: 2026-01-01" + "\n\n"
+        + "keep the explicit flush; without it the buffer leaks" + "\n\n"
+        + T.SUPERSEDED_MARKER + "\n"
+        + "- superseded-by: DEC-011 (the writer flushes, 2026-01-02)" + "\n")
+    (dec / "DEC-011.md").write_text(
+        "# DEC-011" + "\n\n" + "- ticket: TICKET-011 (feature)" + "\n"
+        + "- decided: 2026-01-02" + "\n\n"
+        + "the writer owns the eviction order" + "\n")
+    (d / "secret.txt").write_text("outside decisions/")
+    (dec / "DEC-999.md").symlink_to(d / "secret.txt")
+
+    every = {x.id: x for x in T.all_decisions(d)}
+    assert set(every) == {"DEC-003", "DEC-011"}, every
+    assert every["DEC-003"].superseded
+    assert every["DEC-003"].superseded_by == "DEC-011"
+    assert every["DEC-003"].ticket == "TICKET-003"
+    assert every["DEC-003"].title == "keep the explicit flush; without it the buffer leaks"
+    assert not every["DEC-011"].superseded
+    assert every["DEC-011"].superseded_by is None
+    assert [x.id for x in T.active_decisions(d)] == ["DEC-011"]
+
+    # the marker decides, never the footer: a record whose footer names no
+    # parseable id is still superseded, so `superseded_by is None` alone
+    # must never be read as "active"
+    (dec / "DEC-003.md").write_text(
+        "# DEC-003" + "\n\n" + "- ticket: TICKET-003 (bugfix)" + "\n\n"
+        + "flush" + "\n\n" + T.SUPERSEDED_MARKER + "\n"
+        + "- superseded-by: (lost)" + "\n")
+    one = next(x for x in T.all_decisions(d) if x.id == "DEC-003")
+    assert one.superseded and one.superseded_by is None
+    shutil.rmtree(d)

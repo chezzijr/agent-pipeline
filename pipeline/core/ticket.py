@@ -315,6 +315,18 @@ SAFE_DEC_ID = re.compile(r"^DEC-\d{1,6}$")
 # search for, and it is never emitted anywhere except by the append below.
 SUPERSEDED_MARKER = "<!-- pipeline:superseded-by -->"
 
+# A record's `- ticket:` metadata line; the id on its superseded footer; and
+# the lines that are never a record's first *body* line (`# DEC-042`, the
+# metadata block, the marker comment). All of this parsing lives here, so
+# the CLI parses none of it.
+_DEC_TICKET_RE = re.compile(r"^- ticket:[ \t]*(\S+)", re.M)
+_DEC_SUPER_RE = re.compile(r"^- superseded-by:[ \t]*(DEC-[0-9]{1,6})", re.M)
+_DEC_HEADER_RE = re.compile(r"^(#|-\s|<!--)")
+
+# A listing row is one line, and a record's first body line is prose that
+# can run past a terminal, so truncate once here rather than in each caller.
+TITLE_WIDTH = 100
+
 
 @dataclass(frozen=True)
 class Decision:
@@ -323,6 +335,40 @@ class Decision:
     id: str
     path: Path
     text: str
+
+    @property
+    def superseded(self) -> bool:
+        """The MARKER decides, never a body line that happens to read like the
+        footer -- see SUPERSEDED_MARKER."""
+        return SUPERSEDED_MARKER in self.text
+
+    @property
+    def superseded_by(self) -> str | None:
+        """The id that replaced this record, read only from the text BELOW the
+        marker. `None` means the footer named no parseable id -- it never means
+        active; `superseded` is what decides that."""
+        if not self.superseded:
+            return None
+        m = _DEC_SUPER_RE.search(self.text.split(SUPERSEDED_MARKER, 1)[1])
+        return m.group(1) if m else None
+
+    @property
+    def ticket(self) -> str:
+        """The ticket that decided it, or `-` for a hand-written record."""
+        m = _DEC_TICKET_RE.search(self.text)
+        return m.group(1) if m else "-"
+
+    @property
+    def title(self) -> str:
+        """A record has no title field: `# DEC-018` restates the id and the
+        metadata block is metadata, so the first body line is the summary. If
+        the record format ever gains a title field, this is the one place to
+        change."""
+        for line in self.text.splitlines():
+            line = line.strip()
+            if line and not _DEC_HEADER_RE.match(line):
+                return line[:TITLE_WIDTH]
+        return ""
 
 
 def decisions_dir(project: Path) -> Path:
@@ -340,21 +386,26 @@ def _refuse_symlink(p: Path) -> None:
         raise PipelineError(f"{p}: refusing to follow a symlink in decisions/")
 
 
-def active_decisions(project: Path) -> list[Decision]:
-    """Decision records nobody has superseded -- what still binds a plan.
-    A record carrying the superseded footer stays on disk (it is still the
-    reason something was once done that way) but drops out of this list."""
+def all_decisions(project: Path) -> list[Decision]:
+    """Every decision record on disk, superseded ones included -- what
+    `pipeline decisions` lists. A symlinked `DEC-*.md` is skipped here as
+    well: DEC-018 says a planted link counts as absent, not superseded."""
     d = decisions_dir(project)
     if not d.is_dir():
         return []
     out = []
     for p in sorted(d.glob("DEC-*.md")):
         if p.is_symlink():
-            continue  # never follow a planted symlink into an active listing
-        text = p.read_text()
-        if SUPERSEDED_MARKER not in text:
-            out.append(Decision(id=p.stem, path=p, text=text))
+            continue  # never follow a planted symlink into a listing
+        out.append(Decision(id=p.stem, path=p, text=p.read_text()))
     return out
+
+
+def active_decisions(project: Path) -> list[Decision]:
+    """Decision records nobody has superseded -- what still binds a plan.
+    A record carrying the superseded footer stays on disk (it is still the
+    reason something was once done that way) but drops out of this list."""
+    return [d for d in all_decisions(project) if not d.superseded]
 
 
 def record_decision(project: Path, t: "Ticket") -> str | None:
