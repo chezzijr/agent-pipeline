@@ -41,6 +41,7 @@ import sys
 
 PUNCTUATION = "();<>|&\n"            # what shlex emits as punctuation tokens
 SEPARATORS = {"&", "|", ";", "\n"}   # a run of these separates two commands
+REDIRECT_CHARS = set("<>&|")         # characters a real redirection token is made of
 SHELLS = {"sh", "bash", "zsh", "fish", "dash", "ksh", "csh", "tcsh", "shell"}
 HOME_ISH = re.compile(r"^(/|~|~/|\$HOME/?|\$\{HOME\}/?|/\*)$")
 
@@ -74,6 +75,8 @@ def split_segments(tokens: list[str]) -> list[list[str]]:
     for tok in tokens:
         if tok and (set(tok) <= SEPARATORS
                     or "\n" in tok and set(tok) <= set(PUNCTUATION)):
+            if ">" in tok:
+                current.append(">")
             if current:
                 out.append(current)
             current = []
@@ -82,6 +85,23 @@ def split_segments(tokens: list[str]) -> list[list[str]]:
     if current:
         out.append(current)
     return out
+
+
+def redirection(argv: list[str]) -> str | None:
+    """The first token in `argv` that is a real shell redirection, or `None`.
+
+    A token built entirely from `<>&|` characters and containing `>` is a
+    redirection -- a quoted `>` never has this shape, because shlex leaves
+    it welded to the other characters in its word. `2>&1` and `>&2` lex as
+    `>&` plus a bare fd and duplicate a descriptor rather than write a file;
+    `>& out.txt` does write one, so only a following all-digit token clears
+    a `>&` token."""
+    for i, tok in enumerate(argv):
+        if tok and ">" in tok and set(tok) <= REDIRECT_CHARS:
+            if tok.endswith("&") and i + 1 < len(argv) and argv[i + 1].isdigit():
+                continue
+            return tok
+    return None
 
 
 def presplit_segments(command: str) -> list[list[str]] | None:
@@ -256,9 +276,13 @@ def readonly_prefixes() -> list[list[str]]:
 
 
 def readonly_rules(segs: list[list[str]], raw: str) -> str | None:
-    # any redirection that lands in a file; `2>&1` and `>&2` are not writes
-    if re.search(r"(?<![0-9&>])>{1,2}(?!\s*&)", raw) or re.search(r"\d>{1,2}(?!\s*&)", raw):
-        return "shell redirection into a file"
+    # a token-level scan, not a raw-string regex -- DEC-058 keeps this above
+    # the allow-prefix loop below, so a project prefix cannot re-enable a
+    # redirection. A raw regex cannot tell a real `>` from a quoted one; a
+    # token can, because shlex has already stripped the quotes (TICKET-106).
+    for argv in segs:
+        if redirection(argv):
+            return "shell redirection into a file"
     if "$(" in raw or "`" in raw:
         return "command substitution the guard cannot inspect"
 
