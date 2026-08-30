@@ -839,3 +839,12 @@ def test_init_private_and_register_both_name_the_pin():
     assert "config --sync" in cli(d, "init", "--private").stdout
     assert "pinned" in cli(d, "register", "--force", str(d)).stdout
     shutil.rmtree(d, ignore_errors=True)
+
+
+def test_decisions_command_lists_decision_records():
+    """TICKET-101: decision records are the pipeline's compounding artifact
+    and no command lists them -- `pipeline decisions` must exist."""
+    d = Path(tempfile.mkdtemp())
+    r = cli(d, "decisions")
+    assert r.returncode == 0, r.stderr
+    shutil.rmtree(d, ignore_errors=True)
