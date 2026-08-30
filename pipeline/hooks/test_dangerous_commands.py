@@ -98,6 +98,8 @@ BLOCKED_READONLY = [
     # human answer 2026-08-30 14:42:11Z: each begins with a valid line print, then writes
     "sed -n '40,70p;s/a/b/w out.txt' f.rs",
     "sed -n '40,70p;w out.txt' f.rs",
+    # review found 2026-08-30: process substitution writes a file too
+    "wc -l >(tee out.txt)",
 ]
 ALLOWED_READONLY = [
     "pytest -x", "git diff main...HEAD", "grep -rn foo .", "git log --oneline",
