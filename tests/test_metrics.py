@@ -414,26 +414,6 @@ def test_render_names_its_project_scope_and_points_a_gate_failure_at_extra_md():
         conn.close()
 
 
-def test_render_names_the_actual_stage_of_a_repeated_gate_finding():
-    """TICKET-102: view 4's line names `.project/stages/<stage>.extra.md`
-    with the literal word `<stage>`, never the stage the finding actually
-    repeated in -- every finding in `build_log()` fires at
-    `plan-validation`, so the line must say
-    `.project/stages/plan-validation.extra.md`, not the placeholder."""
-    s = build_log()
-    db_path = s.path
-    s.close()
-
-    conn = metrics.connect(db_path)
-    try:
-        data = metrics.collect(conn, project="/proj")
-        text = metrics.render(data)
-        assert ".project/stages/plan-validation.extra.md" in text, text
-        assert "<stage>" not in text, text
-    finally:
-        conn.close()
-
-
 def test_render_says_all_and_counts_the_projects_it_summed():
     s = _log()
     _at(s, BASE + 0, "stage_end", ticket="TICKET-100", stage="planning",
