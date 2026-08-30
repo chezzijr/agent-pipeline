@@ -2110,3 +2110,27 @@ def test_environment_only_classifies_a_suite_red_on_base_and_nothing_else():
     assert gate_result(
         False, env + ["`files_declared` is empty"], "plan-validation") == "bad-plan"
     assert gate_result(True, [], "plan-validation") == "ok"
+
+
+def test_a_ticket_cannot_declare_that_another_must_land_first():
+    """There is no way to file a ticket that waits for another ticket to
+    reach `done` before the dispatcher starts it -- `start()` has no field
+    it reads for this, unlike `files_declared`, which `conflict_holder()`
+    checks against every in-flight ticket."""
+    d, _ = git_project()
+    blocker = FIXTURE.replace("stage: plan-validation", "stage: implementing")
+    (d / ".project/tickets/TICKET-001.md").write_text(blocker)
+    dependent = FIXTURE.replace("id: TICKET-001", "id: TICKET-002") \
+        .replace("branch: ticket/001", "branch: ticket/002") \
+        .replace("stage: plan-validation", "stage: new") \
+        .replace("---\n\n## Summary", "depends_on: TICKET-001\n---\n\n## Summary")
+    path = d / ".project/tickets/TICKET-002.md"
+    path.write_text(dependent)
+
+    did, _ = supervisor.start(d, path, harness("fake"), {})
+
+    assert did is False, (
+        "TICKET-002 declared depends_on: TICKET-001, which is still at "
+        "`implementing`, but start() advanced it anyway -- nothing in "
+        "start() reads a dependency field")
+    shutil.rmtree(d, ignore_errors=True)
