@@ -418,6 +418,37 @@ def test_a_numbered_acceptance_criterion_naming_no_test_is_caught():
     d = project(FIXTURE.replace("- `test_broken` passes", "1. code should be clean"))
     ok, failures = gate(d, "TICKET-001")
     assert not ok and any("names no test" in f for f in failures), failures
+
+
+def test_gate_base_suite_does_not_inherit_a_branch_defect_via_copied_test_file():
+    """TICKET-104: `_copy_tests` copies the WHOLE test file the ticket
+    names onto the base checkout, not just the new test node. When the
+    branch itself broke something shared in that file, the base run
+    inherits the branch's own defect and comes back RED too -- so `gate()`
+    reports a branch defect as pre-existing/environment breakage that "is
+    not this branch's doing", which is false: base's own original file
+    never had the defect."""
+    d = Path(tempfile.mkdtemp())
+    sh = lambda c, cwd=d: subprocess.run(c, shell=True, cwd=cwd,
+                                         capture_output=True, text=True)
+    sh("git init -qb main && git config user.email t@t && git config user.name t")
+    (d / "test_thing.py").write_text('SHARED = "good"\n')
+    (d / ".project" / "tickets").mkdir(parents=True)
+    (d / ".project" / "pipeline.toml").write_text(
+        'test_one = "echo test_broken; grep -q good test_thing.py"\n'
+        'test_suite = "true"\n'
+        "test_suite_without_new = \"echo '1 failed'; grep -q good test_thing.py\"\n"
+        'base = "main"\n')
+    (d / ".project" / "tickets" / "TICKET-001.md").write_text(FIXTURE)
+    sh("git add -A && git commit -qm init")
+    wt = d / ".worktrees" / "TICKET-001"
+    sh(f"git worktree add -q -b ticket/001 {wt} main")
+    # the branch's own defect: it broke SHARED, unrelated to the new test
+    (wt / "test_thing.py").write_text('SHARED = "broken"\n')
+    sh("git add -A && git commit -qm branch", cwd=wt)
+    ok, failures = gate(d, "TICKET-001", workdir=wt)
+    assert not ok
+    assert not any("is RED on base" in f for f in failures), failures
     shutil.rmtree(d)
 
 
