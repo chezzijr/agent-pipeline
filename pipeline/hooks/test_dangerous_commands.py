@@ -91,6 +91,9 @@ BLOCKED_READONLY = [
     "sed 's/a/b/' thing.py",
     "sed -n '10,20p' README.md",
     "sed -E 's/a+/b/' thing.py",
+    # TICKET-106: real descriptor duplication, not the raw regex's false negative
+    "ls >& out.txt",
+    "echo hi>out.txt", "cat a>>b", "echo x 1>f",
 ]
 ALLOWED_READONLY = [
     "pytest -x", "git diff main...HEAD", "grep -rn foo .", "git log --oneline",
@@ -104,6 +107,8 @@ ALLOWED_READONLY = [
     "grep -rn 'a\\.b' src/",
     # TICKET-106: a `>` inside a quoted string is not a redirection
     "grep 'a > b' file.txt",
+    "awk 'NR>=40 && NR<=70' f.rs",
+    "jq '.a>1' f",
 ]
 PROJECT_PREFIXES = [["pipeline", "ls"], ["pipeline", "status"],
                      ["./pipeline/hooks/test_dangerous_commands.py"]]
