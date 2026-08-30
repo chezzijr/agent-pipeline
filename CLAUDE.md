@@ -184,6 +184,15 @@ still worth it: it prints one line per case, and the failure names the case.
 - **Only one merge runs at a time.** Two tickets merging in one tick both
   `git merge base`, and the first fast-forward moves base under the second.
   `start()` waits, exactly like `files_conflict` does.
+- **Ordering has two sources, and only one is a proxy.** `files_conflict`
+  orders two tickets that declare the same file; `depends_on` in a ticket's
+  frontmatter orders two that share no file at all. `start()` consults
+  `dep_unsatisfiable()` then `dep_holder()` (`pipeline/core/machine.py`)
+  above the `new` advance, waits exactly as it does for a file overlap, and
+  reports the wait through the same `waiting` key -- {on, stage} for a
+  dependency, {on, file} for an overlap. The field is the human's: it is in
+  `CONTROL_FIELDS` and in no `CLAIMS` entry, so a stage that writes it
+  escalates the ticket.
 - **`merging` rebases before it merges, and the rebase may not fail the
   child.** `merge_cmd()` runs `git rebase <base> || git rebase --abort` and
   then the `git merge --no-edit <base>` that was always there. The rebase
