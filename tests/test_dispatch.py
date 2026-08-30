@@ -1510,6 +1510,32 @@ def test_a_merge_waits_behind_a_ticket_parked_at_a_human_gate():
         f"waiting must name the parked holder and the shared file, got {waiting!r}")
 
 
+def test_a_merge_is_not_held_by_a_parked_ticket_that_shares_no_file():
+    """The over-blocking guard: a ticket parked at a human gate whose
+    `files_declared` overlap NOTHING must delay no one. If `parked_meta()`
+    is ever widened past `files_declared` overlap, this must catch it."""
+    d, sh = git_project()
+    (d / ".project/tickets/TICKET-001.md").write_text(
+        FIXTURE.replace("stage: plan-validation", "stage: awaiting-approval")
+               .replace("files_declared: [thing.py]", "files_declared: [other.py]"))
+    (d / ".project/tickets/TICKET-002.md").write_text(
+        FIXTURE.replace("id: TICKET-001", "id: TICKET-002")
+               .replace("branch: ticket/001", "branch: ticket/002")
+               .replace("stage: plan-validation", "stage: merging"))
+    wt = supervisor.ensure_worktree(
+        d, {"id": "TICKET-002", "branch": "ticket/002"}, {"base": "main"})
+    (wt / "thing.py").write_text("the fix\n")
+    _commit(wt, "'TICKET-002: the fix'")
+
+    did, rec = supervisor.start(d, d / ".project/tickets/TICKET-002.md", harness("fake"), {})
+
+    assert did and rec and rec["kind"] == "merge", (
+        f"a parked ticket sharing no file must delay no merge, got (did, rec) = {(did, rec)!r}")
+    rec["proc"].wait()
+    supervisor.finish(d, rec)
+    shutil.rmtree(d, ignore_errors=True)
+
+
 def test_the_unwind_refuses_a_sha_that_is_not_on_the_branch():
     """`unwind_cmd()` resets a branch to a recorded tip -- but only if that tip
     is really on the branch. A stale or hand-edited sha must refuse rather than
