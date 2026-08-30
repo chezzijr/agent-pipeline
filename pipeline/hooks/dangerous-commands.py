@@ -41,7 +41,7 @@ import sys
 
 PUNCTUATION = "();<>|&\n"            # what shlex emits as punctuation tokens
 SEPARATORS = {"&", "|", ";", "\n"}   # a run of these separates two commands
-REDIRECT_CHARS = set("<>&|")         # characters a real redirection token is made of
+REDIRECT_CHARS = set("<>&|()")       # characters a real redirection token is made of
 SHELLS = {"sh", "bash", "zsh", "fish", "dash", "ksh", "csh", "tcsh", "shell"}
 HOME_ISH = re.compile(r"^(/|~|~/|\$HOME/?|\$\{HOME\}/?|/\*)$")
 
@@ -104,12 +104,14 @@ def split_segments(tokens: list[str]) -> list[list[str]]:
 def redirection(argv: list[str]) -> str | None:
     """The first token in `argv` that is a real shell redirection, or `None`.
 
-    A token built entirely from `<>&|` characters and containing `>` is a
+    A token built entirely from `<>&|()` characters and containing `>` is a
     redirection -- a quoted `>` never has this shape, because shlex leaves
     it welded to the other characters in its word. `2>&1` and `>&2` lex as
     `>&` plus a bare fd and duplicate a descriptor rather than write a file;
     `>& out.txt` does write one, so only a following all-digit token clears
-    a `>&` token."""
+    a `>&` token. Process substitution lexes `>(` as one token: `wc -l
+    >(tee out.txt)` writes through the pipe `tee` opens, so `(` and `)` are
+    in `REDIRECT_CHARS` too."""
     for i, tok in enumerate(argv):
         if tok and ">" in tok and set(tok) <= REDIRECT_CHARS:
             if tok.endswith("&") and i + 1 < len(argv) and argv[i + 1].isdigit():
