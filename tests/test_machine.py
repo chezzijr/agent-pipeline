@@ -165,6 +165,29 @@ def test_conflict_holder_names_the_first_holder_and_its_file():
     assert not M.files_conflict(mine, []), "nothing in flight cannot conflict"
 
 
+def test_dep_holder_names_the_first_dependency_short_of_done():
+    deps = {"TICKET-003": ["TICKET-002", "TICKET-001"]}
+    stages = {"TICKET-001": "implementing", "TICKET-002": "done", "TICKET-003": "new"}
+    assert M.dep_holder("TICKET-003", deps, stages) == ("TICKET-001", "implementing")
+    assert M.dep_holder("TICKET-003", deps, {**stages, "TICKET-001": "done"}) is None
+    assert M.dep_holder("TICKET-001", deps, stages) is None, \
+        "a ticket with no depends_on never waits"
+
+
+def test_a_dependency_that_can_never_land_escalates_instead_of_waiting():
+    assert "escalated" in M.dep_unsatisfiable(
+        "TICKET-002", {"TICKET-002": ["TICKET-001"]},
+        {"TICKET-001": "escalated", "TICKET-002": "new"})
+    assert "not a ticket" in M.dep_unsatisfiable(
+        "TICKET-002", {"TICKET-002": ["TICKET-404"]}, {"TICKET-002": "new"})
+    assert "cycle" in M.dep_unsatisfiable(
+        "TICKET-002", {"TICKET-002": ["TICKET-001"], "TICKET-001": ["TICKET-002"]},
+        {"TICKET-001": "new", "TICKET-002": "new"})
+    assert M.dep_unsatisfiable(
+        "TICKET-002", {"TICKET-002": ["TICKET-001"]},
+        {"TICKET-001": "done", "TICKET-002": "new"}) is None
+
+
 def test_control_fields_are_the_dispatchers_alone():
     assert {"stage", "counters", "branch", "id", "lease"} <= M.CONTROL_FIELDS
     for field in ("test_file", "files_declared"):

@@ -321,3 +321,38 @@ def files_conflict(meta: dict, inflight_meta: list[dict]) -> bool:
     The bool is the ordering decision; `conflict_holder()`'s tuple is what
     `ls` reports."""
     return conflict_holder(meta, inflight_meta) is not None
+
+
+def dep_holder(tid: str, deps: dict[str, list[str]], stages: dict[str, str]) -> tuple[str, str] | None:
+    """The first dependency of `tid` short of `done`, and the stage it sits at.
+    Sorted, so one blocked ticket always names the same holder. Only the
+    direct dependencies: a transitive one blocks its own ticket, so the
+    order holds one hop at a time."""
+    for dep in sorted(deps.get(tid, [])):
+        if stages.get(dep) != "done":
+            return (dep, str(stages.get(dep, "?")))
+    return None
+
+
+def dep_unsatisfiable(tid: str, deps: dict[str, list[str]], stages: dict[str, str]) -> str | None:
+    """A reason `tid`'s dependency chain can never reach `done`, or `None`.
+
+    Covers a missing id, a dependency parked at a terminal stage other than
+    `done`, and a cycle reachable from `tid`. `dep_holder()` only ever sees
+    the direct dependency, so this is the one function here that walks the
+    graph -- and it walks it only to find a reason to stop waiting."""
+    stack: list[tuple[str, list[str]]] = [(tid, [tid])]
+    seen: set[str] = set()
+    while stack:
+        cur, path = stack.pop()
+        for dep in deps.get(cur, []):
+            if dep in path:
+                return "depends_on is a cycle: " + " -> ".join(path[path.index(dep):] + [dep])
+            if dep not in stages:
+                return f"{cur} depends_on {dep}, which is not a ticket in this project"
+            if stages[dep] in TERMINAL and stages[dep] != "done":
+                return f"{cur} depends_on {dep}, which is {stages[dep]} and can never reach done"
+            if dep not in seen:
+                seen.add(dep)
+                stack.append((dep, path + [dep]))
+    return None
