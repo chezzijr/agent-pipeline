@@ -360,6 +360,76 @@ def test_escalated_shows_the_escalation_reason_not_just_the_stage_log():
     asyncio.run(go())
 
 
+ESCALATED_TRANSITION = """---
+id: TICKET-001
+stage: escalated
+class: bugfix
+branch: ticket/001
+test_file: test_thing.py::test_broken
+files_declared: [thing.py]
+counters: {}
+lease: {holder: null, expires: null}
+---
+
+## Summary
+x
+## Thread
+
+### 2026-09-02 05:08:43Z · review · transition · to=escalated · result=fail
+`review_loops` reached its bound (3/3)
+"""
+
+
+def test_escalated_falls_back_to_the_transition_entry():
+    """No `escalation` entry on the thread: the pane falls back to the
+    last `transition` entry whose `to` is `escalated`."""
+    async def go():
+        d = make_project(ESCALATED_TRANSITION)
+        fake = FakeClient([row(d, "TICKET-001", "escalated")])
+        app = PipelineApp(client=fake)
+        async with app.run_test() as pilot:
+            app.query_one(Tree).focus()
+            await select(app, pilot, d, "TICKET-001")
+
+            log = app.query_one("#log", RichLog)
+
+            def text(strip):
+                return "".join(seg.text for seg in strip)
+
+            rendered = "\n".join(text(s) for s in log.lines)
+            assert "`review_loops` reached its bound (3/3)" in rendered, rendered
+
+    asyncio.run(go())
+
+
+def test_the_escalated_pane_shows_the_log_below_the_reason():
+    """The escalation reason must precede `-- stage log --`, and the
+    stage log must still follow it."""
+    async def go():
+        d = make_project(ESCALATED)
+        logs = d / ".project" / "logs"
+        logs.mkdir(parents=True)
+        (logs / "TICKET-001-plan-validation.log").write_bytes(
+            b"\x1b[H\x1b[2Jseen-in-log\n")
+        fake = FakeClient([row(d, "TICKET-001", "escalated")])
+        app = PipelineApp(client=fake)
+        async with app.run_test() as pilot:
+            app.query_one(Tree).focus()
+            await select(app, pilot, d, "TICKET-001")
+
+            log = app.query_one("#log", RichLog)
+
+            def text(strip):
+                return "".join(seg.text for seg in strip)
+
+            rendered = "\n".join(text(s) for s in log.lines)
+            for needle in ("suite excluding the new test is RED on base too",
+                           "-- stage log --", "seen-in-log"):
+                assert needle in rendered, rendered
+
+    asyncio.run(go())
+
+
 def test_the_approval_pane_shows_rollback_and_the_log_below_it():
     """The gate needs the whole plan, not just `## Plan` -- and it still
     needs the plan-validation findings to reject on, so both must be in
