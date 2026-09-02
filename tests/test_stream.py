@@ -7,6 +7,7 @@ from pipeline.core.config import harness
 from pipeline.stream import MAX_BUF, MAX_TEXT, StreamReader, parse
 
 FIXTURE = Path(__file__).parent / "fixtures" / "stream-planning.ndjson"
+CODEX_FIXTURE = Path(__file__).parent / "fixtures" / "stream-codex.ndjson"
 
 
 def events():
@@ -125,6 +126,67 @@ def test_reader_caps_the_buffer():
     assert r.buf == b""                          # and dropped what it held
 
 
+def test_codex_jsonl_is_normalised_without_inventing_cost():
+    lines = [
+        {"type": "thread.started", "thread_id": "thr_codex"},
+        {"type": "item.started", "item": {"id": "i1", "type": "command_execution",
+                                            "command": "pytest -q"}},
+        {"type": "item.completed", "item": {"id": "i1", "type": "command_execution",
+                                              "command": "pytest -q", "exit_code": 0,
+                                              "status": "completed",
+                                              "aggregated_output": "2 passed"}},
+        {"type": "item.completed", "item": {"id": "i2", "type": "agent_message",
+                                              "text": "Done."}},
+        {"type": "turn.completed", "usage": {"input_tokens": 100,
+                                                "output_tokens": 20}},
+    ]
+    evs = [parse(json.dumps(line)) for line in lines]
+    assert evs[0]["kind"] == "init" and evs[0]["session"] == "thr_codex"
+    assert evs[1]["tools"][0]["name"] == "Bash"
+    assert evs[2]["kind"] == "tool_result" and not evs[2]["is_error"]
+    assert evs[3]["text"] == "Done."
+    assert evs[4]["kind"] == "result" and evs[4]["total_cost_usd"] is None
+    assert evs[4]["usage"]["input_tokens"] == 100
+
+
+def test_live_codex_fixture_captures_thread_guard_and_usage():
+    evs = StreamReader().feed(CODEX_FIXTURE.read_bytes())
+    assert evs[0]["kind"] == "init"
+    assert evs[0]["session"] == "01a062bb-b979-7323-b7de-c436e5de18a5"
+    blocks = [e for e in evs if e["kind"] == "hook_response"]
+    assert len(blocks) == 1 and "worktrees are the dispatcher" in blocks[0]["stderr"]
+    assert evs[-1]["kind"] == "result"
+    assert evs[-1]["usage"]["cached_input_tokens"] == 22016
+
+
+def test_codex_file_change_is_a_normal_tool_pair():
+    change = {"path": "/tmp/result", "kind": "add"}
+    start = parse(json.dumps({"type": "item.started", "item": {
+        "id": "i3", "type": "file_change", "changes": [change],
+        "status": "in_progress"}}))
+    done = parse(json.dumps({"type": "item.completed", "item": {
+        "id": "i3", "type": "file_change", "changes": [change],
+        "status": "completed"}}))
+    assert start["tools"] == [{"name": "apply_patch", "id": "i3",
+                               "input": {"changes": [change]}}]
+    assert done["kind"] == "tool_result" and not done["is_error"]
+
+
+def test_codex_reports_authoritative_microdollar_cost_when_present():
+    ev = parse(json.dumps({"type": "turn.completed", "cost_microusd": 12345,
+                           "usage": {}}))
+    assert ev["total_cost_usd"] == 0.012345
+
+
+def test_codex_plain_stderr_guard_block_is_observable():
+    ev = parse("2026-09-02 ERROR router: Command blocked by PreToolUse hook: "
+               "Blocked by the pipeline guard (review): worktrees are managed")
+    assert ev == {"kind": "hook_response", "hook": "PreToolUse",
+                  "exit_code": 2, "outcome": "block",
+                  "stderr": "Blocked by the pipeline guard (review): "
+                            "worktrees are managed"}
+
+
 def test_harness_asks_for_stream_json():
     cmd = harness("claude-code")["cmd"]
     assert "--output-format stream-json" in cmd and "--verbose" in cmd
@@ -138,6 +200,10 @@ def test_render_is_total_and_shows_the_guard_biting():
     assert all(isinstance(x, str) for x in lines)
     assert "exit=2" in lines[5] and "guard:" in lines[5], lines[5]
     assert lines[11].startswith("== success $0.3412 7 turns 184.2s")
+
+    from pipeline.cli.main import render
+    assert "cost=unreported" in render(parse(
+        '{"type":"turn.completed","usage":{}}'))
 
 
 def test_an_unnamed_event_is_named_and_a_shell_line_is_not_marked_unparseable():

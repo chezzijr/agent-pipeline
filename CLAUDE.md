@@ -82,8 +82,8 @@ The data directories live **inside** the package on purpose: they are found via
 `uv tool install .`.
 
 Stage prompts stay **harness-neutral** — plain instructions and shell/git
-commands, no Claude Code skills, subagents, or slash commands. Anything
-Claude-specific belongs in `pipeline/harnesses/claude-code.toml`.
+commands, no harness-specific skills, subagents, or slash commands. CLI
+differences belong in `pipeline/harnesses/*.toml`.
 
 As of 2026-08-22 **no stage declares `skills:`**. `triage`, `planning` and
 `implementing` each invoked one superpowers skill, on 70 of 100 runs between
@@ -397,6 +397,7 @@ The agent edits its worktree copy while the dispatcher runs from the main
 checkout, so there is no mid-run self-modification hazard.
 
 But a change to `pipeline/hooks/dangerous-commands.py`, `pipeline/harnesses/claude-code.toml`,
+`pipeline/harnesses/codex.toml`,
 `transition()`, `validate_meta()`, `CONTROL_FIELDS`, `FENCED`, `strip_settings_sources()`,
 `.project/pipeline.toml` or `.project/stages/` **requires human review before merge**, whatever the pipeline says.
 A pipeline that can weaken its own guard unattended is the one failure mode worth

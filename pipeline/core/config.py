@@ -478,16 +478,42 @@ def project_max_parallel(project: Path) -> int | None:
     return v
 
 
-def mcp_config(servers: dict) -> Path | None:
-    """The `--mcp-config` file Claude Code wants: `mcpServers` keyed by name,
-    with `readonly` stripped -- that key is the pipeline's own, read by
-    `spawn()` to build `PIPELINE_MCP_READONLY`, and the CLI has no use for it.
+def _toml_value(value) -> str:
+    """The small TOML subset needed for command-line config overrides."""
+    if isinstance(value, str):
+        return json.dumps(value)
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return str(value)
+    if isinstance(value, list):
+        return "[" + ",".join(_toml_value(v) for v in value) + "]"
+    if isinstance(value, dict):
+        return "{" + ",".join(
+            f"{json.dumps(str(k))}={_toml_value(v)}" for k, v in value.items()
+        ) + "}"
+    raise PipelineError(f"cannot encode {value!r} as a Codex TOML override")
+
+
+def mcp_config(servers: dict, hcfg: dict | None = None) -> Path | None:
+    """The harness-specific MCP configuration for this stage.
+
+    Claude reads a JSON file via `--mcp-config`; Codex reads one inline TOML
+    override. `readonly` belongs to the pipeline guard, and Claude's `type`
+    discriminator is not part of Codex's server schema.
     """
     if not servers:
         return None
-    f = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
-    json.dump({"mcpServers": {n: {k: v for k, v in s.items() if k != "readonly"}
-                              for n, s in servers.items()}}, f)
+    mode = (hcfg or {}).get("mcp_mode", "claude-json")
+    f = tempfile.NamedTemporaryFile("w", suffix=".toml" if mode == "inline" else ".json",
+                                    delete=False)
+    if mode == "inline":
+        clean = {n: {k: v for k, v in s.items() if k not in {"readonly", "type"}}
+                 for n, s in servers.items()}
+        f.write("mcp_servers=" + _toml_value(clean))
+    else:
+        json.dump({"mcpServers": {n: {k: v for k, v in s.items() if k != "readonly"}
+                                  for n, s in servers.items()}}, f)
     f.close()
     return Path(f.name)
 
@@ -569,7 +595,7 @@ def stage_cap(cfg: dict, hcfg: dict):
 def render(hcfg: dict, cfg: dict, *, tid: str, project: Path, ticket: Path,
            result_file: Path, session: str, prompt: Path,
            settings: Path | None = None, mcp: Path | None = None,
-           key: str = "cmd") -> str:
+           key: str = "cmd", worktree: Path | None = None) -> str:
     """Fill a harness's `cmd` template. Pulled out of `spawn()` so a harness
     can be exercised -- rendered command asserted -- without ever running an
     agent, which is how `codex.toml` is tested.
@@ -595,14 +621,21 @@ def render(hcfg: dict, cfg: dict, *, tid: str, project: Path, ticket: Path,
             f"write {result_q}")
     inline = (shlex.quote(prompt.read_text() + "\n\n" + work)
               if hcfg.get("prompt_mode", "system") == "inline" else "")
+    logical_model = cfg.get("model", "sonnet")
+    model = (hcfg.get("models") or {}).get(logical_model, logical_model)
+    settings_value = (settings.read_text() if settings and
+                      hcfg.get("settings_mode") == "inline" else str(settings or ""))
+    mcp_value = (mcp.read_text() if mcp and hcfg.get("mcp_mode") == "inline"
+                 else str(mcp or ""))
+    wt = worktree or project
     return (hcfg.get(key) or hcfg["cmd"]).format(
-        model=cfg.get("model", "sonnet"),
+        model=model,
         effort_flag=(hcfg.get("effort_flag", "").format(effort=cfg["effort"])
                      if cfg.get("effort") else ""),
         session_flag=hcfg.get("session_flag", "").format(session=session),
         settings_flag=(hcfg.get("settings_flag", "").format(
-            settings=shlex.quote(str(settings))) if settings else ""),
-        mcp_flag=(hcfg.get("mcp_flag", "").format(mcp=shlex.quote(str(mcp)))
+            settings=shlex.quote(settings_value)) if settings else ""),
+        mcp_flag=(hcfg.get("mcp_flag", "").format(mcp=shlex.quote(mcp_value))
                   if mcp else ""),
         # stage frontmatter wins, then the harness's default for THIS template
         # (headless and interactive want opposite answers -- see
@@ -627,6 +660,9 @@ def render(hcfg: dict, cfg: dict, *, tid: str, project: Path, ticket: Path,
         tools=_tools(hcfg, cfg),
         cap=stage_cap(cfg, hcfg),
         project=shlex.quote(str(project)),
+        worktree=shlex.quote(str(wt)),
+        trust_config=shlex.quote(
+            f'projects.{json.dumps(str(wt))}.trust_level="untrusted"'),
         ticket=ticket_q,
         result_file=result_q,
         id=tid,
@@ -644,7 +680,7 @@ def _tools(hcfg: dict, cfg: dict) -> str:
     return tools
 
 
-def stage_settings(stage: str, cfg: dict) -> Path | None:
+def stage_settings(stage: str, cfg: dict, hcfg: dict | None = None) -> Path | None:
     """Per-stage hooks, as a settings file the harness loads. A hook is the only
     layer that decides with code, so this is where a stage's non-negotiables go."""
     names = cfg.get("hooks") or []
@@ -668,10 +704,16 @@ def stage_settings(stage: str, cfg: dict) -> Path | None:
     # server not in `PIPELINE_MCP_ALLOW`, so a server arriving by another route
     # is refused rather than unobserved. `--tools` restricts built-in tools
     # only (DEC-025); this matcher is what makes an MCP call visible at all.
+    matcher = "Bash|Write|Edit|MultiEdit|NotebookEdit|apply_patch|mcp__.*"
     settings = {"hooks": {"PreToolUse": [
-        {"matcher": "Bash|Write|Edit|MultiEdit|NotebookEdit|mcp__.*",
+        {"matcher": matcher,
          "hooks": entries}]}}
-    f = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
-    json.dump(settings, f)
+    mode = (hcfg or {}).get("settings_mode", "path")
+    f = tempfile.NamedTemporaryFile("w", suffix=".toml" if mode == "inline" else ".json",
+                                    delete=False)
+    if mode == "inline":
+        f.write("hooks.PreToolUse=" + _toml_value(settings["hooks"]["PreToolUse"]))
+    else:
+        json.dump(settings, f)
     f.close()
     return Path(f.name)

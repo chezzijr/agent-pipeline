@@ -112,7 +112,8 @@ def test_stage_settings_register_the_guard_as_a_pretooluse_hook():
     f = C.stage_settings("implementing", C.stage_config("implementing"))
     data = json.loads(f.read_text()); f.unlink()
     entry = data["hooks"]["PreToolUse"][0]
-    assert entry["matcher"] == "Bash|Write|Edit|MultiEdit|NotebookEdit|mcp__.*"
+    assert entry["matcher"] == \
+        "Bash|Write|Edit|MultiEdit|NotebookEdit|apply_patch|mcp__.*"
     for tool in ("Bash", "Write", "Edit", "MultiEdit", "NotebookEdit"):
         assert re.fullmatch(entry["matcher"], tool), tool
     # An interpreter + a script, not a bare path: a shebang would pick up the

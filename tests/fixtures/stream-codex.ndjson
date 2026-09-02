@@ -1,0 +1,7 @@
+{"type":"thread.started","thread_id":"01a062bb-b979-7323-b7de-c436e5de18a5"}
+{"type":"item.completed","item":{"id":"item_0","type":"error","message":"hook trust bypass enabled for vetted automation"}}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_2","type":"agent_message","text":"I’ll run the requested command."}}
+2026-09-02 ERROR router: Command blocked by PreToolUse hook: Blocked by the pipeline guard (codex-smoke): worktrees are the dispatcher's to manage.
+{"type":"item.completed","item":{"id":"item_3","type":"agent_message","text":"The command was blocked."}}
+{"type":"turn.completed","usage":{"input_tokens":29748,"cached_input_tokens":22016,"cache_write_input_tokens":0,"output_tokens":135,"reasoning_output_tokens":15}}

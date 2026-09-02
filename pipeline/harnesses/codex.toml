@@ -1,34 +1,38 @@
-# Harness adapter: data, not code. Written to prove the seam, never run --
-# the user has no codex account, so this is exercised only by asserting the
-# rendered command string (tests/test_harness.py), same as fake.toml is.
-#
-# `codex exec` has no --append-system-prompt, no --session-id, no
-# settings/hooks file, no --tools, and no budget cap (verified against
-# `codex exec --help`). Two of those absences are load-bearing:
-#
-# - prompt_mode = "inline": with no system-prompt flag, the composed stage
-#   prompt is read by render() and prepended to the work-ticket message as
-#   codex's single positional PROMPT argument, instead of a separate flag.
-# - supports_hooks = false: with no settings/hooks file, spawn() refuses any
-#   stage that declares `hooks:` rather than running it unguarded (invariant
-#   4 -- a hook is the only layer that decides with code; every stage in this
-#   repo declares hooks, so every stage is refused on this harness today).
-#
-# session_flag, settings_flag and effort_flag stay empty strings, exactly
-# like fake.toml -- the harness abstraction already treats "this harness has
-# no such flag" as expressible. `max_usd` likewise maps to nothing: {cap} is
-# simply not referenced below. `readonly_tools`/`write_tools` are reused for
-# codex's own writability switch -- `-s/--sandbox` -- since both express the
-# same fact ("may this stage write?") in the harness's own vocabulary.
+# Codex CLI 0.152.0+ adapter. Codex now has blocking PreToolUse hooks, so the
+# same guard used by Claude Code can enforce invariant 4. The generated hook
+# and MCP configs are passed as command-line TOML overrides; user config,
+# project .codex config, plugins and execpolicy rules are excluded.
 
 prompt_mode = "inline"
-supports_hooks = false
+supports_hooks = true
+settings_mode = "inline"
+mcp_mode = "inline"
+usage_source = "none"
 
-effort_flag = ""
+effort_flag = "-c model_reasoning_effort=\"{effort}\""
 session_flag = ""
-settings_flag = ""
-readonly_tools = "read-only"
+settings_flag = "-c {settings}"
+mcp_flag = "-c {mcp}"
+# Read-only stages still have to update the ticket and sidecar. The guard's
+# shell allowlist plus the dispatcher's tree snapshot enforce their contract.
+readonly_tools = "workspace-write"
 write_tools = "workspace-write"
 max_usd = 0
 
-cmd = """codex exec --model {model} --sandbox {tools} {prompt}"""
+cmd = """codex exec --model {model} {effort_flag} --sandbox {tools} \
+--add-dir {project}/.project --json --ignore-user-config --ignore-rules \
+--enable hooks --dangerously-bypass-hook-trust -c approval_policy=\"never\" \
+-c sandbox_workspace_write.network_access=false -c {trust_config} \
+{settings_flag} {mcp_flag} {prompt}"""
+
+interactive_cmd = """codex --model {model} {effort_flag} --sandbox {tools} \
+--add-dir {project}/.project --ignore-user-config --ignore-rules \
+--enable hooks --dangerously-bypass-hook-trust --ask-for-approval on-request \
+-c sandbox_workspace_write.network_access=false -c {trust_config} \
+{settings_flag} {mcp_flag} {prompt}"""
+
+replay_cmd = "codex exec resume {session}"
+
+[models]
+opus = "gpt-5.6-sol"
+sonnet = "gpt-5.6-terra"

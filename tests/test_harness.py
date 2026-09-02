@@ -1,8 +1,4 @@
-"""codex.toml is never run -- no codex account -- so it is exercised entirely
-by asserting the rendered command string, same as fake.toml is exercised by
-running it. This is also what proves the seam: a harness the data model
-cannot express (no system-prompt flag, no hooks file) forces exactly the two
-changes documented in codex.toml's header comment."""
+"""Harness configuration and rendering without spending an agent run."""
 import re
 import tempfile
 from pathlib import Path
@@ -13,26 +9,61 @@ from pipeline.daemon.server import Server
 from pipeline.daemon.store import Store
 
 
-def test_codex_cannot_register_hooks_so_a_guarded_stage_is_refused():
-    """Every stage file in this repo declares `hooks: [dangerous-commands]`.
-    supports_hooks = false means spawn() must refuse rather than run the
-    stage with only the tree-snapshot backstop -- detection, not prevention."""
-    assert config.stage_config("implementing").get("hooks"), \
-        "fixture assumption broken: `implementing` no longer declares hooks"
+def test_codex_registers_the_pipeline_guard_inline():
     cfg = config.harness("codex")
+    stage = config.stage_config("implementing")
+    settings = config.stage_settings("implementing", stage, cfg)
     try:
-        supervisor.spawn(Path("/nonexistent-project"), Path("/nonexistent-wt"),
-                         "TICKET-001", "implementing", cfg)
-        assert False, "ran a guarded stage on a harness that cannot register hooks"
-    except PipelineError as e:
-        assert "hooks" in str(e)
+        text = settings.read_text()
+        assert text.startswith("hooks.PreToolUse=")
+        assert "Bash|Write|Edit" in text and "apply_patch" in text
+        assert "dangerous-commands.py" in text
+    finally:
+        settings.unlink()
 
 
 def test_the_guard_is_per_harness_not_global():
-    """claude-code registers hooks via --settings, so the same guarded stage
-    that codex refuses must not be blocked for claude-code."""
+    """Both real harnesses must register the same non-negotiable guard."""
     assert config.harness("claude-code")["supports_hooks"] is True
-    assert config.harness("codex")["supports_hooks"] is False
+    assert config.harness("codex")["supports_hooks"] is True
+
+
+def test_codex_maps_models_and_isolates_the_spawn():
+    hcfg = config.harness("codex")
+    settings = config.stage_settings("review", config.stage_config("review"), hcfg)
+    prompt = config.compose_prompt("review")
+    try:
+        cmd = config.render(
+            hcfg, config.stage_config("review"), tid="TICKET-001",
+            project=Path("/proj"), worktree=Path("/proj/.worktrees/TICKET-001"),
+            ticket=Path("/proj/.project/tickets/TICKET-001.md"),
+            result_file=Path("/proj/.project/tickets/TICKET-001.result"),
+            session="dispatcher-session", prompt=prompt, settings=settings)
+        assert "--model gpt-5.6-sol" in cmd
+        assert 'model_reasoning_effort="high"' in cmd
+        assert "--sandbox workspace-write" in cmd
+        assert "--add-dir /proj/.project" in cmd
+        assert "--ignore-user-config" in cmd and "--ignore-rules" in cmd
+        assert "--dangerously-bypass-hook-trust" in cmd
+        assert "network_access=false" in cmd
+        assert 'projects."/proj/.worktrees/TICKET-001".trust_level="untrusted"' in cmd
+        assert "hooks.PreToolUse=" in cmd
+    finally:
+        prompt.unlink()
+        settings.unlink()
+
+
+def test_codex_mcp_config_contains_only_declared_server_fields():
+    hcfg = config.harness("codex")
+    path = config.mcp_config({"docs": {"command": "npx", "args": ["server"],
+                                               "readonly": True, "type": "stdio"}}, hcfg)
+    try:
+        text = path.read_text()
+        assert text.startswith("mcp_servers=")
+        assert '"docs"=' in text and '"command"="npx"' in text
+        assert "readonly" not in text and "type" not in text
+    finally:
+        path.unlink()
 
 
 def test_codex_renders_inline_prompt_with_no_system_prompt_or_settings_flag():

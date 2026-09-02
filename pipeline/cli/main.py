@@ -443,8 +443,10 @@ def cmd_ls(args) -> None:
         if last and args.verbose:
             cost = (f" cost=${last['cost_usd']:.2f}"
                     if last.get("cost_usd") is not None else "")
-            print(f"{'':<12} last: {last['stage']} log={last['log']} "
-                  f"replay=`claude --resume {last['id']}`{cost}")
+            replay = last.get("replay", f"claude --resume {last['id']}")
+            replay_text = f" replay=`{replay}`" if replay else ""
+            print(f"{'':<12} last: {last['stage']} log={last['log']}"
+                  f"{replay_text}{cost}")
 
 
 # -- the registry -------------------------------------------------------
@@ -590,7 +592,10 @@ def render(ev: dict) -> str:
         return f"!! rate limit {ev.get('status')} resets {ev.get('resets_at')}"
     if k == "result":
         ms = ev["duration_ms"] if isinstance(ev["duration_ms"], (int, float)) else 0
-        return (f"== {ev['subtype']} ${ev['total_cost_usd']:.4f} "
+        cost = (f"${ev['total_cost_usd']:.4f}"
+                if isinstance(ev.get("total_cost_usd"), (int, float))
+                else "cost=unreported")
+        return (f"== {ev['subtype']} {cost} "
                 f"{ev['num_turns']} turns {ms / 1000:.1f}s")
     # Everything the parser could not name. Three different things arrive here
     # and they do not deserve the same line:

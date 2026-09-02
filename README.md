@@ -20,10 +20,9 @@ did. Tickets are the queue; agents are stateless workers pulled off it.
 
 - **Python 3.11+** and [uv](https://docs.astral.sh/uv/). Three runtime
   dependencies and that is the budget: PyYAML, `pyte`, `textual`.
-- **An agent CLI.** [Claude Code](https://claude.com/claude-code) is the one
-  harness that is exercised against real runs. Stage prompts are
-  harness-neutral; everything CLI-specific lives in one TOML file, and
-  `pipeline/harnesses/codex.toml` exists to prove that seam holds.
+- **An agent CLI.** [Claude Code](https://claude.com/claude-code) is the default;
+  Codex CLI 0.152.0 or newer is available with `--harness codex`. Stage prompts
+  are harness-neutral; CLI-specific behavior lives in the harness TOML files.
 - **Linux or macOS.** POSIX only -- `fork`, a PTY, `flock`, a Unix socket and
   `selectors` -- with no Linux-only syscall on any path, so both are supported.
   Not Windows: WSL is the way there.
@@ -626,43 +625,31 @@ so a committed `.extra.md` change parks there too.
 
 ## Porting to another harness
 
-`pipeline/harnesses/codex.toml` is a second harness written to find out where the
-abstraction's seam actually sits -- untested against a real run (no codex account),
-tested instead by asserting the rendered `cmd` string, the same way `fake.toml` is
-exercised without a real agent (`tests/test_harness.py`).
+`pipeline/harnesses/codex.toml` is the second supported harness. Select it with
+`pipeline run --harness codex` or `pipeline start --harness codex`.
 
-Three of the five capability gaps between `claude` and `codex exec` were already
-expressible with no code change: `effort_flag`, `session_flag` and `settings_flag`
-are optional and default to `""` (`fake.toml` proved this first), and `max_usd`
-maps to nothing simply by never appearing in the `cmd` template. `readonly_tools`/
-`write_tools` also ported as-is -- codex has no per-tool allowlist, but it does
-have a writability switch (`-s/--sandbox`), and both pairs express the same fact
-("may this stage write?") in the harness's own vocabulary.
+Logical stage models map `opus` to `gpt-5.6-sol` and `sonnet` to
+`gpt-5.6-terra`; an explicit Codex model slug passes through. Stage effort maps
+to `model_reasoning_effort`. Codex runs in `workspace-write` even for read-only
+stages because every stage must update its ticket and result sidecar; the
+read-only command allowlist and dispatcher snapshot retain their existing roles.
 
-Two gaps forced the harness TOML format itself to grow a key:
+The harness TOML format carries two adapter choices:
 
 - **No `--append-system-prompt`.** `prompt_mode = "system" | "inline"`. `"system"`
   (the default, what `claude-code.toml` declares) passes the composed prompt as a
   path the harness's own template reads. `"inline"` (what `codex.toml` declares)
   has `render()` read the composed prompt and prepend it to the work-ticket
   message as codex's one positional `PROMPT` argument.
-- **No settings/hooks file.** `supports_hooks = true | false`. A stage that
-  declares `hooks:` on a harness with `supports_hooks = false` makes `spawn()`
-  raise instead of running the stage unguarded -- a hook is the only layer that
-  decides with code (see `CLAUDE.md` invariant 4), and a harness that cannot
-  register one gets refused, not silently downgraded to the tree-snapshot
-  backstop alone. Every stage in this repo declares hooks, so every stage is
-  refused on `codex.toml` today; that refusal, in code, is the honest answer for
-  a harness with no hook mechanism.
+- **Hook/config transport.** Claude receives a temporary JSON settings path;
+  Codex receives the same generated hook as an inline TOML override and uses
+  `--dangerously-bypass-hook-trust` only for that dispatcher-vetted definition.
+  User config and rules are ignored, and the worktree is marked untrusted so
+  branch-local `.codex` sources cannot add hooks, rules, or MCP servers.
 
-`spawn()` used to build its command with one inline `.format()` call; that block
-is now `config.render()`, a separable function a test can call without spawning
-anything. The extraction is itself part of what porting to a second harness
-found: the render step wasn't factored out until something needed to call it
-without a subprocess.
-
-Do not write a third harness speculatively -- this one only exists to answer
-"does the seam hold," and it does, at the cost of exactly the two keys above.
+Codex has no supported equivalent of Claude's `--max-budget-usd`. Token usage
+is recorded when present, but no dollar amount or unenforced cap is fabricated;
+dispatcher attempt bounds and stage leases still apply.
 
 ## Tests
 
@@ -716,11 +703,6 @@ unusable from a read-only stage. The guard's `PreToolUse` matcher covers
 stage declared, default deny. `--strict-mcp-config` still excludes every
 server the project did not name, so a stage never inherits the operator's
 `~/.claude` servers.
-
-## Not built yet
-
-- **A second harness that actually runs.** `codex.toml` is asserted, not
-  executed -- every stage declares `hooks:`, and it cannot register one.
 
 ## Licence
 

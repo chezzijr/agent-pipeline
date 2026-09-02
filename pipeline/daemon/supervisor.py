@@ -278,6 +278,8 @@ def terminal_sink(rec: dict, inner):
     which nothing reads back inside one tick.
     """
     def sink(ev: dict) -> None:
+        if ev.get("kind") == "init" and ev.get("session"):
+            rec["agent_session"] = ev["session"]
         if ev.get("kind") == "result":
             if ev.get("terminal_reason"):
                 rec["terminal_reason"] = ev["terminal_reason"]
@@ -450,9 +452,9 @@ def spawn(project: Path, wt: Path, tid: str, stage: str, hcfg: dict,
         # which is exactly what it did before this existed.
         view = ""
     prompt = compose_prompt(stage, hcfg, view, project, interactive=interactive)
-    settings = stage_settings(stage, cfg)
+    settings = stage_settings(stage, cfg, hcfg)
     servers = mcp_servers(project, cfg)
-    mcp = mcp_config(servers)
+    mcp = mcp_config(servers, hcfg)
     allow = readonly_allow(project)
     # A review cap scales with the plan its diff came from, the way
     # `bound_for()` scales an attempt budget (DEC-047). The counters ride
@@ -464,7 +466,7 @@ def spawn(project: Path, wt: Path, tid: str, stage: str, hcfg: dict,
                 ticket=ticket_path(project, tid),
                 result_file=tickets_dir(project) / f"{tid}.result",
                 session=session, prompt=prompt, settings=settings, mcp=mcp,
-                key="interactive_cmd" if interactive else "cmd")
+                key="interactive_cmd" if interactive else "cmd", worktree=wt)
     fh = log.open("wb")
     fh.write(f"$ {cmd}\n\n".encode())
     if interactive:
@@ -513,6 +515,10 @@ def spawn(project: Path, wt: Path, tid: str, stage: str, hcfg: dict,
            "screen": None, "writer": None,
            "terminal_reason": None, "cap": stage_cap(cfg, hcfg),
            "cost_usd": None, "usage": {},
+           "agent_session": None,
+           "session_bound": bool(hcfg.get("session_flag")),
+           "replay_cmd": hcfg.get("replay_cmd", "claude --resume {session}"),
+           "usage_source": hcfg.get("usage_source"),
            "sink": event_sink(tid, stage, session, emit)}
     rec["sink"] = terminal_sink(rec, rec["sink"])
     if interactive or poller:
@@ -1143,7 +1149,8 @@ def finish(project: Path, rec: dict, emit=noop) -> None:
     emit("stage_end", ticket=rec["tid"], stage=rec["stage"],
          session=rec.get("session"), result=result, next_stage=nxt,
          exit_code=proc.returncode if proc is not None else None)
-    if rec.get("mode") == "interactive" and rec.get("session"):
+    if (rec.get("mode") == "interactive" and rec.get("session")
+            and rec.get("usage_source", "claude") == "claude"):
         # a headless stage's `result` event is authoritative and already in
         # the log; an interactive one has no such event, so its cost comes
         # from the transcript here -- and only here, or every merged ticket
@@ -1203,11 +1210,18 @@ def _finish(project: Path, rec: dict, emit=noop) -> str:
                 if k in CONTROL_FIELDS and v != owned.get(k)}
     t = replace(snap, body=agent.body)
 
-    t.append(stage, "session", f"`{stage}` ran as session `{session}`\n"
-                               f"- replay: `claude --resume {session}`\n"
+    replay_session = rec.get("agent_session") or (
+        session if rec.get("session_bound", True) else None)
+    replay = (rec.get("replay_cmd", "claude --resume {session}").format(
+        session=replay_session) if replay_session else None)
+    replay_line = f"\n- replay: `{replay}`" if replay else ""
+    shown_session = replay_session or session
+    t.append(stage, "session", f"`{stage}` ran as session `{shown_session}`"
+                               f"{replay_line}\n"
                                f"- log: `{log.relative_to(project)}`"
-                               + cost_report(rec), session=session)
-    t.extra["last_session"] = {"stage": stage, "id": session,
+                               + cost_report(rec), session=shown_session)
+    t.extra["last_session"] = {"stage": stage, "id": shown_session,
+                               "replay": replay,
                                "log": str(log.relative_to(project)),
                                "cost_usd": rec.get("cost_usd")}
 

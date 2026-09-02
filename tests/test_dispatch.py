@@ -594,10 +594,10 @@ def test_a_harness_that_cannot_register_hooks_escalates_one_ticket():
     d, _ = git_project()
     path = d / ".project/tickets/TICKET-001.md"
     path.write_text(FIXTURE.replace("stage: plan-validation", "stage: implementing"))
-    assert not harness("codex").get("supports_hooks")
+    incapable = dict(harness("fake"), supports_hooks=False)
     assert config.stage_config("implementing").get("hooks")
 
-    did, rec = supervisor.start(d, path, harness("codex"), {})
+    did, rec = supervisor.start(d, path, incapable, {})
 
     assert (did, rec) == (True, None), "the refusal escaped start()"
     t = Ticket.load(path)

@@ -368,6 +368,8 @@ def verdict(command: str, readonly: bool) -> str | None:
 
 FILE_TOOLS = {"Write", "Edit", "MultiEdit", "NotebookEdit"}
 PATH_KEYS = ("file_path", "notebook_path")
+PATCH_PATH = re.compile(r"^\*\*\* (?:Add|Update|Delete) File: (.+)$")
+PATCH_MOVE = re.compile(r"^\*\*\* Move to: (.+)$")
 
 
 def resolve(path: str, base: str) -> str | None:
@@ -411,6 +413,36 @@ def file_verdict(tool_input: dict) -> str | None:
     return path_verdict(path, wt, allowed)
 
 
+def patch_verdict(tool_input: dict) -> str | None:
+    """Validate every path named by Codex's canonical `apply_patch` tool.
+
+    Codex reports the patch as `tool_input.command`, not as a `file_path`.
+    Unknown or pathless patch syntax fails closed: accepting a new patch
+    grammar before the guard understands it would silently drop the boundary.
+    """
+    command = tool_input.get("command")
+    if not isinstance(command, str):
+        return "apply_patch has no command string the guard can read"
+    paths = []
+    for line in command.splitlines():
+        match = PATCH_PATH.fullmatch(line) or PATCH_MOVE.fullmatch(line)
+        if match:
+            paths.append(match.group(1))
+    if not command.startswith("*** Begin Patch") or not command.rstrip().endswith(
+            "*** End Patch") or not paths:
+        return "apply_patch does not use a recognised path-bearing patch format"
+    wt = os.environ.get("PIPELINE_WORKTREE")
+    if not wt:
+        return None
+    allowed = [p for p in (os.environ.get("PIPELINE_TICKET"),
+                            os.environ.get("PIPELINE_RESULT")) if p]
+    for path in paths:
+        why = path_verdict(path, wt, allowed)
+        if why:
+            return why
+    return None
+
+
 def mcp_verdict(tool: str) -> str | None:
     """An MCP tool is named `mcp__<server>__<tool>`. The guard parses shell and
     cannot judge `mcp__github__create_pr`, so the rule is a per-server
@@ -436,7 +468,11 @@ def main() -> int:
         return 0  # never break the agent over a malformed event
     tool = str(event.get("tool_name") or "")
     tool_input = event.get("tool_input") or {}
-    if tool in FILE_TOOLS:
+    if tool == "apply_patch":
+        label = "Patch"
+        subject = tool_input.get("command", "")
+        why = patch_verdict(tool_input)
+    elif tool in FILE_TOOLS:
         label = "Path"
         subject = next((tool_input.get(k) for k in PATH_KEYS
                          if isinstance(tool_input.get(k), str)), "")

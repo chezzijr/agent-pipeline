@@ -28,6 +28,8 @@
 
 prompt_mode = "system"   # composed prompt via --append-system-prompt
 supports_hooks = true    # PreToolUse hooks registered via --settings
+usage_source = "claude"
+replay_cmd = "claude --resume {session}"
 
 effort_flag = "--effort {effort}"
 session_flag = "--session-id {session}"

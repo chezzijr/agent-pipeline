@@ -399,6 +399,39 @@ def test_the_guard_sees_every_file_tool_not_just_bash():
         shutil.rmtree(proj)
 
 
+def test_codex_apply_patch_checks_every_path():
+    proj = os.path.realpath(tempfile.mkdtemp())
+    try:
+        wt = proj + "/.worktrees/TICKET-001"
+        tickets = proj + "/.project/tickets"
+        os.makedirs(wt)
+        os.makedirs(tickets)
+        ticket = tickets + "/TICKET-001.md"
+        result = tickets + "/TICKET-001.result"
+        env = dict(os.environ, PIPELINE_WORKTREE=wt, PIPELINE_TICKET=ticket,
+                   PIPELINE_RESULT=result)
+
+        def run(command):
+            event = {"tool_name": "apply_patch", "tool_input": {"command": command}}
+            return subprocess.run([sys.executable, str(GUARD)], input=json.dumps(event),
+                                  capture_output=True, text=True, env=env)
+
+        allowed = "*** Begin Patch\n*** Update File: thing.py\n@@\n-x\n+y\n*** End Patch"
+        assert run(allowed).returncode == 0
+        ticket_patch = ("*** Begin Patch\n*** Update File: " + ticket
+                        + "\n@@\n-x\n+y\n*** End Patch")
+        assert run(ticket_patch).returncode == 0
+        outside = ("*** Begin Patch\n*** Update File: thing.py\n"
+                   "*** Move to: " + proj + "/escape.py\n*** End Patch")
+        blocked = run(outside)
+        assert blocked.returncode == 2 and "outside this stage's worktree" in blocked.stderr
+        malformed = run("*** Begin Patch\n@@\n-x\n+y\n*** End Patch")
+        assert malformed.returncode == 2 and "recognised path-bearing" in malformed.stderr
+        print("ok  Codex apply_patch paths are guarded")
+    finally:
+        shutil.rmtree(proj)
+
+
 if __name__ == "__main__":
     VERBOSE = True
     tables()
@@ -408,4 +441,5 @@ if __name__ == "__main__":
     test_write_outside_worktree_is_not_blocked()
     test_paths_outside_the_worktree_are_blocked()
     test_the_guard_sees_every_file_tool_not_just_bash()
+    test_codex_apply_patch_checks_every_path()
     print("\nguard: all passed")

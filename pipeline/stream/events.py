@@ -53,6 +53,77 @@ def _num(v) -> float:
 def _norm(ev: dict) -> dict:
     typ, sub = ev.get("type"), ev.get("subtype")
 
+    # Codex `exec --json` lifecycle. Keep these beside the Claude branches,
+    # because the dispatcher consumes one harness-neutral event vocabulary.
+    if typ == "thread.started":
+        return {"kind": "init", "session": ev.get("thread_id"),
+                "model": ev.get("model"), "tools": ev.get("tools") or [],
+                "permission_mode": ev.get("permission_mode"),
+                "messaging_socket_path": None, "capabilities": {}}
+
+    if typ in {"item.started", "item.completed"}:
+        item = ev.get("item") if isinstance(ev.get("item"), dict) else {}
+        item_type = item.get("type")
+        if item_type == "agent_message":
+            return {"kind": "assistant", "text": str(item.get("text") or ""),
+                    "thinking": "", "tools": [], "model": ev.get("model"),
+                    "usage": {}}
+        if item_type == "reasoning":
+            return {"kind": "assistant", "text": "",
+                    "thinking": str(item.get("text") or ""), "tools": [],
+                    "model": ev.get("model"), "usage": {}}
+        if item_type == "command_execution":
+            if typ == "item.started":
+                return {"kind": "assistant", "text": "", "thinking": "",
+                        "tools": [{"name": "Bash", "id": item.get("id"),
+                                   "input": {"command": item.get("command") or ""}}],
+                        "model": ev.get("model"), "usage": {}}
+            code = item.get("exit_code")
+            return {"kind": "tool_result", "tool_use_id": item.get("id"),
+                    "is_error": code not in (None, 0) or item.get("status") in {
+                        "failed", "errored", "interrupted"},
+                    "text": str(item.get("aggregated_output") or "")[:MAX_TEXT]}
+        if item_type == "mcp_tool_call":
+            name = item.get("tool") or item.get("name") or "mcp"
+            if typ == "item.started":
+                return {"kind": "assistant", "text": "", "thinking": "",
+                        "tools": [{"name": name, "id": item.get("id"),
+                                   "input": item.get("arguments") or {}}],
+                        "model": ev.get("model"), "usage": {}}
+            return {"kind": "tool_result", "tool_use_id": item.get("id"),
+                    "is_error": item.get("status") in {"failed", "errored"},
+                    "text": _flat(item.get("result"))[:MAX_TEXT]}
+        if item_type == "file_change":
+            changes = item.get("changes") if isinstance(item.get("changes"), list) else []
+            if typ == "item.started":
+                return {"kind": "assistant", "text": "", "thinking": "",
+                        "tools": [{"name": "apply_patch", "id": item.get("id"),
+                                   "input": {"changes": changes}}],
+                        "model": ev.get("model"), "usage": {}}
+            return {"kind": "tool_result", "tool_use_id": item.get("id"),
+                    "is_error": item.get("status") in {"failed", "errored"},
+                    "text": json.dumps(changes, default=str)[:MAX_TEXT]}
+        if item_type == "error":
+            return {"kind": "other", "raw_type": typ, "subtype": "error",
+                    "text": str(item.get("message") or "")[:MAX_TEXT]}
+
+    if typ == "turn.completed":
+        raw_usage = ev.get("usage") if isinstance(ev.get("usage"), dict) else {}
+        usage = dict(raw_usage)
+        if "cached_input_tokens" in raw_usage:
+            usage.setdefault("cache_read_input_tokens", raw_usage["cached_input_tokens"])
+        if "cache_write_input_tokens" in raw_usage:
+            usage.setdefault("cache_creation_input_tokens",
+                             raw_usage["cache_write_input_tokens"])
+        micro = ev.get("cost_microusd")
+        cost = (float(micro) / 1_000_000
+                if isinstance(micro, (int, float)) else None)
+        return {"kind": "result", "total_cost_usd": cost,
+                "num_turns": 1, "duration_ms": ev.get("duration_ms"),
+                "usage": usage, "modelUsage": {}, "permission_denials": [],
+                "stop_reason": None, "is_error": False,
+                "terminal_reason": None, "subtype": "success"}
+
     if typ == "system" and sub == "init":
         return {"kind": "init", "session": ev.get("session_id"),
                 "model": ev.get("model"), "tools": ev.get("tools") or [],
@@ -121,6 +192,11 @@ def parse(line: str) -> dict:
     try:
         ev = json.loads(line)
     except Exception:
+        marker = "Command blocked by PreToolUse hook:"
+        if marker in line:
+            return {"kind": "hook_response", "hook": "PreToolUse",
+                    "exit_code": 2, "outcome": "block",
+                    "stderr": line.split(marker, 1)[1].strip()[:MAX_TEXT]}
         return {"kind": "other", "raw_type": None, "raw": line[:MAX_TEXT]}
     if not isinstance(ev, dict):
         return {"kind": "other", "raw_type": None, "raw": line[:MAX_TEXT]}

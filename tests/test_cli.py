@@ -361,6 +361,19 @@ def test_ls_v_prints_the_last_session_cost():
     shutil.rmtree(d)
 
 
+def test_ls_v_uses_a_harness_specific_replay_command():
+    d = Path(tempfile.mkdtemp())
+    cli(d, "new", "t")
+    t = Ticket.load(d / ".project/tickets/TICKET-001.md")
+    t.extra["last_session"] = {"stage": "review", "id": "thr_123",
+                               "replay": "codex exec resume thr_123",
+                               "log": ".project/logs/x.log", "cost_usd": None}
+    t.save()
+    r = cli(d, "ls", "-v")
+    assert "replay=`codex exec resume thr_123`" in r.stdout, r.stdout
+    shutil.rmtree(d)
+
+
 def test_reject_returns_a_plan_with_its_reason():
     d = Path(tempfile.mkdtemp())
     cli(d, "new", "t")

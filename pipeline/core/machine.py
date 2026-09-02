@@ -36,7 +36,7 @@ USD_STEPS_PER_DOLLAR = 8
 USD_CEILING_FACTOR = 2
 TERMINAL = {"done", "rejected", "escalated"}
 HUMAN_GATES = {"awaiting-approval", "needs-input", "awaiting-merge"}
-# The nine things `CLAUDE.md` fences off from unattended merge, path to symbol
+# The fenced things `CLAUDE.md` keeps out of unattended merge, path to symbol
 # tuple or None for whole-file. `CLAUDE.md` keeps the prose copy;
 # tests/test_stages.py::test_the_fenced_list_matches_the_rule_file compares
 # the two in both directions so they cannot drift.
@@ -48,6 +48,7 @@ FENCED = {
     # stage can reach and what decides with code. `CLAUDE.md` already said to
     # treat an edit here as a guard edit; without an entry it merged unattended.
     "pipeline/harnesses/claude-code.toml": None,
+    "pipeline/harnesses/codex.toml": None,
     # FENCED itself: without it a ticket adds or removes an entry and the
     # fence never sees it -- TICKET-037 and TICKET-038 both merged such a
     # diff unattended on 2026-08-23.
