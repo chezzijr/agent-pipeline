@@ -315,6 +315,51 @@ def test_awaiting_approval_shows_the_plan_not_the_validation_log():
     asyncio.run(go())
 
 
+ESCALATED = """---
+id: TICKET-001
+stage: escalated
+class: bugfix
+branch: ticket/001
+test_file: test_thing.py::test_broken
+files_declared: [thing.py]
+counters: {}
+lease: {holder: null, expires: null}
+---
+
+## Summary
+x
+## Thread
+
+### 2026-09-02 05:08:43Z · plan-validation · gate · verdict=FAIL
+FAIL: ENVIRONMENT: suite excluding `test_thing.py::test_broken` is RED
+
+### 2026-09-02 05:08:44Z · plan-validation · escalation
+suite excluding the new test is RED on base too
+"""
+
+
+def test_escalated_shows_the_escalation_reason_not_just_the_stage_log():
+    """TICKET-107: the pane a human opens on an `escalated` ticket must name
+    the reason it escalated, not just the tail of whatever log ran last."""
+    async def go():
+        d = make_project(ESCALATED)
+        fake = FakeClient([row(d, "TICKET-001", "escalated")])
+        app = PipelineApp(client=fake)
+        async with app.run_test() as pilot:
+            app.query_one(Tree).focus()
+            await select(app, pilot, d, "TICKET-001")
+
+            log = app.query_one("#log", RichLog)
+
+            def text(strip):
+                return "".join(seg.text for seg in strip)
+
+            rendered = "\n".join(text(s) for s in log.lines)
+            assert "suite excluding the new test is RED on base too" in rendered, rendered
+
+    asyncio.run(go())
+
+
 def test_the_approval_pane_shows_rollback_and_the_log_below_it():
     """The gate needs the whole plan, not just `## Plan` -- and it still
     needs the plan-validation findings to reject on, so both must be in
