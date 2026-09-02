@@ -183,6 +183,24 @@ def plan_lines(project: str, tid: str) -> list[str]:
         return [f"(plan unreadable: {e})"]
 
 
+def escalation_lines(project: str, tid: str) -> list[str]:
+    """The reason an `escalated` ticket escalated, so the pane opens on it
+    rather than the stage log. Must not raise: `_show` runs on every tree
+    highlight.
+    """
+    try:
+        entries = Ticket.find(project, tid).thread()
+    except (PipelineError, OSError) as e:
+        return [f"(escalation reason unreadable: {e})"]
+    hit = next((x for x in reversed(entries) if x.kind == "escalation"), None)
+    if hit is None:
+        hit = next((x for x in reversed(entries)
+                    if x.kind == "transition" and x.attrs.get("to") == "escalated"), None)
+    if hit is None:
+        return ["(no escalation entry on the thread)"]
+    return [hit.raw, *hit.text.splitlines()]
+
+
 class PtyPane(Static):
     """The attached terminal. A widget and not a bare `Static` for one reason:
     `events.Resize` does NOT bubble, so the only place that learns this pane
@@ -465,6 +483,10 @@ class PipelineApp(App):
         log.display = True
         if row.get("stage") == "awaiting-approval":
             for line in plan_lines(key[0], key[1]):
+                log.write(line)
+            log.write("-- stage log --")
+        elif row.get("stage") == "escalated":
+            for line in escalation_lines(key[0], key[1]):
                 log.write(line)
             log.write("-- stage log --")
         lines, cols = tail_log(key[0], key[1])
