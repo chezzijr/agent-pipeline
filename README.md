@@ -280,6 +280,9 @@ rows` once above such a listing.
 A ticket parked at `awaiting-approval` opens on its plan -- `## Plan`,
 `## Acceptance criteria` and `## Rollback`, the same three sections
 `pipeline plan` prints -- with `-- stage log --` and the stage log below it.
+A ticket at `escalated` opens on the reason it escalated -- the thread's last
+`escalation` entry, else its last `escalated` transition entry -- with
+`-- stage log --` and the stage log below it.
 
 Select a ticket running an **interactive** stage and the right pane becomes
 that stage's live terminal instead: it `attach`es on the subscription's
