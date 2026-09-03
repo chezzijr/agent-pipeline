@@ -1019,6 +1019,24 @@ def test_gate_does_not_flag_a_dec_id_named_only_to_say_it_has_no_record():
     shutil.rmtree(d)
 
 
+def test_gate_still_flags_a_dec_id_that_is_also_cited_as_binding():
+    """TICKET-108: the mention exemption is per clause, not per section. One
+    real citation of DEC-031 outside the negating clause must still be
+    resolved and still fail -- else a plan launders any unresolvable
+    citation by adding one "no record" sentence anywhere in the section.
+    This goes red if the exemption is applied per section instead of per
+    clause."""
+    d = project(_set_digest("- thing.py holds it\n- eviction runs on write, "
+                             "not read\n- entry point is gate()\n").replace(
+        "none relevant (grepped: cache, evict)",
+        "DEC-031 has no record -- the sequence skips it. "
+        "DEC-031 sets the flush order."))
+    ok, failures = gate(d, "TICKET-001")
+    assert not ok, "a section-wide exemption let a real citation of DEC-031 through"
+    assert any("DEC-031" in f for f in failures), failures
+    shutil.rmtree(d)
+
+
 def test_gate_notes_a_superseded_decision_and_accepts_a_justified_short_digest():
     """A cited id that resolves must not fail; a superseded one is history, not
     a finding; and a short digest passes only when it says why it is short."""

@@ -58,7 +58,9 @@ Fill in these sections:
   `## Decisions` section with `supersedes: DEC-<n> -- reason`, below.
   Tier A resolves every `DEC-<n>` you cite against that directory: an id with no
   record there fails the gate, and a superseded one is recorded as history rather
-  than as a constraint.
+  than as a constraint. A `DEC-<n>` named only in a clause that says it has no
+  record is a mention, not a citation, and passes Tier A -- for example,
+  "DEC-031 has no record -- the sequence skips it".
 - `## Plan` -- an ordered, numbered step list (`1.`, `2.`, ...; the gate parses
   a leading `N.` or `N)`). Every step names its target files -- spell out the
   path (e.g. `pipeline/core/machine.py`), not just the function -- and each

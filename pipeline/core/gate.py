@@ -28,6 +28,25 @@ DIGEST_SHORT_RE = re.compile(r"^\s*digest-short:\s*\S", re.M)
 # all `SAFE_DEC_ID` allows. A `TICKET-012` in this section is prose, not a citation.
 DEC_ID_RE = re.compile(r"\bDEC-\d{1,6}\b")
 
+# TICKET-108: an id inside a clause asserting the record does not exist is a
+# mention, not a citation. A comma is deliberately NOT a boundary, so
+# "DEC-031, which has no record, is skipped" stays one clause.
+CLAUSE_SPLIT_RE = re.compile(r"[.;!?\n]")
+NO_RECORD_RE = re.compile(
+    r"no (?:such )?(?:record|decision|file)"
+    r"|not a (?:record|decision)"
+    r"|(?:does|do|did) not exist"
+    r"|doesn't exist"
+    r"|never (?:existed|written|filed|allocated|issued)"
+    r"|(?:is|are|was|were) missing"
+    r"|missing (?:record|from|in)"
+    r"|not on disk"
+    r"|not in [`]?project/decisions"
+    r"|gap in the (?:sequence|numbering)"
+    r"|(?:sequence|numbering) skips"
+    r"|skips? (?:it|that|this|DEC-[0-9])",
+    re.I)
+
 # A bare `{test}` in `test_suite_without_new` substitutes every listed test
 # space-joined, and `pytest --deselect a b` deselects `a` and SELECTS `b`.
 BARE_PLACEHOLDER_RE = re.compile(r"[{](test|path|name|rest)[}]")
@@ -208,6 +227,20 @@ def missing_test_file(failures: list[str]) -> bool:
     `test_file` field to `triage` alone, so no re-plan can repair it.
     """
     return any(f.startswith(MISSING_TEST_MARK) for f in failures)
+
+
+def _dec_mentions(dec: str) -> set[str]:
+    """Which `DEC-<n>` ids in `dec` are mentions, not citations.
+
+    An id is a mention only when EVERY occurrence sits in a clause that
+    asserts the record does not exist -- one real citation anywhere in the
+    section keeps the id resolvable."""
+    cited: set[str] = set()
+    mentioned: set[str] = set()
+    for clause in CLAUSE_SPLIT_RE.split(dec):
+        ids = set(DEC_ID_RE.findall(clause))
+        (mentioned if NO_RECORD_RE.search(clause) else cited).update(ids)
+    return mentioned - cited
 
 
 def _cites(text: str, path: str) -> bool:
@@ -686,18 +719,24 @@ def gate(project: Path, tid: str, workdir: Path | None = None) -> tuple[bool, li
     if dec and "none relevant" not in dec.lower() and not cited:
         findings.append("`## Decisions checked` cites no decision IDs and no explicit "
                         "'none relevant' + grep terms")
-    if cited:
+    # TICKET-108, DEC-018: an id whose every occurrence sits in a clause
+    # asserting the record does not exist is a mention, not a citation, and
+    # is not resolved against the decisions directory.
+    resolvable = [c for c in cited if c not in _dec_mentions(dec)]
+    if resolvable:
         ddir = decisions_dir(project)
         # A symlinked record is not a record -- active_decisions() skips it, so
         # counting it as on-disk would report a planted link as merely superseded.
         on_disk = ({p.stem for p in ddir.glob("DEC-*.md") if not p.is_symlink()}
                    if ddir.is_dir() else set())
         active = {d.id for d in active_decisions(project)}
-        for cid in cited:
+        for cid in resolvable:
             if cid not in on_disk:
                 findings.append(
                     f"`## Decisions checked` cites {cid}, which is not a record in "
-                    f"{ddir} -- a citation nobody can resolve is not a check")
+                    f"{ddir} -- a citation nobody can resolve is not a check. If you "
+                    f"found no record, say so in the same clause (\"{cid} has no "
+                    f"record\") and it reads as a mention.")
             elif cid not in active:
                 # a superseded record stays on disk as history; citing one is fine,
                 # treating it as binding is the thing the plan must not do
