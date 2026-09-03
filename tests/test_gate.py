@@ -1003,6 +1003,22 @@ def test_gate_blocks_a_one_word_digest_and_an_unresolvable_decision_id():
     shutil.rmtree(d)
 
 
+def test_gate_does_not_flag_a_dec_id_named_only_to_say_it_has_no_record():
+    """TICKET-108: `DEC_ID_RE` matches a bare `DEC-NNN` token wherever it
+    appears, so a plan that documents a gap in the decision sequence -- "DEC-031
+    has no record" -- is read as a citation of DEC-031 and rejected exactly
+    like a real unresolvable citation would. A defect-free plan that names
+    the missing id must pass; it does not yet, because the gate cannot tell
+    a mention from a use."""
+    d = project(_set_digest("- thing.py holds it\n- eviction runs on write, "
+                             "not read\n- entry point is gate()\n").replace(
+        "none relevant (grepped: cache, evict)",
+        "DEC-031 has no record -- the sequence skips it"))
+    ok, failures = gate(d, "TICKET-001")
+    assert ok, failures
+    shutil.rmtree(d)
+
+
 def test_gate_notes_a_superseded_decision_and_accepts_a_justified_short_digest():
     """A cited id that resolves must not fail; a superseded one is history, not
     a finding; and a short digest passes only when it says why it is short."""
