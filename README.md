@@ -509,6 +509,14 @@ charges nothing at all. `gate_result()` returns `no-test-file` and the ticket
 escalates on the first one. Only `triage` may write `test_file`, so
 re-planning cannot repair it and a counter would only delay the human.
 
+A Tier A failure at `plan-validation` whose findings include a
+`LOAD-FLAKY: ` finding -- `test_file` exited 0 in the ticket's worktree and
+on base, so it reproduces the bug only under load -- charges nothing either.
+`gate_result()` returns `load-flaky` and the ticket escalates on the first
+one, for the same reason: only `triage` may write `test_file`, so no re-plan
+can repoint it, and the finding says base PASSES too, so a human re-runs
+triage instead of reading it as a bad plan.
+
 A Tier A failure at `plan-validation` whose findings are all `ENVIRONMENT: `
 findings -- `test_suite_without_new` is red on base too, not this branch's
 doing -- escalates to a human and charges no counter, because no re-plan can
