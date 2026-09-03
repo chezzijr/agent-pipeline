@@ -176,6 +176,15 @@ def transition(stage: str, result: str, counters: dict, klass: str = "bugfix"):
             # field to `triage` alone, so no counter is charged and no stage
             # is retried -- a human repairs the field or re-runs triage.
             return "escalated", c
+        case ("plan-validation", "load-flaky"):
+            # the ticket's `test_file` exited 0 in the worktree AND on base --
+            # it reproduces the bug only under load, so Tier A can never be
+            # satisfied. `CLAIMS` gives that field to `triage` alone, so no
+            # counter is charged and no stage is retried: a human repoints the
+            # test or re-runs triage. The row is explicit rather than left to
+            # the unknown-pair fallback, which escalates identically but
+            # without a row a reader can find (DEC-089).
+            return "escalated", c
         case ("plan-validation", "environment"):
             # the suite is red on base too, so it is neither a bad plan nor a
             # formatting slip -- no re-plan can fix an environment that is

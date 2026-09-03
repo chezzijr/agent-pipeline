@@ -365,6 +365,18 @@ def test_an_environment_verdict_escalates_and_charges_no_counter():
     assert t("plan-validation", "environment") == ("escalated", {})
 
 
+def test_a_load_flaky_test_file_is_an_enumerated_row_that_escalates():
+    """`transition("plan-validation", "load-flaky", {})` already returns
+    `('escalated', {})` through the unknown-pair fallback, so the first two
+    asserts pass vacuously and the source assert is the only part that fails
+    before the row is added."""
+    nxt, c = t("plan-validation", "load-flaky")
+    assert nxt == "escalated"
+    assert c == {}
+    assert '"load-flaky"' in inspect.getsource(M.transition), (
+        "the pair must be an enumerated row, not the unknown-pair fallback")
+
+
 def test_the_size_scaled_bound_has_a_ceiling_and_spares_the_dispatchers_counters():
     assert M.bound_for("refactor", "plan_validation_attempts",
                         {"plan_steps": 400, "plan_files": 900}) == M.BOUND_CEILING
