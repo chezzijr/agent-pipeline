@@ -1867,6 +1867,27 @@ def test_a_missing_test_file_escalates_instead_of_charging_planning():
         "revalidating") == "fail"
 
 
+def test_a_load_flaky_test_escalates_instead_of_charging_planning():
+    """A `test_file` that exits 0 in the ticket's worktree AND on base
+    reproduces the bug only under load: `CLAIMS` gives `test_file` to
+    `triage` alone, so no re-plan can repoint it. It escalates through its
+    own verdict and charges neither planning counter. `revalidating` keeps
+    `fail` per DEC-029, so `stale_regate` still charges there. (TICKET-109)"""
+    from pipeline.core.gate import LOAD_FLAKY_MARK, load_flaky
+
+    assert load_flaky([LOAD_FLAKY_MARK + "`t.py::x` exited 0"]) is True
+    assert load_flaky(
+        ["`t.py::x` exited 0 -- it must fail before implementation"]) is False
+    assert load_flaky([]) is False
+
+    assert supervisor.gate_result(
+        False, [LOAD_FLAKY_MARK + "`t.py::x` exited 0"],
+        "plan-validation") == "load-flaky"
+    assert supervisor.gate_result(
+        False, [LOAD_FLAKY_MARK + "`t.py::x` exited 0"],
+        "revalidating") == "fail"
+
+
 def test_a_tier_b_rejection_charges_the_plan_not_the_structural_counter():
     """Tier B judges the plan's content and has no structural half, so its
     `fail` is a bad plan by definition: `_finish()` remaps it to `bad-plan`

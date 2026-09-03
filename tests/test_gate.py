@@ -907,13 +907,14 @@ def test_the_base_run_covers_every_listed_test():
     (wt / "test_thing2.py").write_text("")
     subprocess.run("git add -A && git commit -qm second", shell=True, cwd=wt,
                    capture_output=True, text=True)
-    out, on_base = _base_findings(d, project_config(d), wt,
+    out, on_base, zero = _base_findings(d, project_config(d), wt,
                          ["test_thing.py::test_broken",
                           "test_thing2.py::test_broken2"])
     for one in ("test_thing.py::test_broken", "test_thing2.py::test_broken2"):
         assert any(f.startswith(f"ok: `{one}` fails on base") for f in out), out
     assert set(on_base) == {"test_thing.py::test_broken",
                             "test_thing2.py::test_broken2"}, on_base
+    assert zero == {}, zero
     shutil.rmtree(d, ignore_errors=True)
 
 
