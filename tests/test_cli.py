@@ -226,6 +226,71 @@ def test_resume_refuses_a_ticket_whose_lease_is_active():
     shutil.rmtree(d)
 
 
+def test_resume_names_the_lease_holder_when_it_refuses():
+    """A refused resume mutates nothing and says who holds the ticket,
+    the way `pipeline note` already reports a live lease."""
+    d = Path(tempfile.mkdtemp())
+    cli(d, "new", "t")
+    path = d / ".project/tickets/TICKET-001.md"
+    holder = f"planning-{os.getpid()}"          # this process: alive
+    t = Ticket.load(path)
+    t.take_lease(holder)
+    t.save()
+
+    r = cli(d, "resume", "TICKET-001", "--stage", "triage")
+
+    assert r.returncode != 0, (r.returncode, r.stdout)
+    assert holder in r.stderr, r.stderr
+    after = Ticket.load(path)
+    assert after.stage != "triage", after.stage
+    assert after.lease.get("holder") == holder, after.lease
+    shutil.rmtree(d)
+
+
+def test_resume_force_takes_a_ticket_whose_lease_is_active():
+    """`--force` is the escape hatch for a stage the operator knows is
+    stuck: it takes the ticket, releases the lease, and records in the
+    thread that a human did it."""
+    d = Path(tempfile.mkdtemp())
+    cli(d, "new", "t")
+    path = d / ".project/tickets/TICKET-001.md"
+    holder = f"planning-{os.getpid()}"
+    t = Ticket.load(path)
+    t.take_lease(holder)
+    t.save()
+
+    r = cli(d, "resume", "TICKET-001", "--stage", "triage", "--force")
+
+    assert r.returncode == 0, r.stderr
+    after = Ticket.load(path)
+    assert after.stage == "triage", after.stage
+    assert after.lease == {"holder": None, "expires": None}, after.lease
+    assert holder in after.thread()[-1].text, after.thread()[-1].text
+    assert "forced" in after.thread()[-1].text, after.thread()[-1].text
+    shutil.rmtree(d)
+
+
+def test_resume_treats_a_lease_held_by_a_dead_pid_as_free():
+    """`start()` already reads a live lease with a dead holder as a
+    killed daemon, not work in progress. Resume must not park the
+    operator for the full 30-minute expiry over one, so this case
+    needs no `--force`."""
+    dead = subprocess.Popen([sys.executable, "-c", "pass"])
+    dead.wait()
+    d = Path(tempfile.mkdtemp())
+    cli(d, "new", "t")
+    path = d / ".project/tickets/TICKET-001.md"
+    t = Ticket.load(path)
+    t.take_lease(f"planning-{dead.pid}")
+    t.save()
+
+    r = cli(d, "resume", "TICKET-001", "--stage", "triage")
+
+    assert r.returncode == 0, r.stderr
+    assert Ticket.load(path).stage == "triage", "a dead holder parked the operator"
+    shutil.rmtree(d)
+
+
 def test_note_appends_at_any_stage_without_touching_control_fields():
     """`pipeline note` should append a human thread entry at ANY stage,
     escalated included, and leave stage/counters/branch/lease untouched.

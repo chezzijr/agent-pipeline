@@ -26,7 +26,7 @@ from pipeline.daemon import registry
 from pipeline.daemon.server import (STALE_HOURS, socket_path, ticket_rows,
                                     waiting_text)
 from pipeline.daemon.store import Store, state_dir
-from pipeline.daemon.supervisor import run
+from pipeline.daemon.supervisor import holder_alive, run
 from pipeline.stream import StreamReader
 
 def proj(args) -> Path:
@@ -362,6 +362,17 @@ def cmd_resume(args) -> None:
     if args.note is not None and not args.note.strip():
         die("a note needs text -- an empty one tells the resumed stage nothing")
     t = Ticket.find(project, args.id)
+    holder = (t.lease or {}).get("holder")
+    # A live lease whose holder pid is gone is a killed daemon, not work in
+    # progress -- `start()` reads it the same way. Rewriting `stage` under a
+    # LIVE one makes `_finish()` escalate the ticket for the human's edit.
+    live = t.lease_active() and holder_alive(holder)
+    if live and not args.force:
+        die(f"{t.id}: `{t.stage}` holds a live lease (`{holder}`). "
+            f"Resuming now rewrites `stage` under a running stage, and the "
+            f"dispatcher escalates the ticket for that change when the "
+            f"stage finishes. Wait for it, or `pipeline resume {t.id} "
+            f"--stage {args.stage} --force` to take the ticket anyway.")
     grants: dict[str, int] = {}
     for key, n in (parse_grant(s) for s in args.grant or []):
         grants[key] = grants.get(key, 0) + n
@@ -396,13 +407,16 @@ def cmd_resume(args) -> None:
     note = f"**resumed** by {who} -> `{args.stage}`, reset {args.reset or []}"
     if granted:
         note += f", granted {', '.join(granted)}"
+    if live:
+        note += f" (forced past a live lease held by `{holder}`)"
     t.append("human", "note", note, by=who)
     if args.note:
         t.append("human", "answer",
                  f"**note from {who}**\n\n{args.note}", by=who)
     t.save()
     print(f"{args.id}: -> {args.stage}" +
-          (f" ({', '.join(granted)})" if granted else ""))
+          (f" ({', '.join(granted)})" if granted else "") +
+          (" (forced past a live lease)" if live else ""))
 
 
 def cmd_ls(args) -> None:
@@ -744,7 +758,7 @@ def main() -> None:
     p = sub.add_parser("reject"); p.add_argument("id"); p.add_argument("reason"); p.set_defaults(fn=cmd_reject)
     p = sub.add_parser("note"); p.add_argument("id"); p.add_argument("text"); p.set_defaults(fn=cmd_note)
     p = sub.add_parser("answer"); p.add_argument("id"); p.add_argument("text"); p.set_defaults(fn=cmd_answer)
-    p = sub.add_parser("resume"); p.add_argument("id"); p.add_argument("--stage", required=True); p.add_argument("--grant", nargs="*", metavar="COUNTER[=N]", help="hand back N spent attempts (default 1) on a counter; a grant only subtracts"); p.add_argument("--reset", nargs="*"); p.add_argument("--note", metavar="TEXT", help="a note for the resumed stage; recorded in the ticket thread, attributed to you"); p.set_defaults(fn=cmd_resume)
+    p = sub.add_parser("resume"); p.add_argument("id"); p.add_argument("--stage", required=True); p.add_argument("--grant", nargs="*", metavar="COUNTER[=N]", help="hand back N spent attempts (default 1) on a counter; a grant only subtracts"); p.add_argument("--reset", nargs="*"); p.add_argument("--note", metavar="TEXT", help="a note for the resumed stage; recorded in the ticket thread, attributed to you"); p.add_argument("--force", action="store_true", help="resume even while a stage holds a live lease; the running stage keeps going and the dispatcher escalates the ticket when it finishes"); p.set_defaults(fn=cmd_resume)
     p = sub.add_parser("logs"); p.add_argument("id"); p.add_argument("-f", "--follow", action="store_true"); p.set_defaults(fn=cmd_logs)
     p = sub.add_parser("ls", help="tickets (via the daemon if one is running)"); p.add_argument("-v", "--verbose", action="store_true"); p.set_defaults(fn=cmd_ls)
     p = sub.add_parser("status", help="is the daemon running"); p.set_defaults(fn=cmd_daemon_status)
