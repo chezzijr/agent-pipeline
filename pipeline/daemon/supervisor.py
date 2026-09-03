@@ -1262,6 +1262,22 @@ def _finish(project: Path, rec: dict, emit=noop) -> str:
                         f"sidecar; a respawn spends the same cap and stops "
                         f"at the same point", emit)
             return "budget-exhausted"
+        # A refused-by-the-API kill is not the ticket's fault either: charge
+        # it against its own bound instead of `no_result`, so an outage
+        # cannot spend the budget meant for a broken harness.
+        if rec.get("terminal_reason") == "api_error":
+            n = t.counters.get("api_errors", 0) + 1
+            t.counters["api_errors"] = n
+            if n >= MAX_ATTEMPTS:
+                escalate(t, f"`{stage}` was refused by the API "
+                            f"(terminal_reason=api_error) {n} times", emit)
+                return "api-error"
+            t.release_lease()
+            t.append(stage, "note",
+                     f"`{stage}` was refused by the API (terminal_reason="
+                     f"api_error, attempt {n}) -- will respawn")
+            t.save()
+            return "api-error"
         # L4: a harness that dies before writing a result must not respawn
         # forever. Same budget as every other bounded loop.
         n = t.counters.get("no_result", 0) + 1
