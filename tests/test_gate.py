@@ -577,6 +577,29 @@ def test_gate_blocks_a_criterion_pinning_an_absolute_count_from_the_digest():
     shutil.rmtree(d)
 
 
+def test_a_criterion_stating_a_relation_and_a_baseline_is_not_flagged():
+    """TICKET-111: `CRIT_COUNT_RULE` asks a criterion to "state it as a
+    relation to a measured baseline, or re-measure at check time". A
+    criterion that does both is still rejected today, because the scan reads
+    the whole criterion -- the baseline clause included -- and cannot tell
+    the pinned total it hunts for from the evidence quoted beside it. Here
+    the only number the criterion shares with `## Digest` sits in its
+    "Measured on the prototype:" clause; the value under test is re-measured
+    at check time via `wc -l`, never pinned."""
+    d = project(_set_digest(
+        "- the sweep takes 40.9 s on release for 318 cases\n"
+        "- eviction runs on write, not read\n"
+        "- thing.py holds it\n").replace(
+        "- `test_broken` passes",
+        "- `test_broken` passes\n"
+        "- the test count equals `ls judge/problems/*/samples/*.in | wc -l` "
+        "re-measured at that moment. Measured on the prototype: "
+        "`done: 318 case(s), 0 failure(s)` in 40.9 s."))
+    ok, failures = gate(d, "TICKET-001")
+    assert ok, failures
+    shutil.rmtree(d)
+
+
 def test_a_count_pinned_line_waives_the_absolute_count_check():
     """A bare `count-pinned:` line does not match `CRIT_ITEM_RE` and so
     raises no `names no test` finding of its own."""
