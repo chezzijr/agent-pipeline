@@ -488,6 +488,14 @@ attributed to you, as a kind the stage view never omits, so the stage you
 resume to reads it. `pipeline answer` refuses outside `needs-input`, which is
 why the note rides on `resume`.
 
+`resume` refuses a ticket whose lease is live and whose holder process is
+still running: rewriting `stage` under a running stage makes the dispatcher
+escalate the ticket for a change *you* made. It names the holder and stops.
+`pipeline resume TICKET-017 --stage planning --force` takes the ticket anyway
+-- for a stage you know is stuck. Expect that escalation when it finishes.
+A lease whose holder process is already gone is not a live lease: a daemon
+that was killed needs no `--force`.
+
 The bound that was hit lives in the dispatcher, never in a stage prompt:
 `BOUNDS[class][counter]` in `pipeline/core/machine.py`, which is 2 for `bugfix`
 and `feature` and 3 for `refactor` on `review_loops` and

@@ -346,6 +346,14 @@ def test_resume_help_and_readme_name_the_note_flag():
     assert "resume  TICKET-001 --stage planning --note" in readme, readme
 
 
+def test_resume_help_and_readme_name_the_force_flag():
+    r = subprocess.run([sys.executable, "-m", "pipeline", "resume", "--help"],
+                        cwd=ROOT, capture_output=True, text=True)
+    assert "--force" in r.stdout, r.stdout
+    readme = (Path(ROOT) / "README.md").read_text()
+    assert "resume TICKET-017 --stage planning --force" in readme, readme
+
+
 def test_start_and_run_help_explain_the_interactive_stage_difference():
     """A `mode: interactive` stage waits for a human under `start` (attach via
     `pipeline tui`) but runs headless under `run` (nothing can attach). Neither
