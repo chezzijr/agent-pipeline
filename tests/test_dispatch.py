@@ -529,15 +529,19 @@ def test_a_bound_escalation_emits_an_escalated_event():
     d, sh = git_project()
     (d / "test_thing.py").write_text("")
     sh("git add test_thing.py && git commit -qm 'the test file'")
+    # `test_one` must exit non-zero without naming the node, or the run reads
+    # as passing on both trees and now returns `load-flaky` (TICKET-109),
+    # which escalates without charging -- this test needs the bound reached.
+    (d / ".project/pipeline.toml").write_text(
+        'test_one="false"\ntest_suite="true"\ntest_suite_without_new="true"\nbase="main"\n')
     path = d / ".project/tickets/TICKET-001.md"
     # one attempt already spent; `bugfix` has a bound of 2
     path.write_text(FIXTURE.replace("counters: {}",
                                     "counters: {plan_validation_attempts: 1}"))
     s = Store(Path(tempfile.mkdtemp()) / "events.db")
-    # the gate fails because the project's `test_one` command exits 0, so the
-    # reproduction test does not fail -- it no longer fails on a missing
-    # `test_thing.py`, since that route now escalates without charging and
-    # this test needs the bound reached.
+    # the gate fails because `test_one` exits non-zero without naming the
+    # test, which is a substantive gate failure (`bad-plan`) and this test
+    # needs the bound reached.
     did, rec = supervisor.start(d, path, harness("fake"), {}, None, s.emitter(str(d)))
     rec["proc"].wait()
     supervisor.finish(d, rec, s.emitter(str(d)))
@@ -1701,6 +1705,11 @@ def test_a_failing_gate_child_sends_the_ticket_back_to_planning():
     d, sh = git_project()
     (d / "test_thing.py").write_text("")
     sh("git add test_thing.py && git commit -qm 'the test file'")
+    # `test_one` must exit non-zero without naming the node, or the run reads
+    # as passing on both trees and now returns `load-flaky` (TICKET-109)
+    # instead of `bad-plan`.
+    (d / ".project/pipeline.toml").write_text(
+        'test_one="false"\ntest_suite="true"\ntest_suite_without_new="true"\nbase="main"\n')
     path = d / ".project/tickets/TICKET-001.md"
     path.write_text(FIXTURE)
     s = Store(Path(tempfile.mkdtemp()) / "events.db")
