@@ -205,6 +205,27 @@ def test_resume_note_is_optional_and_may_not_be_empty():
     shutil.rmtree(d)
 
 
+def test_resume_refuses_a_ticket_whose_lease_is_active():
+    """`pipeline resume` must not silently rewrite `stage` out from under a
+    stage that currently holds the lease -- the way `pipeline note` already
+    refuses to touch control fields. Today `cmd_resume` never checks
+    `lease_active()` at all, so it rewrites `stage` with no warning."""
+    d = Path(tempfile.mkdtemp())
+    cli(d, "new", "t")
+    path = d / ".project/tickets/TICKET-001.md"
+    t = Ticket.load(path)
+    t.take_lease("planning-1")
+    t.save()
+
+    r = cli(d, "resume", "TICKET-001", "--stage", "triage")
+
+    after = Ticket.load(path)
+    assert after.stage != "triage", (
+        "resume rewrote `stage` while `planning` held the lease: "
+        f"stage={after.stage!r}")
+    shutil.rmtree(d)
+
+
 def test_note_appends_at_any_stage_without_touching_control_fields():
     """`pipeline note` should append a human thread entry at ANY stage,
     escalated included, and leave stage/counters/branch/lease untouched.
