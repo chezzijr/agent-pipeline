@@ -850,6 +850,25 @@ def test_gate_still_fails_when_the_worktree_and_base_both_pass():
     shutil.rmtree(d, ignore_errors=True)
 
 
+def test_a_load_flaky_test_does_not_charge_a_plan_validation_attempt():
+    """TICKET-109: a `test_file` that exits 0 in the worktree AND on base
+    (a test that only reproduces under load, and passes on an idle box) is
+    a load-flaky test, not a bad plan. `gate_result` must not charge
+    `plan_validation_attempts` for this finding -- no re-plan can make a
+    load-flaky test fail on an idle base."""
+    d, wt = _git_ticket_project("fixed\n", "fixed\n")
+    from pipeline.daemon.supervisor import gate_result
+    ok, failures = gate(d, "TICKET-001", workdir=wt)
+    assert not ok
+    assert any("exited 0" in f and "PASSES" in f for f in failures), failures
+    result = gate_result(ok, failures, "plan-validation")
+    nxt, counters = transition("plan-validation", result, {})
+    assert counters.get("plan_validation_attempts", 0) == 0, (
+        "a load-flaky test_file charged plan_validation_attempts: "
+        f"{counters}")
+    shutil.rmtree(d, ignore_errors=True)
+
+
 def test_gate_names_both_causes_when_the_test_exits_zero_on_base():
     """The base run carries the branch run's exit-0 ambiguity: `test_one`
     exits 0 on base without printing the node, which is a pass there or a
