@@ -1235,8 +1235,10 @@ def _finish(project: Path, rec: dict, emit=noop) -> str:
 
     if tampered:
         drop_result(project, tid)
-        escalate(t, f"`{stage}` edited dispatcher-owned frontmatter: "
-                    + ", ".join(f"{k}={v!r}" for k, v in tampered.items()), emit)
+        escalate(t, f"frontmatter changed while `{stage}` held the ticket: "
+                    + ", ".join(f"{k}={v!r}" for k, v in tampered.items())
+                    + " -- the snapshot diff shows the change, not its author"
+                      " (a `pipeline resume --force` during the run does this too)", emit)
         return "tampered"
 
     if rec["before"] is not None and tree_snapshot(wt) != rec["before"]:

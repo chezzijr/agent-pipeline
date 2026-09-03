@@ -132,9 +132,12 @@ def test_a_spawn_tells_the_guard_where_its_worktree_is():
     shutil.rmtree(d, ignore_errors=True)
 
 
-def test_an_agent_that_rewrote_stage_is_still_caught():
+def test_a_control_field_rewritten_mid_run_is_caught():
     """Invariant 1 through the typed model: control fields come back from the
-    pre-spawn snapshot, and a ticket whose control fields moved is escalated."""
+    pre-spawn snapshot, and a ticket whose control fields moved is escalated.
+    The escalation names the diff between the snapshot and disk, not an
+    author -- a human's `pipeline resume --force` lands here identically to
+    an agent's own rewrite."""
     d = project()
     path = d / ".project/tickets/TICKET-001.md"
     snap = Ticket.load(path)                      # what the dispatcher spawned on
@@ -154,7 +157,8 @@ def test_an_agent_that_rewrote_stage_is_still_caught():
 
     t = Ticket.load(path)
     assert t.stage == "escalated", "a tampered `stage` was accepted"
-    assert "edited dispatcher-owned frontmatter" in t.thread()[-1].text
+    assert ("frontmatter changed while `plan-validation` held the ticket"
+            in t.thread()[-1].text), t.thread()[-1].text
     assert T.read_result(d, "TICKET-001") is None, "the verdict was still applied"
     shutil.rmtree(d, ignore_errors=True)
 
