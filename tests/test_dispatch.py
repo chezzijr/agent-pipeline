@@ -1952,6 +1952,31 @@ def test_a_budget_kill_is_charged_and_retried_exactly_like_a_crash():
     shutil.rmtree(d, ignore_errors=True)
 
 
+def test_an_api_error_kill_is_not_charged_to_no_result():
+    """A stage killed by an `api_error` terminal_reason is an external
+    failure like a budget kill, not the ticket's fault: it must not burn the
+    bounded `no_result` retry counter or escalate through the generic
+    "wrote no .result sidecar" path."""
+    d = project()
+    path = d / ".project/tickets/TICKET-001.md"
+    snap = Ticket.load(path)
+
+    log = d / ".project" / "logs" / "TICKET-001.log"
+    log.parent.mkdir(parents=True, exist_ok=True)
+
+    def rec():
+        return {"fh": log.open("w"), "prompt": d / "gone.md", "settings": None,
+                "path": path, "tid": "TICKET-001", "stage": "plan-validation",
+                "session": "s1", "log": log, "wt": d, "meta": snap,
+                "before": None, "terminal_reason": "api_error"}
+
+    supervisor.finish(d, rec())
+    t = Ticket.load(path)
+    assert t.counters.get("no_result", 0) == 0
+    assert t.stage != "escalated"
+    shutil.rmtree(d, ignore_errors=True)
+
+
 def test_a_crash_with_no_terminal_reason_still_retries_then_escalates():
     """A harness that dies with no `terminal_reason` at all is not a budget
     kill: it keeps the `no_result` retry, respawning once before it
