@@ -613,6 +613,47 @@ def test_a_count_pinned_line_waives_the_absolute_count_check():
     shutil.rmtree(d)
 
 
+def test_a_parenthesised_baseline_clause_is_not_flagged():
+    """TICKET-111: a baseline quoted in parentheses opens an assertion
+    clause just like `Measured ...` does, so the parenthesised total must
+    not be read as a pinned count."""
+    d = project(_set_digest("- thing.py holds it\n- 630 passed in tests/chz\n"
+                             "- eviction runs on write, not read\n").replace(
+        "- `test_broken` passes",
+        "- `test_broken` passes\n"
+        "- `pytest -q tests/chz` reports no new failures (baseline: 630 passed)"))
+    ok, failures = gate(d, "TICKET-001")
+    assert ok, failures
+    shutil.rmtree(d)
+
+
+def test_a_count_pinned_before_a_baseline_clause_is_still_flagged():
+    """TICKET-111: the baseline clause runs to the end of the criterion, so
+    a total stated BEFORE the marker is still in scope and must still be
+    flagged."""
+    d = project(_set_digest("- thing.py holds it\n- 630 passed in tests/chz\n"
+                             "- eviction runs on write, not read\n").replace(
+        "- `test_broken` passes",
+        "- `tests/chz` suite: 630 passed. Measured before: 629 passed"))
+    ok, failures = gate(d, "TICKET-001")
+    assert not ok and any("absolute count" in f for f in failures), failures
+    shutil.rmtree(d)
+
+
+def test_re_measured_is_not_read_as_a_baseline_marker():
+    """TICKET-111: `re-measured` contains the word `measured`, but the
+    marker only opens a clause at the criterion start or after one of
+    `.;:()[` or after `--`, so a bare word boundary inside `re-measured`
+    must not be read as one."""
+    d = project(_set_digest("- thing.py holds it\n- 630 passed in tests/chz\n"
+                             "- eviction runs on write, not read\n").replace(
+        "- `test_broken` passes",
+        "- `tests/chz` re-measured at check time still reports 630 passed"))
+    ok, failures = gate(d, "TICKET-001")
+    assert not ok and any("absolute count" in f for f in failures), failures
+    shutil.rmtree(d)
+
+
 def test_a_number_a_criterion_refers_to_but_does_not_count_is_not_flagged():
     """The count noun follows the number in a count and precedes it in a
     reference, so a shared integer alone must not flag."""

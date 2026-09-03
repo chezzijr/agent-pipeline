@@ -100,6 +100,21 @@ CRIT_COUNT_RULE = (
     "time; one `count-pinned: <why it cannot move>` line in `## Acceptance "
     "criteria` waives this check")
 
+# A baseline is evidence, not an assertion: `CRIT_COUNT_RULE` asks a
+# criterion to quote one, so the count scan must not flag the very total it
+# asked for. The marker opens a clause only at the criterion's start or
+# after one of `.;:()[` or after `--`, never on a bare word boundary --
+# `re-measured` contains `measured`, and a bare boundary would silence every
+# criterion using the word the rule itself asks for. The clause runs to the
+# end of the criterion, so a total stated BEFORE the marker stays in scope.
+CRIT_BASELINE_RE = re.compile(
+    r"(?:^|[.;:)(\[]|--)\s*(?:measured|baseline)\b", re.I)
+
+
+def assertion_clause(crit: str) -> str:
+    m = CRIT_BASELINE_RE.search(crit)
+    return crit[:m.start()] if m else crit
+
 # A criterion clears Tier A by naming a test, or by naming a command and the
 # outcome running it must produce -- both halves are required, since a command
 # with no stated result cannot be decided by running it. A one-token span
@@ -896,7 +911,8 @@ def gate(project: Path, tid: str, workdir: Path | None = None) -> tuple[bool, li
     dig_counts = set(COUNT_RE.findall(dig))
     if dig_counts and not COUNT_PINNED_RE.search(crit):
         for c in crits:
-            shared = sorted(set(CRIT_COUNT_RE.findall(c)) & dig_counts, key=int)
+            counts = set(CRIT_COUNT_RE.findall(assertion_clause(c)))
+            shared = sorted(counts & dig_counts, key=int)
             if shared:
                 findings.append(
                     "acceptance criterion pins an absolute count copied "

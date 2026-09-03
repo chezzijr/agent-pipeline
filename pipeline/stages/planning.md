@@ -85,6 +85,9 @@ Fill in these sections:
   check time; the gate rejects a criterion that copies an absolute count out
   of `## Digest`, and one `count-pinned: <why it cannot move>` line in the
   section waives that check.
+  A baseline clause is exempt, because the gate stops scanning a criterion at
+  the `Measured ...` or `baseline ...` that opens the clause, so quote the
+  total you measured there.
 - `## Rollback` -- what to revert if this ships and breaks.
 
 Report the full list of files the plan will modify in your result's
