@@ -1,4 +1,4 @@
-# Codex CLI 0.152.0+ adapter. Codex now has blocking PreToolUse hooks, so the
+# Codex CLI 0.153.0+ adapter. Codex now has blocking PreToolUse hooks, so the
 # same guard used by Claude Code can enforce invariant 4. The generated hook
 # and MCP configs are passed as command-line TOML overrides; user config,
 # project .codex config, plugins and execpolicy rules are excluded.
@@ -8,6 +8,16 @@ supports_hooks = true
 settings_mode = "inline"
 mcp_mode = "inline"
 usage_source = "none"
+skill_format = "${name}"
+skill_root = ".agents/skills"
+# `{skill_settings}` suppresses the catalog on ordinary stages. For a stage
+# declaring skills, render() disables discovered host/repo copies and enables
+# only worktree copies whose bytes match the trusted main checkout. Codex needs
+# include_instructions=true for `$name` to resolve; verified with 0.153.4's
+# local `codex debug prompt-input`, which listed only the selected skill.
+# `tools` is a Claude built-in tool allowlist, while Codex's closest command
+# option is a sandbox mode. Silently passing one as the other is invalid.
+unsupported_stage_keys = ["tools", "permission_mode"]
 
 effort_flag = "-c model_reasoning_effort=\"{effort}\""
 session_flag = ""
@@ -18,16 +28,19 @@ mcp_flag = "-c {mcp}"
 readonly_tools = "workspace-write"
 write_tools = "workspace-write"
 max_usd = 0
+supports_usd_cap = false
 
 cmd = """codex exec --model {model} {effort_flag} --sandbox {tools} \
 --add-dir {project}/.project --json --ignore-user-config --ignore-rules \
 --enable hooks --dangerously-bypass-hook-trust -c approval_policy=\"never\" \
+{skill_settings} \
 -c sandbox_workspace_write.network_access=false -c {trust_config} \
 {settings_flag} {mcp_flag} {prompt}"""
 
 interactive_cmd = """codex --model {model} {effort_flag} --sandbox {tools} \
 --add-dir {project}/.project --ignore-user-config --ignore-rules \
 --enable hooks --dangerously-bypass-hook-trust --ask-for-approval on-request \
+{skill_settings} \
 -c sandbox_workspace_write.network_access=false -c {trust_config} \
 {settings_flag} {mcp_flag} {prompt}"""
 

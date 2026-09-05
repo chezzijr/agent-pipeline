@@ -6,6 +6,7 @@ INSIDE the package: located from the repo root they are simply gone after
 """
 import hashlib
 import json
+import os
 import re
 import shlex
 import shutil
@@ -31,6 +32,10 @@ TICKET_TEMPLATE = PKG / "templates" / "ticket.md"
 CONFIG_TEMPLATE = PKG / "templates" / "pipeline.toml"
 SKILLS_DIR = PKG / "templates" / "skills"
 SKILL_TEMPLATE = SKILLS_DIR / "file-ticket" / "SKILL.md"
+SKILL_TARGETS = {
+    "claude": Path(".claude/skills"),
+    "codex": Path(".agents/skills"),
+}
 
 
 def project_stage_config(project: Path | None, stage: str) -> dict:
@@ -193,8 +198,32 @@ def sync_pins(project: Path) -> list[Path]:
 SKILL_MARKS = ".project/skills.json"
 
 
-def project_skill(project: Path, name: str) -> Path:
-    return project / ".claude" / "skills" / name / "SKILL.md"
+def project_skill(project: Path, name: str, target: str = "claude") -> Path:
+    try:
+        root = SKILL_TARGETS[target]
+    except KeyError:
+        raise PipelineError(f"unknown skill target {target!r}") from None
+    return project / root / name / "SKILL.md"
+
+
+def skill_mark_key(target: str, name: str) -> str:
+    return f"{target}:{name}"
+
+
+def installed_skill_mark(marks: dict, target: str, name: str) -> str | None:
+    key = skill_mark_key(target, name)
+    # Before Codex installation support, the manifest held bare names and every
+    # one referred to the sole Claude destination.
+    return marks.get(key, marks.get(name) if target == "claude" else None)
+
+
+def skill_path_linked(project: Path, dst: Path) -> bool:
+    path = dst
+    while path != project and path.parent != path:
+        if path.is_symlink():
+            return True
+        path = path.parent
+    return False
 
 
 def skill_digest(text: str) -> str:
@@ -215,15 +244,20 @@ def skill_marks(project: Path) -> dict:
     return marks
 
 
-def mark_skill(project: Path, name: str, text: str) -> None:
-    marks = {**skill_marks(project), name: skill_digest(text)}
+def mark_skill(project: Path, name: str, text: str, target: str = "claude") -> None:
+    digest = skill_digest(text)
+    marks = {**skill_marks(project), skill_mark_key(target, name): digest}
+    if target == "claude":
+        # Keep rollback compatibility with versions whose sole destination was
+        # Claude and whose manifest reader knows only bare skill names.
+        marks[name] = digest
     p = project / SKILL_MARKS
     p.parent.mkdir(parents=True, exist_ok=True)
     write_atomic(p, json.dumps(marks, indent=2, sort_keys=True) + "\n")
 
 
-def skill_status(project: Path) -> list[tuple[str, Path, str]]:
-    """One `(name, dst, state)` per packaged skill: `linked` (a symlink --
+def skill_status(project: Path) -> list[tuple[str, str, Path, str]]:
+    """One `(target, name, dst, state)` per packaged skill and agent: `linked` (a symlink --
     never rewritten, checked FIRST so a symlinked copy is never mistaken for
     a content state), `absent` (not installed), `current` (matches the
     packaged template), `stale` (differs from the template but matches the
@@ -231,32 +265,39 @@ def skill_status(project: Path) -> list[tuple[str, Path, str]]:
     no record)."""
     marks = skill_marks(project)
     out = []
-    for src in sorted(SKILLS_DIR.iterdir()):
-        name = src.name
-        dst = project_skill(project, name)
-        template = (src / "SKILL.md").read_text()
-        if dst.is_symlink():
-            state = "linked"
-        elif not dst.is_file():
-            state = "absent"
-        elif dst.read_text() == template:
-            state = "current"
-        elif marks.get(name) == skill_digest(dst.read_text()):
-            state = "stale"
-        elif name in marks:
-            state = "customised"
-        else:
-            state = "unknown"
-        out.append((name, dst, state))
+    for target in SKILL_TARGETS:
+        for src in sorted(SKILLS_DIR.iterdir()):
+            name = src.name
+            dst = project_skill(project, name, target)
+            template = (src / "SKILL.md").read_text()
+            mark = installed_skill_mark(marks, target, name)
+            # Codex documents symlinked skill directories; Claude also permits
+            # this repo's existing SKILL.md links. Neither may be replaced by a
+            # refresh, because write_atomic() would destroy the chosen layout.
+            if skill_path_linked(project, dst):
+                state = "linked"
+            elif not dst.is_file():
+                state = "absent"
+            elif dst.read_text() == template:
+                state = "current"
+            elif mark == skill_digest(dst.read_text()):
+                state = "stale"
+            elif mark is not None:
+                state = "customised"
+            else:
+                state = "unknown"
+            out.append((target, name, dst, state))
     return out
 
 
-def install_skill(project: Path, name: str) -> Path:
+def install_skill(project: Path, name: str, target: str = "claude") -> Path:
     text = (SKILLS_DIR / name / "SKILL.md").read_text()
-    dst = project_skill(project, name)
+    dst = project_skill(project, name, target)
+    if skill_path_linked(project, dst):
+        raise PipelineError(f"refusing to replace symlinked skill path {dst}")
     dst.parent.mkdir(parents=True, exist_ok=True)
     write_atomic(dst, text)
-    mark_skill(project, name, text)
+    mark_skill(project, name, text, target)
     return dst
 
 
@@ -397,6 +438,39 @@ def harness(name: str = "claude-code") -> dict:
     return tomllib.loads(p.read_text())
 
 
+HARNESS_NAME = re.compile(r"^[a-zA-Z0-9-]+$")
+
+
+def project_harness(project: Path, override: str | None = None) -> str:
+    """The explicit CLI harness, then this project's configured default."""
+    name = override if override is not None else project_config(project).get(
+        "harness", "claude-code")
+    if not isinstance(name, str) or not HARNESS_NAME.fullmatch(name):
+        raise PipelineError(
+            f"{project}: harness must contain only letters, digits and hyphens, not {name!r}")
+    path = HARNESSES_DIR / f"{name}.toml"
+    if not path.is_file():
+        raise PipelineError(f"no harness config {path}")
+    return name
+
+
+def validate_stage_overrides(project: Path, stage: str, hcfg: dict) -> None:
+    """Refuse project stage keys this harness cannot honestly implement."""
+    override = project_stage_config(project, stage)
+    unsupported = set(hcfg.get("unsupported_stage_keys") or [])
+    found = sorted(unsupported.intersection(override))
+    if found:
+        raise PipelineError(
+            f"{project}: [stages.{stage}] {', '.join(found)} cannot be used "
+            f"with the selected harness")
+    if not hcfg.get("supports_usd_cap", True) and "max_usd" in override:
+        notice_once(
+            f"{stage}: max_usd={override['max_usd']} is ignored because the "
+            f"selected harness cannot enforce a dollar cap.",
+            "cap-unsupported", str(project), stage,
+        )
+
+
 MCP_NAME = re.compile(r"^[a-zA-Z0-9-]+$")
 
 
@@ -495,6 +569,66 @@ def _toml_value(value) -> str:
     raise PipelineError(f"cannot encode {value!r} as a Codex TOML override")
 
 
+CODEX_SKILL_NAME = re.compile(r"^[a-z0-9-]+$")
+
+
+def native_skill_settings(hcfg: dict, cfg: dict, project: Path,
+                          worktree: Path) -> str:
+    """Bind Codex `$name` references to this worktree's declared skill bytes."""
+    root = hcfg.get("skill_root")
+    if not root:
+        return ""
+    if not cfg.get("skills"):
+        return "-c skills.include_instructions=false"
+
+    home = Path(os.environ.get("HOME", str(Path.home())))
+    codex_home = Path(os.environ.get("CODEX_HOME", str(home / ".codex")))
+    roots = (worktree / ".agents" / "skills",
+             worktree / ".codex" / "skills",
+             home / ".agents" / "skills",
+             codex_home / "skills",
+             Path("/etc/codex/skills"))
+    disabled = set()
+    for skills_dir in roots:
+        try:
+            entries = list(skills_dir.iterdir())
+        except OSError:
+            continue
+        for entry in entries:
+            doc = entry / "SKILL.md"
+            if doc.is_file():
+                disabled.add(str(doc.resolve()))
+    rules = [{"path": path, "enabled": False} for path in sorted(disabled)]
+    selected = []
+    for name in cfg["skills"]:
+        if not isinstance(name, str) or not CODEX_SKILL_NAME.fullmatch(name):
+            raise PipelineError(f"bad Codex skill name {name!r} -- [a-z0-9-] only")
+        path = worktree / root / name / "SKILL.md"
+        if not path.is_file():
+            raise PipelineError(f"Codex stage skill {name!r} is not installed at {path}")
+        rel = f"{root}/{name}/SKILL.md"
+        main = project / rel
+        trusted = (main.read_text() if skill_path_linked(project, main)
+                   else head_file(project, rel))
+        if trusted is None and main.is_file():
+            trusted = main.read_text()
+        if trusted is None or path.read_text() != trusted:
+            raise PipelineError(
+                f"Codex stage skill {name!r} in the ticket worktree differs "
+                f"from the trusted project copy {main}")
+        # A name rule disables operator copies; the later path rule re-enables
+        # exactly the repository copy the stage declared.
+        selected.append(str(path.resolve()))
+        # Disable same-name copies from any host root the installed Codex adds;
+        # the later path rule wins for this worktree's exact document.
+        rules.append({"name": name, "enabled": False})
+    rules.extend({"path": path, "enabled": True} for path in selected)
+    values = ("-c skills.include_instructions=true "
+              "-c skills.bundled.enabled=false -c "
+              + shlex.quote("skills.config=" + _toml_value(rules)))
+    return values
+
+
 def mcp_config(servers: dict, hcfg: dict | None = None) -> Path | None:
     """The harness-specific MCP configuration for this stage.
 
@@ -550,12 +684,16 @@ def compose_prompt(stage: str, hcfg: dict | None = None, view: str = "",
     ("No such tool available: Skill") -- the prompt lying to the agent, which
     is the one thing this design exists to stop."""
     cfg, body = split_frontmatter(STAGES_DIR / f"{stage}.md")
+    cfg = {**cfg, **project_stage_config(project, stage)}
     text = (STAGES_DIR / "_common.md").read_text() + "\n" + body
-    if cfg.get("skills") and (hcfg or {}).get("skill_tool"):
+    skill_format = (hcfg or {}).get("skill_format")
+    if cfg.get("skills") and ((hcfg or {}).get("skill_tool") or skill_format):
+        skill_format = skill_format or "/{name}"
         text += ("\n\n## Skills for this stage\n\n"
                  "Invoke these before you start; they are here because this "
                  "stage's job depends on them.\n\n"
-                 + "\n".join(f"- `/{sk}`" for sk in cfg["skills"]) + "\n")
+                 + "\n".join(f"- `{skill_format.format(name=sk)}`"
+                              for sk in cfg["skills"]) + "\n")
     extra = stage_extra(project, stage)
     if extra:
         text += ("\n\n---\n\n# This project's additions to this stage\n\n"
@@ -589,6 +727,11 @@ def stage_cap(cfg: dict, hcfg: dict):
     no scaling. The scaling lives here, rather than at the `render()` call
     site, so `rec["cap"]` in `pipeline/daemon/supervisor.py` names the same
     number the rendered flag does (DEC-077)."""
+    # Codex cannot enforce a dollar cap, so stage frontmatter must not make its
+    # records claim one. This is explicit rather than inferred from max_usd=0:
+    # fake.toml uses zero as its default while tests still exercise accounting.
+    if not hcfg.get("supports_usd_cap", True):
+        return 0
     return cap_for(cfg.get("max_usd", hcfg.get("max_usd", 5)), cfg.get("counters") or {})
 
 
@@ -656,7 +799,8 @@ def render(hcfg: dict, cfg: dict, *, tid: str, project: Path, ticket: Path,
         # 2026-08-21 that a `PreToolUse` guard still fires under the flag;
         # that is the condition of using it at all (invariant 4).
         skills_flag=("" if (cfg.get("skills") and hcfg.get("skill_tool"))
-                     else hcfg.get("no_skills_flag", "")),
+                      else hcfg.get("no_skills_flag", "")),
+        skill_settings=native_skill_settings(hcfg, cfg, project, wt),
         tools=_tools(hcfg, cfg),
         cap=stage_cap(cfg, hcfg),
         project=shlex.quote(str(project)),

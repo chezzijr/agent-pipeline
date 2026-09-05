@@ -74,6 +74,7 @@ interactive_permission_mode = "acceptEdits"
 # exists to prevent, and it burned a turn on every triage/planning/implementing
 # run of 2026-08-21 with "No such tool available: Skill".
 skill_tool = "Skill"
+skill_format = "/{name}"
 
 # ...and the flag for a stage that declares none. `--disable-slash-commands`
 # ("Disable all skills") drops the Skill tool AND the slash-command listing:

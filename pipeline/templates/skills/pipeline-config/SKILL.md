@@ -132,12 +132,26 @@ differs from the pin. Say both to the operator.
 `base` must name the branch tickets are cut from, and the main checkout must be
 parked on it while the dispatcher runs, or `merging` refuses to land.
 
+### `harness` -- this project's agent CLI
+
+Top level, under no table. Omit it for Claude Code, or select Codex for this
+project without repeating a command-line flag:
+
+```toml
+harness = "codex"
+```
+
+An explicit `pipeline run --harness ...` overrides this value. The daemon reads
+the value per registered project, so Claude and Codex projects can share one
+daemon; `pipeline start --harness ...` overrides all of them. Under Codex,
+`[stages.<name>] tools` and `permission_mode` are refused because they name
+Claude concepts, and `max_usd` warns because Codex cannot enforce a dollar cap.
+
 ## Every other key
 
-`test_one`, `test_suite`, `test_suite_without_new` and `base` are the
-only keys this file needs. The rest are optional. These five are the
-ones an operator reaches for, and the file's own comments do not carry
-them all.
+`test_one`, `test_suite`, `test_suite_without_new` and `base` are the only keys
+this file needs. The rest are optional. The common optional knobs are described
+below; the file's own comments carry the remainder.
 
 ### `[stages.<name>] max_usd` -- the per-stage dollar cap
 

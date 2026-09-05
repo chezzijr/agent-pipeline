@@ -8,6 +8,11 @@
 test_one                = "pytest -x {test}"
 test_suite              = "pytest"
 test_suite_without_new  = "pytest {test:--deselect }"
+
+# The agent CLI used for this project when `pipeline run` or `pipeline start`
+# has no explicit --harness override. Supported packaged values are
+# "claude-code" (the default when omitted) and "codex".
+# harness = "codex"
 # `{test}` is the ticket's whole `test_file` value -- `<path>::<name>`, e.g.
 # `tests/repro.rs::test_add_is_wrong`. The gate needs three things from these
 # commands, so a non-pytest project splits the value itself:

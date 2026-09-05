@@ -17,9 +17,10 @@ from pipeline.core import PipelineError, notice_once
 from pipeline.core.config import (cap_config, compose_prompt,
                                   format_tests_cmd, harness, is_readonly,
                                   mcp_config, mcp_servers, project_config,
-                                  project_max_parallel, readonly_allow,
-                                  render, stage_cap, stage_config,
-                                  stage_settings)
+                                  project_harness, project_max_parallel,
+                                  readonly_allow, render, stage_cap,
+                                  stage_config, stage_settings,
+                                  validate_stage_overrides)
 from pipeline.core.fence import fenced_touches
 from pipeline.core.gate import (environment_only, gate, load_flaky, missing_test_file,
                                 plan_steps, structural_only)
@@ -389,6 +390,7 @@ def spawn(project: Path, wt: Path, tid: str, stage: str, hcfg: dict,
     """Start an agent and return immediately. The dispatcher never blocks on an
     agent, which is what makes this a pipeline rather than a call tree."""
     cfg = stage_config(stage, project)
+    validate_stage_overrides(project, stage, hcfg)
     # Above the `supports_hooks` refusal: a harness that cannot register the
     # guard hook must still not launch on top of a settings source that would
     # have disabled it, so the strip runs whether or not this spawn proceeds.
@@ -461,7 +463,8 @@ def spawn(project: Path, wt: Path, tid: str, stage: str, hcfg: dict,
     # the ticket load the view already pays for. This rebind must precede
     # the `stage_cap(cfg, hcfg)` call below so `rec["cap"]` carries the
     # scaled number.
-    cfg = cap_config(stage, cfg, project, counters)
+    if hcfg.get("supports_usd_cap", True):
+        cfg = cap_config(stage, cfg, project, counters)
     cmd = render(hcfg, cfg, tid=tid, project=project,
                 ticket=ticket_path(project, tid),
                 result_file=tickets_dir(project) / f"{tid}.result",
@@ -1595,7 +1598,7 @@ def _source_watcher():
     return changed
 
 
-def run(project: Path, once: bool, interval: int, harness_name: str,
+def run(project: Path, once: bool, interval: int, harness_name: str | None,
         max_parallel: int = 3, store=None) -> None:
     """Standalone: the daemon minus the socket server. One supervisor
     implementation, two entry points -- the daemon is an accelerator, never a
@@ -1608,7 +1611,7 @@ def run(project: Path, once: bool, interval: int, harness_name: str,
     happens whenever no client is subscribed (see `spawn()` and the README).
     What you lose without the daemon is steering, never progress.
     """
-    reload = _harness_reloader(harness_name)
+    reload = _harness_reloader(project_harness(project, harness_name))
     emit = store.emitter(project) if store is not None else noop
     inflight: dict[str, dict] = {}
     machine_watch([project])   # -j is this dispatcher's budget; one project has all of it
@@ -1654,7 +1657,7 @@ def run(project: Path, once: bool, interval: int, harness_name: str,
         lock.close()
 
 
-def serve(interval: int, harness_name: str, max_parallel: int, store, server,
+def serve(interval: int, harness_name: str | None, max_parallel: int, store, server,
           once: bool = False) -> None:
     """The one global daemon: every registered project, one select loop.
 
@@ -1666,7 +1669,8 @@ def serve(interval: int, harness_name: str, max_parallel: int, store, server,
     # = record child pids, reap on startup. Bounded today: the respawn uses a
     # new session id and drop_result() runs pre-spawn, so the worst case is a
     # stale thread summary.
-    reload = _harness_reloader(harness_name)
+    reloaders = ({harness_name: _harness_reloader(harness_name)}
+                 if harness_name is not None else {})
     states: dict[str, dict] = server.states
     locks: dict[str, object] = {}
     stopping, wake, wake_w, old_handlers = _stopper()
@@ -1690,7 +1694,6 @@ def serve(interval: int, harness_name: str, max_parallel: int, store, server,
                 print(f"  dispatcher source changed ({moved}) -- ending the "
                       f"loop so a restart runs the merged code")
                 return
-            hcfg = reload()
             wanted = {str(p): p for p in registry.projects()}
             for key in [k for k in states if k not in wanted]:
                 print(f"  unregistered: releasing {key}")
@@ -1714,6 +1717,11 @@ def serve(interval: int, harness_name: str, max_parallel: int, store, server,
                     locks[key], states[key] = fh, {}
                     print(f"  watching {key}")
                 try:
+                    name = project_harness(proj, harness_name)
+                    if name not in reloaders:
+                        reloaders[name] = _harness_reloader(name)
+                    reload = reloaders[name]
+                    hcfg = reload()
                     worked |= tick(proj, hcfg, states[key], max_parallel,
                                    server, store.emitter(key),
                                    (lambda: True) if moved else stopping)

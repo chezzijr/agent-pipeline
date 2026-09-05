@@ -4,6 +4,10 @@ A ticket-driven agent pipeline. Agents never talk to each other; they talk
 through a ticket file. A dumb dispatcher owns the state machine and spawns a
 stateless `claude -p` per stage. See `README.md` for how to use it.
 
+`AGENTS.md` is a symlink to this file so Codex, OpenCode, and other clients
+that use the shared agent-instructions convention receive these same rules.
+Keep one source of truth here rather than adding harness-specific copies.
+
 **This repo runs its own pipeline** (`.project/tickets/`), so you may be an
 agent working a ticket here. If so, your stage prompt governs; this file is
 context, not instructions that override it.
@@ -91,8 +95,8 @@ them — so the skill body was being paid on most runs anyway, and the `Skill`
 tool plus a 46-skill listing rode on top of it. The three are inlined and
 trimmed into the stage prompts (see `NOTICE`; they are MIT), which is both
 cheaper and what the paragraph above asks for. The frontmatter key and every
-branch behind it still work: declare `skills:` on a stage and it gets the tool,
-the prompt block and its slash commands back, with no code change. What the
+branch behind it still work: declare `skills:` on a stage and it gets Claude's
+tool and `/name`, or Codex's native `$name`, in the prompt. What the
 stages must **not** do is depend on a plugin being installed on the operator's
 machine — `--setting-sources project` means one is not.
 
@@ -373,11 +377,18 @@ still worth it: it prints one line per case, and the failure names the case.
   skips the helper reopens TICKET-086, and a test that detects a runaway loop
   by raising from a fake `tick()` must raise a `BaseException` subclass, or
   either catch eats it and the test hangs instead of failing.
-- **`init` records the sha256 of each skill it writes in
+- **`init` installs every packaged skill for Claude under `.claude/skills/`
+  and for Codex under `.agents/skills/`, and records each target's sha256 in
   `<project>/.project/skills.json`.** That record is the only way
   `skill_status()` tells a stale copy from a customised one; a copy with no
   record reads as `unknown` and is never rewritten without `--force`. A
   symlinked copy, which is this repo's own layout, is never written at all.
+- **A Codex stage sees no ambient skill catalog.** `native_skill_settings()`
+  disables discovered host and repo paths. When a stage declares `skills:`, it
+  re-enables only those worktree paths after their bytes match the main
+  checkout's trusted copies; Codex needs `skills.include_instructions=true` for
+  `$name` to resolve at all. This was checked with `codex debug prompt-input`
+  0.153.4, which listed only the selected skill.
 
 ## Conventions
 
@@ -411,12 +422,13 @@ gate instead of landing on its own, and
 `tests/test_stages.py::test_the_fenced_list_matches_the_rule_file` keeps this
 paragraph and `machine.FENCED` from drifting apart.
 
-**`.claude/skills/file-ticket/SKILL.md` is part of the interface.** It is what a
-session reads before filing work into this pipeline, so a change to a CLI
-command, a stage's behaviour, or the human gates is not finished until the skill
-says the same thing. A skill describing a pipeline that no longer exists sends
-every future ticket in wrong, and nothing tests it. `.claude/skills/file-ticket/SKILL.md`
-is a symlink to `pipeline/templates/skills/file-ticket/SKILL.md`, and `pipeline init`
+**The installed `file-ticket` skill is part of the interface.** Claude reads it
+at `.claude/skills/file-ticket/SKILL.md`; Codex reads the same packaged skill at
+`.agents/skills/file-ticket/SKILL.md`. A session uses it before filing work into
+this pipeline, so a change to a CLI command, a stage's behaviour, or the human
+gates is not finished until the skill says the same thing. A skill describing a pipeline that no longer exists sends
+every future ticket in wrong, and nothing tests it. This repo's installed copies
+are symlinks to `pipeline/templates/skills/file-ticket/SKILL.md`, and `pipeline init`
 copies every directory under `pipeline/templates/skills/` into the projects it
 scaffolds -- `pipeline-config`, which teaches a session to write and *verify*
 this file's three test commands for a non-pytest project, ships the same way and

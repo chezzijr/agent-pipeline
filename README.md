@@ -21,8 +21,11 @@ did. Tickets are the queue; agents are stateless workers pulled off it.
 - **Python 3.11+** and [uv](https://docs.astral.sh/uv/). Three runtime
   dependencies and that is the budget: PyYAML, `pyte`, `textual`.
 - **An agent CLI.** [Claude Code](https://claude.com/claude-code) is the default;
-  Codex CLI 0.152.0 or newer is available with `--harness codex`. Stage prompts
+  Codex CLI 0.153.0 or newer is available with `harness = "codex"` or
+  `--harness codex`. Stage prompts
   are harness-neutral; CLI-specific behavior lives in the harness TOML files.
+  This repository keeps maintainer guidance in `CLAUDE.md` and exposes the
+  same file as `AGENTS.md` for Codex, OpenCode, and compatible future clients.
 - **Linux or macOS.** POSIX only -- `fork`, a PTY, `flock`, a Unix socket and
   `selectors` -- with no Linux-only syscall on any path, so both are supported.
   Not Windows: WSL is the way there.
@@ -79,12 +82,15 @@ pipeline --project ~/code/myproject resume  TICKET-001 --stage planning --note "
 pipeline --project ~/code/myproject skills --refresh   # bring this project's skill copies up to the packaged templates
 ```
 
-`init` also installs `.claude/skills/file-ticket/SKILL.md` -- the protocol a
-session reads before filing a ticket -- and `.claude/skills/pipeline-config/SKILL.md`,
-which is how a session sets `test_one`, `test_suite` and `test_suite_without_new`
-for a project pytest's defaults do not fit, and proves they work before saying so.
-It prints where it put each. An existing file is kept, so a project that
-customised one keeps its version.
+`init` also installs `.claude/skills/file-ticket/SKILL.md` and
+`.claude/skills/pipeline-config/SKILL.md` for Claude, plus matching copies under
+`.agents/skills/` for Codex.
+The first is the protocol a session reads before filing a ticket. The second is
+how a session sets `test_one`, `test_suite` and `test_suite_without_new` for a
+project pytest's defaults do not fit, and proves they work before saying so.
+Invoke them as `/file-ticket` in Claude or `$file-ticket` in Codex. `init`
+prints every destination. An existing file is kept, so a project that
+customised one agent's copy keeps that version.
 
 `init` names an existing copy's state: `stale` when it is untouched since
 install but the packaged template has since changed, or `customised` when the
@@ -621,6 +627,12 @@ the same stage files by default. A project can override one in two ways:
   packaged one outright, it does not extend it -- a `skills` list you give
   replaces the packaged list, not appends to it.
 
+  `tools` and `permission_mode` are Claude Code settings and are refused when
+  Codex is selected rather than silently translated into a different concept.
+  Stage `skills` use each harness's native invocation (`/name` for Claude,
+  `$name` for Codex). Codex has no enforceable `max_usd`; an override prints a
+  warning and its attempt bounds and lease remain the backstops.
+
   `review`, `quick-review` and `holistic-review` are spawned with `max_usd`
   grown by one dollar per 4 declared files or per 8 plan steps, whichever is
   larger, capped at twice the stage's own number. A project's own `max_usd`
@@ -641,8 +653,11 @@ so a committed `.extra.md` change parks there too.
 
 ## Porting to another harness
 
-`pipeline/harnesses/codex.toml` is the second supported harness. Select it with
-`pipeline run --harness codex` or `pipeline start --harness codex`.
+`pipeline/harnesses/codex.toml` is the second supported harness. Make it one
+project's default with `harness = "codex"` in `.project/pipeline.toml`, or use
+`pipeline run --harness codex`. `pipeline start --harness codex` overrides
+every registered project; without that flag, one daemon can run Claude and
+Codex projects together from their individual config files.
 
 Logical stage models map `opus` to `gpt-5.6-sol` and `sonnet` to
 `gpt-5.6-terra`; an explicit Codex model slug passes through. Stage effort maps
@@ -662,6 +677,10 @@ The harness TOML format carries two adapter choices:
   `--dangerously-bypass-hook-trust` only for that dispatcher-vetted definition.
   User config and rules are ignored, and the worktree is marked untrusted so
   branch-local `.codex` sources cannot add hooks, rules, or MCP servers.
+- **Native skills.** Codex receives stage-declared skills as `$name`. Stages
+  declaring none get no skill catalog. A skilled stage gets only its declared
+  worktree copies, after their bytes match the trusted main checkout, so a
+  ticket branch or an operator skill with the same name cannot replace them.
 
 Codex has no supported equivalent of Claude's `--max-budget-usd`. Token usage
 is recorded when present, but no dollar amount or unenforced cap is fabricated;

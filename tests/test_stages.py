@@ -52,6 +52,14 @@ def test_composed_prompt_has_common_rules_and_no_frontmatter():
     assert "model:" not in text.split("## Your stage")[0].split("```")[0]
 
 
+def test_agent_instruction_files_share_one_source():
+    root = C.PKG.parent
+    agents = root / "AGENTS.md"
+    assert agents.is_symlink(), "AGENTS.md must not drift from CLAUDE.md"
+    assert agents.readlink() == Path("CLAUDE.md")
+    assert agents.read_text() == (root / "CLAUDE.md").read_text()
+
+
 def test_common_rules_say_where_a_code_edit_goes():
     f = C.compose_prompt("review")
     text = f.read_text()
@@ -203,8 +211,8 @@ def test_every_stage_that_can_run_bash_has_the_guard():
             f"{stage} runs Bash with no guard"
 
 
-def test_declared_skills_reach_the_prompt_only_when_the_harness_grants_the_tool():
-    """Both directions, because the block is only honest in one of them: the
+def test_declared_skills_use_each_harness_native_invocation():
+    """The block is only honest when a harness names an invocation mechanism: the
     2026-08-21 run appended it for every harness, and the agent's first turn
     was always `Skill(...)` -> "No such tool available: Skill".
 
@@ -222,7 +230,11 @@ def test_declared_skills_reach_the_prompt_only_when_the_harness_grants_the_tool(
         text = granted.read_text(); granted.unlink()
         assert "/demo:some-skill" in text
 
-        for hcfg in ({}, None, C.harness("codex")):
+        codex = C.compose_prompt("_skillfixture", C.harness("codex"))
+        text = codex.read_text(); codex.unlink()
+        assert "`$demo:some-skill`" in text
+
+        for hcfg in ({}, None):
             f = C.compose_prompt("_skillfixture", hcfg)
             text = f.read_text(); f.unlink()
             assert "demo:some-skill" not in text, \
@@ -231,6 +243,20 @@ def test_declared_skills_reach_the_prompt_only_when_the_harness_grants_the_tool(
             "the fixture leaked into the stage list"
     finally:
         fixture.unlink()
+
+
+def test_project_declared_skill_reaches_the_codex_prompt():
+    import shutil
+    project = Path(tempfile.mkdtemp())
+    (project / ".project").mkdir()
+    (project / ".project" / "pipeline.toml").write_text(
+        '[stages.review]\nskills = ["pipeline-config"]\n')
+    prompt = C.compose_prompt("review", C.harness("codex"), project=project)
+    try:
+        assert "`$pipeline-config`" in prompt.read_text()
+    finally:
+        prompt.unlink()
+        shutil.rmtree(project)
 
 
 def test_data_files_live_inside_the_package_so_they_survive_install():
@@ -246,11 +272,11 @@ def test_data_files_live_inside_the_package_so_they_survive_install():
     assert (C.HOOKS_DIR / "dangerous-commands.py").is_file()
 
 
-def test_the_repo_skill_is_the_packaged_file():
+def test_the_repo_skills_are_the_packaged_files_for_both_agents():
     """One copy of the skill's bytes, and the harness still loads it.
 
-    `.claude/skills/file-ticket/SKILL.md` is a symlink to the packaged
-    copy, so the two cannot drift. Claude Code 2.1.241 loads a symlinked
+    Each installed skill is a symlink to the packaged copy, so the agent
+    copies cannot drift. Claude Code 2.1.241 loads a symlinked
     SKILL.md: its project-skills loader `stat`s the path -- not `lstat`,
     which it uses elsewhere -- and skips the skill only when the target
     is not a regular file, or is over its byte limit. These asserts are
@@ -259,16 +285,17 @@ def test_the_repo_skill_is_the_packaged_file():
     from helpers import ROOT
     packaged = sorted(p.name for p in C.SKILLS_DIR.iterdir())
     assert "file-ticket" in packaged and "pipeline-config" in packaged, packaged
-    for name in packaged:
-        repo = ROOT / ".claude" / "skills" / name / "SKILL.md"
-        assert repo.is_symlink(), \
-            f"{repo} is a copy, not a symlink -- the two copies will drift"
-        assert repo.is_file(), \
-            f"{repo} is a broken symlink -- the skill would not load"
-        assert repo.resolve() == (C.SKILLS_DIR / name / "SKILL.md").resolve(), \
-            f"{repo} resolves to {repo.resolve()}, not to the packaged copy"
-        assert repo.stat().st_size < 128 * 1024, \
-            f"{repo} is {repo.stat().st_size} bytes -- too large to load"
+    for root in (ROOT / ".claude" / "skills", ROOT / ".agents" / "skills"):
+        for name in packaged:
+            repo = root / name / "SKILL.md"
+            assert repo.is_symlink() or repo.parent.is_symlink(), \
+                f"{repo} is a copy, not a symlink -- the copies will drift"
+            assert repo.is_file(), \
+                f"{repo} is a broken symlink -- the skill would not load"
+            assert repo.resolve() == (C.SKILLS_DIR / name / "SKILL.md").resolve(), \
+                f"{repo} resolves to {repo.resolve()}, not to the packaged copy"
+            assert repo.stat().st_size < 128 * 1024, \
+                f"{repo} is {repo.stat().st_size} bytes -- too large to load"
 
 
 def test_the_docs_name_the_skill_init_installs():
@@ -289,6 +316,8 @@ def test_the_docs_name_the_skill_init_installs():
     readme = (root / "README.md").read_text()
     assert "installs `.claude/skills/file-ticket/SKILL.md`" in readme, \
         "README.md does not say `init` installs the file-ticket skill"
+    assert ".agents/skills/" in readme, \
+        "README.md does not name the Codex skill installation target"
 
 
 def test_the_docs_name_the_dependencies_and_the_targets_the_code_has():
@@ -400,8 +429,8 @@ def test_the_config_skill_names_every_knob_the_code_reads():
     `.project/pipeline.toml`."""
     skill = C.SKILLS_DIR / "pipeline-config" / "SKILL.md"
     text = skill.read_text()
-    for knob in ("max_usd", "scale_usd", "worktree_setup", "worktree_teardown",
-                 "extra.md", "pinned"):
+    for knob in ("harness", "max_usd", "scale_usd", "worktree_setup", "worktree_teardown",
+                  "extra.md", "pinned"):
         assert knob in text, f"{skill} does not mention {knob!r}"
 
 

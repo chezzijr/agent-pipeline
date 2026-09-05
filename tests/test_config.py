@@ -1,5 +1,6 @@
 """`project_config()` must read the committed config, not the working tree:
 a ticket branch cannot be allowed to rewrite the commands that judge it."""
+import json
 import os
 import subprocess
 import sys
@@ -9,10 +10,12 @@ from pathlib import Path
 from pipeline.core import PipelineError, reset_notices
 from pipeline.core.config import (cap_config, format_test_cmd,
                                   format_tests_cmd, harness, install_skill,
-                                  pin_dir, pin_path, project_config,
-                                  project_max_parallel, render,
-                                  selector_failure, selector_parts,
-                                  skill_status, stage_config, stage_extra,
+                                   pin_dir, pin_path, project_config,
+                                   project_harness, project_max_parallel,
+                                   project_skill, render,
+                                   selector_failure, selector_parts,
+                                   skill_digest, skill_marks, skill_status,
+                                   stage_config, stage_extra,
                                   suite_failure)
 from pipeline.daemon.registry import config_dir
 from tests.helpers import ROOT, git_project
@@ -22,6 +25,27 @@ def cmd(cfg):
     return render(harness("claude-code"), cfg, tid="TICKET-001", project=Path("/tmp"),
                   ticket=Path("/tmp/t.md"), result_file=Path("/tmp/t.result"),
                   session="s", prompt=Path("/tmp/t.md"))
+
+
+def test_project_harness_uses_config_then_cli_override():
+    d = Path(tempfile.mkdtemp())
+    (d / ".project").mkdir()
+    (d / ".project" / "pipeline.toml").write_text('harness = "codex"\n')
+    assert project_harness(d) == "codex"
+    assert project_harness(d, "fake") == "fake"
+
+
+def test_project_harness_rejects_unknown_and_path_names():
+    d = Path(tempfile.mkdtemp())
+    (d / ".project").mkdir()
+    cfg = d / ".project" / "pipeline.toml"
+    for value in ("missing", "../codex"):
+        cfg.write_text(f'harness = "{value}"\n')
+        try:
+            project_harness(d)
+            assert False, value
+        except PipelineError as e:
+            assert "harness" in str(e)
 
 
 def test_render_cap_does_not_scale_with_diff_size():
@@ -445,9 +469,46 @@ def test_skill_status_reads_an_unrecorded_difference_as_unknown():
     skill = d / ".claude" / "skills" / "file-ticket" / "SKILL.md"
     skill.parent.mkdir(parents=True)
     skill.write_text("# ours\n")
-    states = {name: state for name, _, state in skill_status(d)}
-    assert states["file-ticket"] == "unknown", states
+    states = {(target, name): state for target, name, _, state in skill_status(d)}
+    assert states[("claude", "file-ticket")] == "unknown", states
+    assert states[("codex", "file-ticket")] == "absent", states
 
     install_skill(d, "file-ticket")
-    states = {name: state for name, _, state in skill_status(d)}
-    assert states["file-ticket"] == "current", states
+    states = {(target, name): state for target, name, _, state in skill_status(d)}
+    assert states[("claude", "file-ticket")] == "current", states
+    marks = skill_marks(d)
+    assert marks["file-ticket"] == marks["claude:file-ticket"], marks
+
+
+def test_legacy_skill_marks_apply_only_to_the_claude_copy():
+    """The old manifest schema predates Codex installation. Treating its bare
+    name as both destinations would call an unrelated Codex copy stale and let
+    a plain refresh overwrite it."""
+    d = Path(tempfile.mkdtemp())
+    old = "# previously installed\n"
+    for target in ("claude", "codex"):
+        skill = project_skill(d, "file-ticket", target)
+        skill.parent.mkdir(parents=True)
+        skill.write_text(old)
+    marks = d / ".project" / "skills.json"
+    marks.parent.mkdir()
+    marks.write_text(json.dumps({"file-ticket": skill_digest(old)}))
+
+    states = {(target, name): state for target, name, _, state in skill_status(d)}
+    assert states[("claude", "file-ticket")] == "stale", states
+    assert states[("codex", "file-ticket")] == "unknown", states
+
+
+def test_skill_install_refuses_every_symlinked_destination_ancestor():
+    d = Path(tempfile.mkdtemp())
+    outside = Path(tempfile.mkdtemp())
+    (d / ".agents").mkdir()
+    (d / ".agents" / "skills").symlink_to(outside, target_is_directory=True)
+    states = {(target, name): state for target, name, _, state in skill_status(d)}
+    assert states[("codex", "file-ticket")] == "linked", states
+    try:
+        install_skill(d, "file-ticket", "codex")
+        assert False, "install_skill followed a destination ancestor symlink"
+    except PipelineError as e:
+        assert "symlinked skill path" in str(e)
+    assert not (outside / "file-ticket" / "SKILL.md").exists()

@@ -18,7 +18,7 @@ def main() -> None:
     line_buffer_stdout()
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--interval", type=int, default=10)
-    ap.add_argument("--harness", default="claude-code")
+    ap.add_argument("--harness", help="override every project's configured harness")
     ap.add_argument("-j", "--max-parallel", type=int, default=3,
                     help="agents in flight across every registered project")
     ap.add_argument("--socket", help="override the daemon socket path (default: "

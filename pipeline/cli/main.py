@@ -15,7 +15,7 @@ from pipeline.core import PipelineError, line_buffer_stdout
 from pipeline.core.config import (CONFIG_TEMPLATE, TICKET_TEMPLATE,
                                   config_source, install_skill, mark_skill,
                                   pin_dir, pin_path, project_config,
-                                  selector_failure, skill_marks, skill_status,
+                                  selector_failure, skill_mark_key, skill_marks, skill_status,
                                   suite_failure, sync_pins)
 from pipeline.core.gate import gate
 from pipeline.core.machine import KNOWN_STAGES, cleared_key
@@ -72,14 +72,17 @@ def cmd_init(args) -> None:
                    "template -- kept (no install record; skills --refresh "
                    "--force overwrites it)",
     }
-    for name, dst, state in skill_status(project):
+    for target, name, dst, state in skill_status(project):
         if state == "absent":
-            install_skill(project, name)
-            print(f"  installed the {name} skill at {dst}")
+            install_skill(project, name, target)
+            print(f"  installed the {name} skill for {target} at {dst}")
             continue
-        if state == "current" and name not in skill_marks(project):
-            mark_skill(project, name, dst.read_text())
-        print(KEPT[state].format(name=name, dst=dst, project=project))
+        key = skill_mark_key(target, name)
+        legacy = target == "claude" and name in skill_marks(project)
+        if state == "current" and key not in skill_marks(project) and not legacy:
+            mark_skill(project, name, dst.read_text(), target)
+        print((f"  [{target}] " + KEPT[state].lstrip()).format(
+            name=name, dst=dst, project=project))
     # `--private` is for a shared repo where you are the only one running the
     # pipeline. It writes `.git/info/exclude`, which is per-clone and never
     # committed, so nothing about this tool reaches a teammate's diff. A team
@@ -146,18 +149,19 @@ def cmd_skills(args) -> None:
     project = proj(args)
     if args.force and not args.refresh:
         die("--force applies to --refresh only")
-    for name, dst, state in skill_status(project):
+    for target, name, dst, state in skill_status(project):
+        label = f"{target}/{name}"
         if args.refresh and state == "absent":
-            install_skill(project, name)
-            print(f"{name}: installed at {dst}")
+            install_skill(project, name, target)
+            print(f"{label}: installed at {dst}")
         elif args.refresh and state == "stale":
-            install_skill(project, name)
-            print(f"{name}: refreshed at {dst}")
+            install_skill(project, name, target)
+            print(f"{label}: refreshed at {dst}")
         elif args.refresh and args.force and state in ("customised", "unknown"):
-            install_skill(project, name)
-            print(f"{name}: overwritten at {dst}")
+            install_skill(project, name, target)
+            print(f"{label}: overwritten at {dst}")
         else:
-            print(f"{name}: {state} at {dst}"
+            print(f"{label}: {state} at {dst}"
                   + SKILLS_HINT[state].format(project=project))
 
 
@@ -532,10 +536,11 @@ def cmd_start(args) -> None:
     log = (logdir / "daemon.log").open("a")
     # start_new_session: the daemon outlives the terminal that started it,
     # which is the whole point of it existing.
-    subprocess.Popen([sys.executable, "-m", "pipeline.daemon.main",
-                      "--interval", str(args.interval),
-                      "--harness", args.harness,
-                      "-j", str(args.max_parallel)],
+    command = [sys.executable, "-m", "pipeline.daemon.main",
+               "--interval", str(args.interval), "-j", str(args.max_parallel)]
+    if args.harness is not None:
+        command += ["--harness", args.harness]
+    subprocess.Popen(command,
                      stdout=log, stderr=subprocess.STDOUT,
                      stdin=subprocess.DEVNULL, start_new_session=True)
     for _ in range(100):
@@ -766,9 +771,9 @@ def main() -> None:
     p = sub.add_parser("register"); p.add_argument("path", nargs="?", default="."); p.add_argument("--force", action="store_true", help="register without running the project's test commands"); p.set_defaults(fn=cmd_register)
     p = sub.add_parser("unregister"); p.add_argument("path", nargs="?", default="."); p.set_defaults(fn=cmd_unregister)
     p = sub.add_parser("projects"); p.set_defaults(fn=cmd_projects)
-    p = sub.add_parser("start", help="start the one daemon (interactive stages wait at `pipeline tui`)", description=START_DESC); p.add_argument("--interval", type=int, default=10); p.add_argument("--harness", default="claude-code"); p.add_argument("-j", "--max-parallel", type=int, default=3, help="agents in flight across every registered project"); p.set_defaults(fn=cmd_start)
+    p = sub.add_parser("start", help="start the one daemon (interactive stages wait at `pipeline tui`)", description=START_DESC); p.add_argument("--interval", type=int, default=10); p.add_argument("--harness", help="override every project's configured harness"); p.add_argument("-j", "--max-parallel", type=int, default=3, help="agents in flight across every registered project"); p.set_defaults(fn=cmd_start)
     p = sub.add_parser("stop"); p.set_defaults(fn=cmd_stop)
-    p = sub.add_parser("run", help="one project, no daemon, no socket (interactive stages run headless)", description=RUN_DESC); p.add_argument("--once", action="store_true"); p.add_argument("--interval", type=int, default=10); p.add_argument("--harness", default="claude-code"); p.add_argument("-j", "--max-parallel", type=int, default=3, help="agents in flight for this project"); p.set_defaults(fn=None)
+    p = sub.add_parser("run", help="one project, no daemon, no socket (interactive stages run headless)", description=RUN_DESC); p.add_argument("--once", action="store_true"); p.add_argument("--interval", type=int, default=10); p.add_argument("--harness", help="override this project's configured harness"); p.add_argument("-j", "--max-parallel", type=int, default=3, help="agents in flight for this project"); p.set_defaults(fn=None)
     p = sub.add_parser("metrics", help="six views over the event log")
     p.add_argument("--since", help="7d|24h|2w|<ISO date> (default: all history)")
     # SUPPRESS: a bare `pipeline metrics` must not clobber a `--project`

@@ -564,10 +564,7 @@ def test_init_honours_project_like_every_other_command():
 
 
 def test_init_installs_the_file_ticket_skill():
-    """CLAUDE.md calls `.claude/skills/file-ticket/SKILL.md` part of the
-    interface: it is what a session reads before filing a ticket into this
-    pipeline. `init` scaffolds `.project/` but never copies it, so a project
-    it creates has a queue and no description of the protocol."""
+    """Both supported clients need the protocol before filing a ticket."""
     d = Path(tempfile.mkdtemp())
     r = cli(d, "init")
     assert r.returncode == 0, r.stderr
@@ -576,6 +573,7 @@ def test_init_installs_the_file_ticket_skill():
         f"expected {skill} to exist after `pipeline init`, "
         f"found: {list(d.rglob('SKILL.md'))}"
     )
+    assert (d / ".agents" / "skills" / "file-ticket" / "SKILL.md").is_file()
     shutil.rmtree(d, ignore_errors=True)
 
 
@@ -587,10 +585,11 @@ def test_init_installs_every_packaged_skill():
     d = Path(tempfile.mkdtemp())
     r = cli(d, "init")
     assert r.returncode == 0, r.stderr
-    for src in SKILLS_DIR.iterdir():
-        skill = d / ".claude" / "skills" / src.name / "SKILL.md"
-        assert skill.is_file(), f"{src.name} not installed: {list(d.rglob('SKILL.md'))}"
-        assert skill.read_text() == (src / "SKILL.md").read_text(), src.name
+    for root in (d / ".claude" / "skills", d / ".agents" / "skills"):
+        for src in SKILLS_DIR.iterdir():
+            skill = root / src.name / "SKILL.md"
+            assert skill.is_file(), f"{src.name} not installed: {list(d.rglob('SKILL.md'))}"
+            assert skill.read_text() == (src / "SKILL.md").read_text(), src.name
     shutil.rmtree(d, ignore_errors=True)
 
 
@@ -652,8 +651,8 @@ def test_skills_refresh_updates_a_stale_copy_and_keeps_a_customised_one():
         SKILL_TEMPLATE.write_text(original + "\n<!-- upstream update -->\n")
         r = cli(d, "skills")
         assert r.returncode == 0, r.stderr
-        assert "file-ticket: stale" in r.stdout, r.stdout
-        assert "pipeline-config: customised" in r.stdout, r.stdout
+        assert "claude/file-ticket: stale" in r.stdout, r.stdout
+        assert "claude/pipeline-config: customised" in r.stdout, r.stdout
 
         r = cli(d, "skills", "--refresh")
         assert r.returncode == 0, r.stderr
@@ -663,7 +662,7 @@ def test_skills_refresh_updates_a_stale_copy_and_keeps_a_customised_one():
 
         r = cli(d, "skills")
         assert r.returncode == 0, r.stderr
-        assert "file-ticket: current" in r.stdout, r.stdout
+        assert "claude/file-ticket: current" in r.stdout, r.stdout
     finally:
         SKILL_TEMPLATE.write_text(original)
     shutil.rmtree(d, ignore_errors=True)
@@ -706,7 +705,8 @@ def test_skills_with_no_flags_never_installs_an_absent_copy():
 
     r = cli(d, "skills")
     assert r.returncode == 0, r.stderr
-    assert "file-ticket: absent" in r.stdout, r.stdout
+    assert "claude/file-ticket: absent" in r.stdout, r.stdout
+    assert "codex/file-ticket: absent" in r.stdout, r.stdout
     assert "installed" not in r.stdout, r.stdout
     assert not file_ticket.exists(), (
         "`pipeline skills` with no flags installed a copy into an empty project")

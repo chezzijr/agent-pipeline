@@ -5,6 +5,9 @@ description: File a ticket into this repo's pipeline (.project/tickets/). Use wh
 
 # Filing a ticket
 
+This skill is installed for both supported clients. Invoke `/file-ticket` in
+Claude Code or `$file-ticket` in Codex; the workflow below is identical.
+
 A ticket is a work order for an agent pipeline, not a bug report for a person. The
 dispatcher picks it up, a triage agent reproduces it, a planning agent plans it, and a
 gate refuses to let any of that proceed on a vague ticket.

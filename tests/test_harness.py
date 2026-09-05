@@ -46,11 +46,66 @@ def test_codex_maps_models_and_isolates_the_spawn():
         assert "--ignore-user-config" in cmd and "--ignore-rules" in cmd
         assert "--dangerously-bypass-hook-trust" in cmd
         assert "network_access=false" in cmd
+        assert "skills.include_instructions=false" in cmd
         assert 'projects."/proj/.worktrees/TICKET-001".trust_level="untrusted"' in cmd
         assert "hooks.PreToolUse=" in cmd
     finally:
         prompt.unlink()
         settings.unlink()
+
+
+def test_codex_stage_frontmatter_does_not_invent_a_dollar_cap():
+    assert config.stage_cap(config.stage_config("implementing"),
+                            config.harness("codex")) == 0
+
+
+def test_codex_binds_a_declared_skill_to_the_worktree_copy():
+    import shutil
+    tmp = Path(tempfile.mkdtemp())
+    skill = tmp / ".agents" / "skills" / "pipeline-config" / "SKILL.md"
+    skill.parent.mkdir(parents=True)
+    skill.write_text("---\nname: pipeline-config\ndescription: test\n---\n")
+    prompt = config.compose_prompt("review")
+    try:
+        cmd = config.render(
+            config.harness("codex"),
+            {"model": "sonnet", "skills": ["pipeline-config"]},
+            tid="TICKET-001", project=tmp, worktree=tmp,
+            ticket=tmp / "t.md", result_file=tmp / "t.result",
+            session="s", prompt=prompt)
+    finally:
+        prompt.unlink()
+        shutil.rmtree(tmp)
+    assert "skills.include_instructions=true" in cmd, cmd
+    assert "skills.bundled.enabled=false" in cmd, cmd
+    assert '"name"="pipeline-config","enabled"=false' in cmd, cmd
+    assert f'"path"="{skill.resolve()}","enabled"=true' in cmd, cmd
+
+
+def test_codex_refuses_a_branch_modified_stage_skill():
+    import shutil
+    project = Path(tempfile.mkdtemp())
+    worktree = Path(tempfile.mkdtemp())
+    for root, text in ((project, "trusted\n"), (worktree, "branch changed\n")):
+        skill = root / ".agents" / "skills" / "pipeline-config" / "SKILL.md"
+        skill.parent.mkdir(parents=True)
+        skill.write_text(text)
+    prompt = config.compose_prompt("review")
+    try:
+        try:
+            config.render(
+                config.harness("codex"),
+                {"model": "sonnet", "skills": ["pipeline-config"]},
+                tid="TICKET-001", project=project, worktree=worktree,
+                ticket=project / "t.md", result_file=project / "t.result",
+                session="s", prompt=prompt)
+            assert False, "a branch-authored stage skill reached Codex"
+        except PipelineError as e:
+            assert "differs from the trusted project copy" in str(e)
+    finally:
+        prompt.unlink()
+        shutil.rmtree(project)
+        shutil.rmtree(worktree)
 
 
 def test_codex_mcp_config_contains_only_declared_server_fields():
@@ -83,6 +138,22 @@ def test_codex_renders_inline_prompt_with_no_system_prompt_or_settings_flag():
     assert "codex exec" in cmd
     assert "Your stage: review" in cmd, "composed prompt was not folded into the positional prompt"
     assert "Work ticket TICKET-001" in cmd, "the work-ticket message must survive inline mode too"
+
+
+def test_codex_refuses_claude_only_project_stage_overrides():
+    import shutil
+    from helpers import project
+
+    d = project()
+    with open(d / ".project" / "pipeline.toml", "a") as f:
+        f.write('\n[stages.review]\ntools = "Read,Grep"\n')
+    try:
+        config.validate_stage_overrides(d, "review", config.harness("codex"))
+        assert False, "a Claude tool list would be passed as a Codex sandbox mode"
+    except PipelineError as e:
+        assert "tools" in str(e) and "selected harness" in str(e)
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
 
 
 def test_claude_code_render_is_unchanged_by_the_extraction():
@@ -517,6 +588,42 @@ def test_a_harness_edit_mid_run_reaches_the_daemon_loop_too():
     assert len(seen) == 2, f"expected two ticks, got {len(seen)}"
     assert seen[1].get("marker") == "TICKET-028", \
         "daemon spawned with a stale harness: the edit never reached tick 2"
+
+
+def test_the_daemon_uses_each_projects_configured_harness():
+    """One daemon watches every registered project, so a project default must
+    be resolved inside its loop rather than once above it."""
+    import shutil
+    import tempfile
+
+    from helpers import project
+    first, second = project(), project()
+    with open(first / ".project" / "pipeline.toml", "a") as f:
+        f.write('\nharness = "fake"\n')
+    with open(second / ".project" / "pipeline.toml", "a") as f:
+        f.write('\nharness = "codex"\n')
+    tmp = Path(tempfile.mkdtemp())
+    store = Store(tmp / "events.db")
+    server = Server(store, tmp / "daemon.sock")
+    seen, orig_tick = {}, supervisor.tick
+
+    def fake_tick(proj, hcfg, *a, **kw):
+        seen[str(proj)] = hcfg["cmd"]
+        return False
+
+    supervisor.tick = fake_tick
+    registry.register(first)
+    registry.register(second)
+    try:
+        supervisor.serve(0, None, 2, store, server, once=True)
+    finally:
+        supervisor.tick = orig_tick
+        registry.unregister(first)
+        registry.unregister(second)
+        shutil.rmtree(first, ignore_errors=True)
+        shutil.rmtree(second, ignore_errors=True)
+    assert seen[str(first)].startswith("sleep"), seen
+    assert seen[str(second)].startswith("codex exec"), seen
 
 
 def test_a_broken_harness_mid_run_keeps_the_last_good_config():
