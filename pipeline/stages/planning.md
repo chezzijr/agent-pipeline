@@ -88,6 +88,18 @@ Fill in these sections:
   A baseline clause is exempt, because the gate stops scanning a criterion at
   the `Measured ...` or `baseline ...` that opens the clause, so quote the
   total you measured there.
+  A command naming a direct shell (`sh`, `bash`, `dash`, `ksh`, `mksh`,
+  `zsh`), Python (`python`, `python3`, ...), or Node (`node`, `nodejs`)
+  invocation is checked with a STATIC comparison against its target's
+  suffix -- the gate never runs a criterion. Shell targets end `.sh`, `.bash`, `.ksh`, or
+  `.zsh`; Python targets end `.py` or `.pyw`; Node targets end `.js`,
+  `.mjs`, or `.cjs`. A target whose suffix belongs to a DIFFERENT one of
+  these families is rejected, e.g. `` `sh ./x.py` `` names a Python file for
+  a shell to run. A wrapper, an interpreter option before the target, an
+  inline (`-c`) or module (`-m`) invocation, or a target the gate cannot
+  parse or whose suffix it does not recognize is unclassified and falls
+  through to the plain command-outcome rule above instead of being
+  rejected.
 - `## Rollback` -- what to revert if this ships and breaks.
 
 Report the full list of files the plan will modify in your result's

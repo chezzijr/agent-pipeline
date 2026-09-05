@@ -546,3 +546,21 @@ def test_the_docs_name_the_decisions_command():
     skill = C.SKILL_TEMPLATE.read_text()
     assert "pipeline decisions" in skill, (
         f"{C.SKILL_TEMPLATE} does not name `pipeline decisions`")
+
+
+def test_planning_prompt_documents_static_interpreter_compatibility():
+    """TICKET-117: `planning` must know the gate now checks a command
+    criterion's interpreter against its target's suffix, or a plan keeps
+    writing criteria the gate rejects."""
+    text = (C.PKG / "stages" / "planning.md").read_text()
+    for family in ("sh", "bash", "ksh", "zsh", "python", "node", "nodejs"):
+        assert re.search(rf"\b{family}\b", text), f"planning.md omits `{family}`"
+    for suffix in (".sh", ".bash", ".ksh", ".zsh", ".py", ".pyw",
+                   ".js", ".mjs", ".cjs"):
+        assert suffix in text, f"planning.md omits `{suffix}`"
+    assert re.search(r"\bstatic\b", text, re.I), (
+        "planning.md does not say the check is static")
+    assert re.search(r"never (?:run|execut)", text, re.I), (
+        "planning.md does not say the gate never executes a criterion")
+    assert re.search(r"unclassified|cannot classify|ambiguous", text, re.I), (
+        "planning.md does not name the unknown-shape fallback")
