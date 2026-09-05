@@ -145,6 +145,12 @@ def test_finished_tickets_do_not_bury_live_ones():
         async with app.run_test() as pilot:
             got = labels(app)["alpha"]
             assert got[0].startswith("TICKET-060"), got[:3]
+
+            # Restoring history must not undo the active-queue ordering.
+            await pilot.press("f")
+            await pilot.pause()
+            got = labels(app)["alpha"]
+            assert got[0].startswith("TICKET-060"), got[:3]
             await pilot.press("q")
         assert app.return_code == 0
 

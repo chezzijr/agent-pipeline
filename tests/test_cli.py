@@ -488,6 +488,22 @@ def test_cli_new_then_ls():
     shutil.rmtree(d)
 
 
+def test_ls_hides_finished_tickets_by_default():
+    """Historical tickets must not bury a newly filed ticket in `ls`."""
+    d = Path(tempfile.mkdtemp())
+    cli(d, "new", "historical")
+    historical = Ticket.load(d / ".project/tickets/TICKET-001.md")
+    historical.stage = "done"
+    historical.save()
+    cli(d, "new", "active")
+
+    r = cli(d, "ls")
+    assert r.returncode == 0, r.stderr
+    assert "TICKET-002" in r.stdout, r.stdout
+    assert "TICKET-001" not in r.stdout, r.stdout
+    shutil.rmtree(d)
+
+
 def test_cli_new_records_a_declared_dependency():
     d = Path(tempfile.mkdtemp())
     cli(d, "new", "first", "--class", "bugfix")
