@@ -736,6 +736,19 @@ def test_a_criterion_naming_a_command_and_an_exit_status_is_accepted():
     shutil.rmtree(d)
 
 
+def test_a_command_criterion_with_a_wrong_interpreter_is_rejected():
+    """TICKET-117: command shape and an expected exit status do not prove
+    the named interpreter can execute its target.  `sh` parses this Python
+    test script and exits 2, yet the current syntax-only check accepts it.
+    """
+    d = project(FIXTURE.replace(
+        "- `test_broken` passes",
+        "- `sh ./pipeline/hooks/test_dangerous_commands.py` exits 0"))
+    ok, failures = gate(d, "TICKET-001")
+    assert not ok and any("names no test" in f for f in failures), failures
+    shutil.rmtree(d)
+
+
 def test_a_command_criterion_with_no_stated_result_is_still_caught():
     d = project(FIXTURE.replace(
         "- `test_broken` passes",
