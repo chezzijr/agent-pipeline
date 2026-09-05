@@ -26,6 +26,41 @@ def cli(project, *args, env=None):
                           cwd=ROOT, capture_output=True, text=True, env=env)
 
 
+def test_diagnostics_reports_runtime_harness_and_git_readiness():
+    """One preflight view must expose every condition needed before a stage.
+
+    The editable install once loaded a different checkout, while Git lacked
+    an author identity. Existing commands hid both facts until a write stage.
+    """
+    d, _ = git_project()
+    r = cli(d, "diagnostics")
+    assert r.returncode == 0, r.stderr
+    for label in ("package:", "executable:", "pipeline:", "harness:",
+                  "daemon:", "registration:", "git author:",
+                  "worktree commit:"):
+        assert label in r.stdout, r.stdout
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_register_refuses_a_checkout_without_a_git_author_identity():
+    """Registration must stop a project whose write stages cannot commit."""
+    d, sh = git_project()
+    sh("git config --unset user.name && git config --unset user.email")
+    (d / ".project" / "pipeline.toml").write_text(
+        'test_one = "false"\n'
+        'test_suite = "true"\n'
+        'test_suite_without_new = "true"\n'
+        'base = "main"\n')
+    home = Path(tempfile.mkdtemp())
+    r = cli(d, "register", str(d), env={"HOME": str(home),
+                                         "XDG_CONFIG_HOME": str(home),
+                                         "GIT_CONFIG_NOSYSTEM": "1"})
+    assert r.returncode != 0, r.stdout
+    assert "Git author identity" in r.stderr, r.stderr
+    shutil.rmtree(d, ignore_errors=True)
+    shutil.rmtree(home, ignore_errors=True)
+
+
 def test_resume_refuses_a_stage_that_does_not_exist():
     d = Path(tempfile.mkdtemp())
     cli(d, "new", "t")
