@@ -1063,3 +1063,10 @@ def test_the_daemon_answers_a_client_while_the_gate_runs_the_project_s_test():
         proc.terminate()
         proc.wait(10)
         registry.unregister(d)
+
+
+def test_cost_report_keeps_codex_token_usage_when_cost_is_unavailable():
+    rec = {"cost_usd": None, "usage": {"input_tokens": 438060,
+                                        "cached_input_tokens": 400384,
+                                        "output_tokens": 3719}}
+    assert supervisor.cost_report(rec) != ""
