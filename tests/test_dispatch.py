@@ -163,6 +163,27 @@ def test_a_control_field_rewritten_mid_run_is_caught():
     shutil.rmtree(d, ignore_errors=True)
 
 
+def test_a_frontmatterless_agent_ticket_is_recovered_from_the_spawn_snapshot():
+    """An agent can drop YAML entirely; the trusted spawn snapshot restores it."""
+    d = project()
+    path = d / ".project/tickets/TICKET-001.md"
+    snap = Ticket.load(path)
+    path.write_text("## Summary\n\nagent prose only\n")
+
+    log = d / ".project" / "logs" / "TICKET-001.log"
+    log.parent.mkdir(parents=True, exist_ok=True)
+    T.result_file(d, "TICKET-001").write_text("result: ok\nsummary: fine\n")
+    supervisor.finish(d, {"fh": log.open("w"), "prompt": d / "gone.md",
+                          "settings": None, "path": path, "tid": "TICKET-001",
+                          "stage": "plan-validation", "session": "s1", "log": log,
+                          "wt": d, "meta": snap, "before": None})
+
+    t = Ticket.load(path)
+    assert t.frontmatter() == snap.frontmatter()
+    assert t.summary() == "agent prose only"
+    shutil.rmtree(d, ignore_errors=True)
+
+
 def test_verifying_runs_as_a_tracked_child():
     """`verifying` used to run the suite inline, so a slow suite stalled the
     whole loop: nothing else advanced and no finished agent was reaped."""
