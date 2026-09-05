@@ -758,6 +758,65 @@ def test_a_command_criterion_with_no_stated_result_is_still_caught():
     shutil.rmtree(d)
 
 
+def test_command_criteria_validate_every_recognized_interpreter_family():
+    """TICKET-117: a command naming a known interpreter and a target whose
+    suffix is in that interpreter's OWN compatible set is accepted; a target
+    whose suffix belongs to a DIFFERENT known family is rejected."""
+    compatible = [
+        ("sh", "./script.sh"), ("bash", "./script.bash"),
+        ("dash", "./script.sh"), ("ksh", "./script.ksh"),
+        ("mksh", "./script.sh"), ("zsh", "./script.zsh"),
+        ("python", "./script.py"), ("python3", "./script.py"),
+        ("python3.11", "./script.pyw"),
+        ("node", "./script.js"), ("node", "./script.mjs"),
+        ("nodejs", "./script.cjs"),
+    ]
+    for exe, target in compatible:
+        d = project(FIXTURE.replace(
+            "- `test_broken` passes",
+            f"- `{exe} {target}` exits 0"))
+        ok, failures = gate(d, "TICKET-001")
+        assert ok, (exe, target, failures)
+        shutil.rmtree(d)
+
+    mismatches = [
+        ("sh", "./script.py"), ("python", "./script.sh"),
+        ("node", "./script.py"),
+    ]
+    for exe, target in mismatches:
+        d = project(FIXTURE.replace(
+            "- `test_broken` passes",
+            f"- `{exe} {target}` exits 0"))
+        ok, failures = gate(d, "TICKET-001")
+        assert not ok and any("names no test" in f for f in failures), (
+            exe, target, failures)
+        shutil.rmtree(d)
+
+
+def test_command_criteria_preserve_unclassified_commands():
+    """TICKET-117: a shape the classifier cannot confidently read -- a
+    wrapper, a pre-target interpreter option, a module/inline mode, an
+    unknown executable, an unknown target suffix, or a `shlex` parse
+    failure -- stays on the existing command-outcome rule instead of being
+    rejected."""
+    unclassified = [
+        "uv run ./script.py",
+        "python -u ./script.py",
+        "python -m mymodule",
+        "python --",
+        "rustc ./script.rs",
+        "sh ./script.txt",
+        "sh 'unterminated",
+    ]
+    for cmd in unclassified:
+        d = project(FIXTURE.replace(
+            "- `test_broken` passes",
+            f"- `{cmd}` exits 0"))
+        ok, failures = gate(d, "TICKET-001")
+        assert ok, (cmd, failures)
+        shutil.rmtree(d)
+
+
 def test_an_opinion_quoting_an_identifier_is_still_caught():
     d = project(FIXTURE.replace(
         "- `test_broken` passes",

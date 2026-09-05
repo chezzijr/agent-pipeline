@@ -1,5 +1,6 @@
 """Tier A gate -- deterministic, no LLM judgment anywhere in the path."""
 import re
+import shlex
 import shutil
 import tempfile
 from pathlib import Path
@@ -129,6 +130,78 @@ CRIT_OUTCOME_RE = re.compile(
     r"no output|exit (?:code|status))\b", re.I)
 CRIT_RULE = ("name a test, or name a command in backticks together with the "
              "output or exit status running it must produce")
+
+# TICKET-117: a command criterion can name a command shape and an exit status
+# without proving the named interpreter can execute its target -- `sh` parses
+# a Python script and exits, it just does not run it as Python. Validation
+# stays STATIC (no criterion is ever run): recognized executable maps to its
+# compatible target suffixes, and a target suffix that belongs to a
+# DIFFERENT known family is a mismatch. A suffix that belongs to no known
+# family, or a shape this cannot confidently read (a wrapper, a pre-target
+# option, an inline/module mode, a `shlex` failure, an unknown executable),
+# is unclassified and falls through to the existing command-outcome rule --
+# static validation must never reject what it cannot classify.
+SHELL_EXECS = frozenset({"sh", "bash", "dash", "ksh", "mksh", "zsh"})
+SHELL_SUFFIXES = frozenset({".sh", ".bash", ".ksh", ".zsh"})
+PYTHON_EXEC_RE = re.compile(r"^python\d*(?:\.\d+)*$")
+PYTHON_SUFFIXES = frozenset({".py", ".pyw"})
+NODE_EXECS = frozenset({"node", "nodejs"})
+NODE_SUFFIXES = frozenset({".js", ".mjs", ".cjs"})
+ALL_INTERPRETER_SUFFIXES = SHELL_SUFFIXES | PYTHON_SUFFIXES | NODE_SUFFIXES
+
+
+def _compatible_suffixes(exe: str) -> frozenset[str] | None:
+    """The compatible target suffixes for executable basename `exe`, or
+    `None` when `exe` names no recognized interpreter."""
+    if exe in SHELL_EXECS:
+        return SHELL_SUFFIXES
+    if PYTHON_EXEC_RE.match(exe):
+        return PYTHON_SUFFIXES
+    if exe in NODE_EXECS:
+        return NODE_SUFFIXES
+    return None
+
+
+def _script_target(argv: list[str]) -> str | None:
+    """The script path `argv[1]` names, or `argv[2]` after a lone `--`.
+
+    `None` for a wrapper with no second token, a pre-target option
+    (`argv[1]` starts with `-` and is not exactly `--`), or a lone `--` with
+    nothing after it -- an inline (`-c`) or module (`-m`) invocation shares
+    the leading-`-` shape and is deliberately caught here too."""
+    if len(argv) < 2:
+        return None
+    if argv[1] == "--":
+        return argv[2] if len(argv) > 2 else None
+    if argv[1].startswith("-"):
+        return None
+    return argv[1]
+
+
+def command_interpreter_mismatch(crit: str) -> bool:
+    """Does a backticked command in `crit` name a known interpreter given a
+    target whose suffix belongs to a DIFFERENT known interpreter family?
+
+    Never executes anything. Any span this cannot confidently read returns
+    False for that span, so one ambiguous span never masks another that
+    genuinely mismatches."""
+    for m in CRIT_CMD_RE.finditer(crit):
+        try:
+            argv = shlex.split(m.group(0)[1:-1])
+        except ValueError:
+            continue
+        if not argv:
+            continue
+        suffixes = _compatible_suffixes(Path(argv[0]).name)
+        if suffixes is None:
+            continue
+        target = _script_target(argv)
+        if target is None:
+            continue
+        suffix = Path(target).suffix.lower()
+        if suffix in ALL_INTERPRETER_SUFFIXES and suffix not in suffixes:
+            return True
+    return False
 
 # Each regex refuses one shape of token that cannot recur by construction --
 # not every value that merely looks unstable. No bare-integer (pid) rule:
@@ -918,6 +991,13 @@ def gate(project: Path, tid: str, workdir: Path | None = None) -> tuple[bool, li
                     "acceptance criterion pins an absolute count copied "
                     f"from `## Digest` ({', '.join(shared)}): {c} -- {CRIT_COUNT_RULE}")
     for c in crits:
+        # TICKET-117: a known interpreter/target mismatch is checked BEFORE
+        # both shortcuts below -- a mismatching command whose target filename
+        # merely looks test-shaped (e.g. `sh ./test_x.py`) must not bypass
+        # validation through the test-name shortcut.
+        if command_interpreter_mismatch(c):
+            findings.append(f"acceptance criterion names no test: {c} -- {CRIT_RULE}")
+            continue
         # a backticked token is not enough -- "`10ms`" is a metric, not a test.
         # `pytest` is named explicitly: `\btest` needs a word boundary before
         # `test`, and `py` is a word character, so "run `pytest -q`" -- the
