@@ -1153,6 +1153,60 @@ def test_a_merged_dispatcher_change_ends_the_daemon_loop_too():
     assert len(seen) == 1, f"expected serve() to exit after tick 1, got {len(seen)}"
 
 
+def test_a_source_change_exit_is_recorded_in_the_event_store():
+    """TICKET-121: `serve()` prints the stopped-for-upgrade reason only to the
+    daemon's own stdout/log. A client that reads the project through the
+    event store (as `pipeline status`/the TUI do) sees nothing explaining why
+    the daemon vanished. The exit must emit a store event carrying the
+    reason, so a client can tell 'stopped for an upgrade' from 'crashed'."""
+    import os
+    import tempfile
+
+    from pipeline.daemon import registry
+    from pipeline.daemon.server import Server
+
+    src = Path(supervisor.__file__)
+    before = src.stat().st_mtime
+    tmp = Path(tempfile.mkdtemp())
+    d = project()
+    store = Store(tmp / "events.db")
+    server = Server(store, tmp / "daemon.sock")
+    seen, orig_tick = [], supervisor.tick
+
+    class Stop(BaseException):
+        pass
+
+    def fake_tick(proj, hcfg, *a, **kw):
+        seen.append(len(seen))
+        if len(seen) == 1:
+            os.utime(src, (before + 10, before + 10))   # a merge lands
+        if len(seen) >= 3:
+            raise Stop("still running the code it imported at startup")
+        return False
+
+    supervisor.tick = fake_tick
+    registry.register(d)
+    cursor = store.cursor()
+    try:
+        supervisor.serve(0, "fake", 1, store, server, once=False)
+    except Stop as e:
+        raise AssertionError(
+            f"daemon source changed at tick 1, still looping at tick 3: {e}")
+    finally:
+        supervisor.tick = orig_tick
+        os.utime(src, (before, before))
+        registry.unregister(d)
+        shutil.rmtree(d, ignore_errors=True)
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    events = store.since(cursor)
+    stop_events = [e for e in events if e["kind"] == "daemon_stop"
+                   and e["data"].get("reason") == "source_changed"]
+    assert stop_events, (
+        f"expected a daemon_stop event with reason=source_changed, "
+        f"got kinds {[e['kind'] for e in events]}")
+
+
 def test_serve_rotates_which_project_ticks_first():
     """The share stops one project taking the whole cap, but whoever ticks
     first still gets first refusal on a slot that just freed. `serve()` must
