@@ -8,7 +8,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from helpers import ROOT, project
+from helpers import ROOT, git_project, project
 from pipeline.core.ticket import Ticket, stage_view
 
 
@@ -574,9 +574,108 @@ def test_init_registers_the_project_for_the_daemon():
     try:
         made = cli(d, "init", env={"XDG_CONFIG_HOME": str(config)})
         assert made.returncode == 0, made.stdout + made.stderr
+        assert f"registered {d}" in made.stdout, made.stdout
         watched = cli(d, "projects", env={"XDG_CONFIG_HOME": str(config)})
         assert str(d) in watched.stdout, (
             f"pipeline init left {d} unregistered:\n{watched.stdout}{watched.stderr}")
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+        shutil.rmtree(config, ignore_errors=True)
+
+
+def test_init_no_register_skips_daemon_registration():
+    """`--no-register` is for CI and other scaffold-only callers: it must not
+    write, and must not remove registration a project already has."""
+    d = Path(tempfile.mkdtemp()).resolve()
+    config = Path(tempfile.mkdtemp())
+    env = {"XDG_CONFIG_HOME": str(config)}
+    try:
+        made = cli(d, "init", "--no-register", env=env)
+        assert made.returncode == 0, made.stdout + made.stderr
+        assert "skipped registration (--no-register)" in made.stdout, made.stdout
+        watched = cli(d, "projects", env=env)
+        assert str(d) not in watched.stdout, watched.stdout
+
+        reg = cli(d, "register", "--force", str(d), env=env)
+        assert reg.returncode == 0, reg.stdout + reg.stderr
+        watched = cli(d, "projects", env=env)
+        assert str(d) in watched.stdout, watched.stdout
+
+        again = cli(d, "init", "--no-register", env=env)
+        assert again.returncode == 0, again.stdout + again.stderr
+        watched = cli(d, "projects", env=env)
+        assert str(d) in watched.stdout, (
+            f"--no-register removed an existing registration:\n{watched.stdout}")
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+        shutil.rmtree(config, ignore_errors=True)
+
+
+def test_init_in_a_worktree_warns_instead_of_dying():
+    """`registry.register()` refuses a linked git worktree (DEC-072). `init`
+    has already scaffolded and printed success by the time it calls
+    register(), so the refusal must print as a warning, not `die()`."""
+    d, sh = git_project()
+    r = sh("git add -A .project && git commit -qm 'add .project'")
+    assert r.returncode == 0, r.stderr
+    # not named `.worktrees/...` -- that would make the path itself contain
+    # "worktree" and pass the assertion below for the wrong reason
+    wt = d / "linked" / "TICKET-001"
+    r = sh(f"git worktree add -b ticket/001 {wt} main")
+    assert r.returncode == 0, r.stderr
+    config = Path(tempfile.mkdtemp())
+    env = {"XDG_CONFIG_HOME": str(config)}
+    try:
+        made = cli(wt, "init", env=env)
+        assert made.returncode == 0, made.stdout + made.stderr
+        assert "is a git worktree, not a project" in made.stdout, made.stdout
+        watched = cli(wt, "projects", env=env)
+        assert str(wt) not in watched.stdout, watched.stdout
+    finally:
+        shutil.rmtree(config, ignore_errors=True)
+
+
+def test_new_warns_when_project_is_not_registered():
+    """`new` must still create the ticket while warning that `pipeline start`
+    cannot discover an unregistered project, naming both recovery commands."""
+    d = Path(tempfile.mkdtemp()).resolve()
+    config = Path(tempfile.mkdtemp())
+    env = {"XDG_CONFIG_HOME": str(config)}
+    try:
+        cli(d, "init", "--no-register", env=env)
+        r = cli(d, "new", "t", env=env)
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert (d / ".project" / "tickets" / "TICKET-001.md").is_file(), r.stdout
+        assert "not registered" in r.stdout, r.stdout
+        assert "pipeline start" in r.stdout, r.stdout
+        assert "pipeline register" in r.stdout, r.stdout
+        assert "pipeline run" in r.stdout, r.stdout
+
+        reg = cli(d, "register", "--force", str(d), env=env)
+        assert reg.returncode == 0, reg.stdout + reg.stderr
+        r2 = cli(d, "new", "t2", env=env)
+        assert r2.returncode == 0, r2.stdout + r2.stderr
+        assert "not registered" not in r2.stdout, r2.stdout
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+        shutil.rmtree(config, ignore_errors=True)
+
+
+def test_read_only_commands_do_not_register_a_project():
+    """`ls`, `status`, `logs`, and `metrics` must never enlist a project."""
+    d = Path(tempfile.mkdtemp()).resolve()
+    config = Path(tempfile.mkdtemp())
+    env = {"XDG_CONFIG_HOME": str(config)}
+    try:
+        cli(d, "init", "--no-register", env=env)
+        cli(d, "new", "t", env=env)
+        cli(d, "ls", env=env)
+        cli(d, "status", env=env)
+        cli(d, "logs", "TICKET-001", env=env)
+        cli(d, "metrics", env=env)
+        watched = cli(d, "projects", env=env)
+        assert str(d) not in watched.stdout, (
+            f"a read-only command registered {d}:\n{watched.stdout}")
     finally:
         shutil.rmtree(d, ignore_errors=True)
         shutil.rmtree(config, ignore_errors=True)

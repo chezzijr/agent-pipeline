@@ -55,6 +55,23 @@ def cmd_init(args) -> None:
     if not cfg.exists():
         cfg.write_text(CONFIG_TEMPLATE.read_text())
     print(f"initialised {project / '.project'} -- edit {cfg} for this project's commands")
+    # Registered by default so `pipeline start` discovers a freshly scaffolded
+    # project with no second command. No test-command probe here (unlike
+    # `cmd_register()`): setup writes an unedited template, so there is
+    # nothing yet to validate -- explicit `pipeline register` remains the
+    # validated path once the project's commands are real. `--no-register` is
+    # for CI and other scaffold-only callers; it only skips the new write and
+    # must never remove a registration the project already has.
+    if getattr(args, "no_register", False):
+        print("skipped registration (--no-register)")
+    else:
+        try:
+            print(f"registered {registry.register(project)}")
+        except PipelineError as e:
+            # the scaffold above is already complete and correct; failing to
+            # enlist the project is not a reason to fail `init` (worktree or
+            # PIPELINE_STAGE refusals from registry.check(), DEC-072)
+            print(f"  not registered: {e}")
     # Every packaged skill, not a named one: a skill added to
     # `pipeline/templates/skills/` should reach the projects `init` scaffolds
     # without a second edit here. Each is kept if the project customised it,
@@ -116,6 +133,12 @@ def cmd_new(args) -> None:
            .replace("{{branch}}", f"ticket/{n:03d}").replace("{{title}}", args.title)
            .replace("{{depends_on}}", "[" + ", ".join(deps) + "]"))
     print(d / f"{tid}.md")
+    # `new` writes the ticket regardless -- an unregistered project is a
+    # discovery gap, not a reason to refuse filing one
+    if project not in registry.projects():
+        print(f"warning: {project} is not registered -- `pipeline start` "
+              f"cannot discover it. Run `pipeline register {project}`, or "
+              f"run the project-local `pipeline run` from inside {project}.")
 
 
 def cmd_gate(args) -> None:
@@ -749,7 +772,7 @@ def main() -> None:
                     "the target for everything else (default: cwd)")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
-    p = sub.add_parser("init"); p.add_argument("dir", nargs="?", default=None); p.add_argument("--private", action="store_true", help="hide .project/ from git in this clone only (.git/info/exclude)"); p.set_defaults(fn=cmd_init)
+    p = sub.add_parser("init"); p.add_argument("dir", nargs="?", default=None); p.add_argument("--private", action="store_true", help="hide .project/ from git in this clone only (.git/info/exclude)"); p.add_argument("--no-register", dest="no_register", action="store_true", help="scaffold only -- skip registering this project with the daemon (for CI or other scaffold-only callers)"); p.set_defaults(fn=cmd_init)
     p = sub.add_parser("new"); p.add_argument("title"); p.add_argument("--class", dest="cls", default="bugfix")
     p.add_argument("--depends-on", dest="depends_on", default="",
                     help="comma-separated ticket ids that must reach `done` before this one is claimed")
