@@ -26,7 +26,12 @@ mcp_flag = "-c {mcp}"
 # Read-only stages still have to update the ticket and sidecar. The guard's
 # shell allowlist plus the dispatcher's tree snapshot enforce their contract.
 readonly_tools = "workspace-write"
-write_tools = "workspace-write"
+# A linked worktree's index and branch refs live under the main checkout's
+# `.git`, outside Codex's workspace-write root. Write stages must commit tests
+# and implementation, so they use the same hook-enforced boundary as Claude's
+# bypassPermissions mode. Giving workspace-write the whole `.git` directory
+# instead would expose raw repository metadata while pretending it was narrow.
+write_tools = "danger-full-access"
 max_usd = 0
 supports_usd_cap = false
 

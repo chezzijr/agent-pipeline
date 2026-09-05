@@ -28,7 +28,7 @@ def test_the_guard_is_per_harness_not_global():
     assert config.harness("codex")["supports_hooks"] is True
 
 
-def test_codex_maps_models_and_isolates_the_spawn():
+def test_codex_maps_models_and_isolates_a_readonly_spawn():
     hcfg = config.harness("codex")
     settings = config.stage_settings("review", config.stage_config("review"), hcfg)
     prompt = config.compose_prompt("review")
@@ -48,6 +48,28 @@ def test_codex_maps_models_and_isolates_the_spawn():
         assert "network_access=false" in cmd
         assert "skills.include_instructions=false" in cmd
         assert 'projects."/proj/.worktrees/TICKET-001".trust_level="untrusted"' in cmd
+        assert "hooks.PreToolUse=" in cmd
+    finally:
+        prompt.unlink()
+        settings.unlink()
+
+
+def test_codex_write_stages_can_commit_in_a_linked_worktree():
+    """`workspace-write` cannot create the index lock because linked-worktree
+    Git metadata lives under the main checkout, outside the worktree root."""
+    hcfg = config.harness("codex")
+    stage = config.stage_config("triage")
+    settings = config.stage_settings("triage", stage, hcfg)
+    prompt = config.compose_prompt("triage")
+    try:
+        cmd = config.render(
+            hcfg, stage, tid="TICKET-001", project=Path("/proj"),
+            worktree=Path("/proj/.worktrees/TICKET-001"),
+            ticket=Path("/proj/.project/tickets/TICKET-001.md"),
+            result_file=Path("/proj/.project/tickets/TICKET-001.result"),
+            session="dispatcher-session", prompt=prompt, settings=settings)
+        assert "--sandbox danger-full-access" in cmd
+        assert "--dangerously-bypass-hook-trust" in cmd
         assert "hooks.PreToolUse=" in cmd
     finally:
         prompt.unlink()

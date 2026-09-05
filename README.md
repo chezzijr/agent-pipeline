@@ -661,9 +661,13 @@ Codex projects together from their individual config files.
 
 Logical stage models map `opus` to `gpt-5.6-sol` and `sonnet` to
 `gpt-5.6-terra`; an explicit Codex model slug passes through. Stage effort maps
-to `model_reasoning_effort`. Codex runs in `workspace-write` even for read-only
-stages because every stage must update its ticket and result sidecar; the
-read-only command allowlist and dispatcher snapshot retain their existing roles.
+to `model_reasoning_effort`. Codex read-only stages run in `workspace-write`
+because they still update the ticket and result sidecar. Write stages run in
+`danger-full-access`: a linked worktree keeps its index and branch refs under
+the main checkout's `.git`, outside the workspace root, and triage and
+implementing must commit. The blocking hook is their write boundary, matching
+Claude's `bypassPermissions` model; the read-only command allowlist and
+dispatcher snapshots retain their existing roles.
 
 The harness TOML format carries two adapter choices:
 

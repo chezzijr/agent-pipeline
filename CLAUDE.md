@@ -389,6 +389,14 @@ still worth it: it prints one line per case, and the failure names the case.
   checkout's trusted copies; Codex needs `skills.include_instructions=true` for
   `$name` to resolve at all. This was checked with `codex debug prompt-input`
   0.153.4, which listed only the selected skill.
+- **A Codex write stage cannot use `workspace-write`.** A linked worktree's
+  index and ticket-branch ref live in the main checkout's `.git/worktrees/`
+  and `.git/refs/`, outside the worktree sandbox, so `git commit` fails creating
+  `index.lock`. `codex.toml` uses `danger-full-access` for write stages and the
+  blocking pipeline hook as the boundary, matching Claude's
+  `bypassPermissions`; read-only stages retain `workspace-write`. Replacing
+  this with `--add-dir <project>/.git` is not safer: it grants arbitrary writes
+  to all repository metadata while making the sandbox look narrower.
 
 ## Conventions
 
