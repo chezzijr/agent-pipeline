@@ -858,6 +858,29 @@ def test_gate_passes_a_failure_that_matches_the_reported_one():
     shutil.rmtree(d)
 
 
+def test_gate_rejects_an_unreachable_call_to_a_nonexistent_api():
+    """TICKET-118: a red reproduction can hide a later invalid assertion.
+
+    The runner reports the intended pre-fix failure, so Tier A passes today.
+    A static validity check must still reject `Ticket.summary()`: `Ticket`
+    declares no such method, and the call becomes the unrelated failure once
+    the target error is removed.
+    """
+    d = project()
+    (d / "test_thing.py").write_text(
+        "from pipeline.core.ticket import Ticket\n\n"
+        "def test_broken():\n"
+        "    raise RuntimeError('no frontmatter')\n"
+        "    Ticket.summary()\n")
+    (d / ".project" / "pipeline.toml").write_text(
+        'test_one = "echo test_broken: RuntimeError: no frontmatter; exit 1"\n'
+        'test_suite = "true"\ntest_suite_without_new = "true"\n')
+    ok, failures = gate(d, "TICKET-001")
+    assert not ok, failures
+    assert any("Ticket.summary" in f and "does not exist" in f for f in failures), failures
+    shutil.rmtree(d)
+
+
 def test_expect_naming_a_temp_path_is_refused_as_unmatchable():
     """An `expect:` copied verbatim from triage's own run can carry a fresh
     `mkdtemp` path. That path cannot recur in any later run, so an expect
