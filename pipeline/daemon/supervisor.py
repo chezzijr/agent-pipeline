@@ -1209,7 +1209,15 @@ def _finish(project: Path, rec: dict, emit=noop) -> str:
     session, log, wt = rec["session"], rec["log"], rec["wt"]
 
     res = read_result(project, tid, keep=True)
-    agent = Ticket.load(path)
+    try:
+        agent = Ticket.load(path)
+    except PipelineError:
+        agent_body = path.read_text()
+        if agent_body.startswith("---\n"):
+            raise
+        agent = None
+    else:
+        agent_body = agent.body
 
     # The agent had write access to this file. Its prose sections are its own;
     # its frontmatter is not. Every field is restored from the snapshot taken
@@ -1217,9 +1225,10 @@ def _finish(project: Path, rec: dict, emit=noop) -> str:
     # dispatcher rather than requested in a prompt.
     snap = rec["meta"]
     owned = snap.frontmatter()
-    tampered = {k: v for k, v in agent.frontmatter().items()
-                if k in CONTROL_FIELDS and v != owned.get(k)}
-    t = replace(snap, body=agent.body)
+    tampered = ({k: v for k, v in agent.frontmatter().items()
+                 if k in CONTROL_FIELDS and v != owned.get(k)}
+                if agent is not None else {})
+    t = replace(snap, body=agent_body)
 
     replay_session = rec.get("agent_session") or (
         session if rec.get("session_bound", True) else None)

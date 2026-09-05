@@ -10,6 +10,7 @@ from pathlib import Path
 from helpers import FIXTURE, git_project, project
 from pipeline.cli import metrics
 from pipeline.daemon.store import Store
+from pipeline.core import PipelineError
 from pipeline.core import ticket as T
 from pipeline.core import config
 from pipeline.core import machine as M
@@ -179,8 +180,31 @@ def test_a_frontmatterless_agent_ticket_is_recovered_from_the_spawn_snapshot():
                           "wt": d, "meta": snap, "before": None})
 
     t = Ticket.load(path)
-    assert t.frontmatter() == snap.frontmatter()
-    assert t.summary() == "agent prose only"
+    for key in ("id", "class", "branch", "test_file", "files_declared"):
+        assert t.frontmatter()[key] == snap.frontmatter()[key]
+    assert t.section("Summary").strip() == "agent prose only"
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_a_malformed_frontmatter_envelope_is_not_recovered_as_prose():
+    """A delimiter-bearing malformed envelope remains a parsing failure."""
+    d = project()
+    path = d / ".project/tickets/TICKET-001.md"
+    snap = Ticket.load(path)
+    path.write_text("---\n[malformed\n---\n## Summary\n\nagent prose\n")
+
+    log = d / ".project" / "logs" / "TICKET-001.log"
+    log.parent.mkdir(parents=True, exist_ok=True)
+    T.result_file(d, "TICKET-001").write_text("result: ok\nsummary: fine\n")
+    try:
+        supervisor.finish(d, {"fh": log.open("w"), "prompt": d / "gone.md",
+                              "settings": None, "path": path, "tid": "TICKET-001",
+                              "stage": "plan-validation", "session": "s1", "log": log,
+                              "wt": d, "meta": snap, "before": None})
+    except PipelineError as e:
+        assert "while parsing a flow sequence" in str(e), str(e)
+    else:
+        raise AssertionError("malformed frontmatter was recovered as prose")
     shutil.rmtree(d, ignore_errors=True)
 
 
