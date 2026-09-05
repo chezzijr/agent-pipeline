@@ -563,6 +563,25 @@ def test_init_honours_project_like_every_other_command():
     shutil.rmtree(d, ignore_errors=True)
 
 
+def test_init_registers_the_project_for_the_daemon():
+    """A project set up by `init` must appear in the daemon's registry.
+
+    `cmd_init()` creates `.project/` but never calls `registry.register()`, so
+    a later `pipeline start` watches no newly set-up project.
+    """
+    d = Path(tempfile.mkdtemp()).resolve()
+    config = Path(tempfile.mkdtemp())
+    try:
+        made = cli(d, "init", env={"XDG_CONFIG_HOME": str(config)})
+        assert made.returncode == 0, made.stdout + made.stderr
+        watched = cli(d, "projects", env={"XDG_CONFIG_HOME": str(config)})
+        assert str(d) in watched.stdout, (
+            f"pipeline init left {d} unregistered:\n{watched.stdout}{watched.stderr}")
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+        shutil.rmtree(config, ignore_errors=True)
+
+
 def test_init_installs_the_file_ticket_skill():
     """Both supported clients need the protocol before filing a ticket."""
     d = Path(tempfile.mkdtemp())
