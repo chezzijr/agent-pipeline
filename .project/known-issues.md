@@ -172,7 +172,7 @@ reset, and that is fine. Logs have no equivalent story.
 Expected: a retention policy the dispatcher applies — age or total size — and a decision
 recorded about whether a landed ticket's logs are evidence worth keeping.
 
-## 2. `init` does not register, and `new` does not warn
+## 2. `init` does not register, and `new` does not warn (fixed by TICKET-114)
 
 Reproduced end to end:
 

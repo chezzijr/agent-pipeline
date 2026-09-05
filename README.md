@@ -61,8 +61,9 @@ rather than per-project (`TICKET-035`).
 ```sh
 uv tool install .                             # `pipeline` and `pipelined` on PATH
 
-pipeline init ~/code/myproject                # scaffold .project/
+pipeline init ~/code/myproject                # scaffold .project/, and register it with the daemon
 pipeline init ~/code/myproject --private      # ...and hide it from git, this clone only
+pipeline init ~/code/myproject --no-register  # scaffold only -- for CI or other scaffold-only callers
 $EDITOR ~/code/myproject/.project/pipeline.toml   # how to run this project's tests
 pipeline --project ~/code/myproject new "cache leaks on evict"
 pipeline --project ~/code/myproject run       # dispatcher loop, no daemon; interactive stages run headless
@@ -105,6 +106,19 @@ on disk is read as-is. Under `--private`, which never commits it, the file is
 pinned outside the repo on first read instead, and `pipeline config --sync` is
 the only way to adopt a later edit.
 
+`init` registers the project with the daemon by default, the same way `pipeline
+register` does but without probing its test commands -- setup has just written
+an unedited template, so there is nothing yet to validate. `--no-register`
+skips that write; it never removes a registration the project already has.
+`pipeline register` remains the validated path once the project's test
+commands are real, and the one to use for a project `init` could not register
+(a git worktree, or under `PIPELINE_STAGE`) -- `init` prints that reason as a
+warning rather than failing, since the scaffold above it already succeeded.
+
+`pipeline new` still files a ticket for a project the registry does not know
+about, but warns that `pipeline start` cannot discover it and names both
+`pipeline register <path>` and the project-local `pipeline run` as remedies.
+
 Without installing it, `uv run python -m pipeline …` runs the same CLI.
 
 `run --once` drains the queue and exits -- what you want while you are still
@@ -144,6 +158,10 @@ private decision set and re-argue each other's conclusions.
 `pipelined` is **one process for many projects**, not one per project. It keeps
 working after you close the terminal, and it records what happened to an event
 database under your state directory (see *Where it keeps things*).
+
+`pipeline init` already registers a new project (unless run with
+`--no-register`); `pipeline register` is for a project `init` scaffolded
+without registering, or one whose commands changed since.
 
 ```sh
 pipeline register ~/code/myproject   # runs its test_suite and probes test_one first

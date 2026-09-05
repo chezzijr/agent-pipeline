@@ -92,7 +92,9 @@ cd <the repo root>
 pipeline new "cache leaks on evict" --class bugfix
 ```
 
-That prints the path. Then rewrite `## Summary` — the template puts the bare title
+That prints the path. If the repo is not registered with the daemon, it also
+prints a warning that `pipeline start` cannot discover it -- the ticket is
+still filed; see *Not registered* below for the fix. Then rewrite `## Summary` — the template puts the bare title
 there, which is not enough for an agent starting cold with no other context.
 
 A good summary is three short paragraphs:
@@ -163,7 +165,10 @@ pipeline projects                # is this repo registered
 `pipeline status` **exits 1 when no daemon is running** — that is its answer, not a
 failure. Read the line it prints, not the exit code.
 
-- Not registered → `pipeline register .` from the repo root. It runs this
+- Not registered → `pipeline init` registers a project by default, so this
+  usually means it was scaffolded with `--no-register`, in a git worktree, or
+  under `PIPELINE_STAGE` (init prints the reason as a warning in that case).
+  Fix it with `pipeline register .` from the repo root. It runs this
   project's `test_suite` once and probes `test_one` with a selector that
   matches nothing, then refuses when the suite cannot run at all or when
   `test_one` exits 0 on that probe; fix `.project/pipeline.toml` (the
