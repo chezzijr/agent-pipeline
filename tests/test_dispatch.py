@@ -1946,6 +1946,20 @@ def test_a_load_flaky_test_escalates_instead_of_charging_planning():
         "revalidating") == "fail"
 
 
+def test_an_invalid_test_escalates_instead_of_charging_planning():
+    from pipeline.core.gate import INVALID_TEST_MARK, invalid_test
+
+    assert invalid_test([INVALID_TEST_MARK + "x hides unreachable code"]) is True
+    assert invalid_test(
+        ["`t.py::x` exited 0 -- it must fail before implementation"]) is False
+    assert invalid_test([]) is False
+
+    assert supervisor.gate_result(
+        False, [INVALID_TEST_MARK + "x"], "plan-validation") == "invalid-test"
+    assert supervisor.gate_result(
+        False, [INVALID_TEST_MARK + "x"], "revalidating") == "fail"
+
+
 def test_a_tier_b_rejection_charges_the_plan_not_the_structural_counter():
     """Tier B judges the plan's content and has no structural half, so its
     `fail` is a bad plan by definition: `_finish()` remaps it to `bad-plan`
