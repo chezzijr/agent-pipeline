@@ -43,7 +43,9 @@ def test_diagnostics_reports_runtime_harness_and_git_readiness():
 
 
 def test_register_refuses_a_checkout_without_a_git_author_identity():
-    """Registration must stop a project whose write stages cannot commit."""
+    """Registration must stop a project whose write stages cannot commit,
+    and `--force` must not be a way around it -- `--force` skips only the
+    test-command probes, never this one."""
     d, sh = git_project()
     sh("git config --unset user.name && git config --unset user.email")
     (d / ".project" / "pipeline.toml").write_text(
@@ -52,11 +54,18 @@ def test_register_refuses_a_checkout_without_a_git_author_identity():
         'test_suite_without_new = "true"\n'
         'base = "main"\n')
     home = Path(tempfile.mkdtemp())
-    r = cli(d, "register", str(d), env={"HOME": str(home),
-                                         "XDG_CONFIG_HOME": str(home),
-                                         "GIT_CONFIG_NOSYSTEM": "1"})
+    env = {"HOME": str(home), "XDG_CONFIG_HOME": str(home),
+           "GIT_CONFIG_NOSYSTEM": "1"}
+    r = cli(d, "register", str(d), env=env)
     assert r.returncode != 0, r.stdout
     assert "Git author identity" in r.stderr, r.stderr
+
+    r = cli(d, "register", "--force", str(d), env=env)
+    assert r.returncode != 0, r.stdout
+    assert "Git author identity" in r.stderr, r.stderr
+
+    registered = Path(home) / "pipeline" / "projects"
+    assert not registered.is_file() or str(d) not in registered.read_text()
     shutil.rmtree(d, ignore_errors=True)
     shutil.rmtree(home, ignore_errors=True)
 
@@ -1096,6 +1105,8 @@ def test_init_private_and_register_both_name_the_pin():
     """Both commands print the sync command on a `--private` project."""
     d = Path(tempfile.mkdtemp())
     subprocess.run("git init -qb main", shell=True, cwd=d)
+    subprocess.run("git config user.email t@t && git config user.name t",
+                   shell=True, cwd=d)
     assert "config --sync" in cli(d, "init", "--private").stdout
     assert "pinned" in cli(d, "register", "--force", str(d)).stdout
     shutil.rmtree(d, ignore_errors=True)

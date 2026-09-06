@@ -500,6 +500,19 @@ def cmd_register(args) -> None:
     # refusals, and a stage running `pipeline register .` must get that
     # error rather than a run of the project's suite
     path = registry.check(Path(args.path))
+    # every write stage commits in its worktree, so a checkout with no Git
+    # author identity would die at the commit, not here -- --force never
+    # skips this, it only skips the test-command probes below (DEC-068: the
+    # refusal lives in cmd_register(), not in registry.check()/register())
+    if registry.is_git_checkout(path) and not registry.git_author_ready(path):
+        name, email = registry.git_author(path)
+        missing = [k for k, v in (("user.name", name), ("user.email", email)) if not v]
+        raise PipelineError(
+            f"{path}: no Git author identity ({', '.join(missing) or 'unset'}) -- "
+            f"every write stage commits in its worktree, so every ticket "
+            f"would die at the commit; run `git -C {path} config user.name "
+            f"<you>` and `git -C {path} config user.email <you@example.com>`. "
+            f"--force does not skip this check.")
     if args.force:
         print("--force: registering without checking this project's test commands")
     else:
