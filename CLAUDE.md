@@ -360,9 +360,12 @@ still worth it: it prints one line per case, and the failure names the case.
 - **A run's cost and tokens are reported once, in its session thread entry.**
   `terminal_sink()` keeps `total_cost_usd` and `usage` off the same `result`
   event it already reads `terminal_reason` from, and `cost_report()` renders
-  the two lines `_finish()` appends next to the replay command. An
-  interactive stage emits no `result` event, so it gets neither line; its
-  tokens reach the event log through `usage_events()` instead.
+  the two lines `_finish()` appends next to the replay command. The two lines
+  are independent: a Codex `turn.completed` has tokens and no dollar amount,
+  so the cost reads `unknown` and the tokens still show (TICKET-120). An
+  interactive stage emits no `result` event at all, so its `usage` stays
+  empty and it gets neither line; its tokens reach the event log through
+  `usage_events()` instead.
 - **`test_file` holds one test or a list.** `test_one` runs once per listed
   test, so the name-in-output check stays meaningful for each; only
   `test_suite_without_new` runs once for all of them, and `{test:--deselect }`

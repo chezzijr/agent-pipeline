@@ -496,7 +496,8 @@ the same log file -- otherwise both of those stop working.
 
 The cost is that run's own `total_cost_usd` from the harness's `result` event;
 the ticket's `## Thread` session entry carries the same number plus the run's
-token counts.
+token counts. A harness that reports no cost -- Codex -- gets `cost: unknown`
+in that entry and its token counts all the same.
 
 ## When a ticket escalates
 
