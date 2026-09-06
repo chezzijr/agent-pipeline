@@ -1345,6 +1345,44 @@ def test_a_stale_dispatcher_reaps_its_children_before_it_exits():
         f"a stale loop must stop claiming tickets: stopping() was {flags}"
 
 
+def test_source_change_drain_completes_with_a_stuck_inflight_stage():
+    """`run()`'s drain only ends when `moved and not inflight`, and `reap()`
+    only pops a record when its child has exited. A stage whose child never
+    exits blocks the drain forever instead of letting the loop restart."""
+    import os
+    import types
+
+    src = Path(supervisor.__file__)
+    before = src.stat().st_mtime
+    d = project()
+    seen, orig_tick = [], supervisor.tick
+    stuck = types.SimpleNamespace(poll=lambda: None, terminate=lambda: None,
+                                  wait=lambda timeout=None: None, kill=lambda: None)
+
+    class Stop(BaseException):     # run() catches Exception around tick()
+        pass
+
+    def fake_tick(proj, hcfg, inflight, *a, **kw):
+        seen.append(len(seen))
+        if len(seen) == 1:
+            inflight["STUCK"] = {"proc": stuck, "stage": "implementing"}
+            os.utime(src, (before + 10, before + 10))   # a merge lands
+        if len(seen) >= 5:
+            raise Stop("an inflight stage that never exits blocks the drain forever")
+        return False
+
+    supervisor.tick = fake_tick
+    try:
+        supervisor.run(d, once=False, interval=0, harness_name="fake")
+    except Stop as e:
+        raise AssertionError(
+            f"source-change drain never completed with a stuck inflight stage: {e}")
+    finally:
+        supervisor.tick = orig_tick
+        os.utime(src, (before, before))
+        shutil.rmtree(d, ignore_errors=True)
+
+
 def test_run_does_not_swallow_a_loop_detector_that_subclasses_baseexception():
     """TICKET-086: `run()` catches `Exception` around `tick()`, so a test
     that detects a runaway loop by raising from a fake `tick()` must raise
