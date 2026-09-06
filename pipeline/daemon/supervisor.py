@@ -1372,38 +1372,52 @@ def reap(project: Path, inflight: dict, emit=noop) -> bool:
     return bool(done)
 
 
+def stop_child(tid: str, rec: dict, note: str | None = None) -> None:
+    """Terminate one child and release its lease. This is `shut_down()`'s
+    per-record body, extracted so a source-change drain reaps an expired child
+    through the same path -- a second copy of it is how one of the two callers
+    later forgets to release a lease.
+
+    Total on a partial record: a failed spawn can leave one with no `proc`, no
+    `stage` and no `path`, and raising here would take `run()`'s `finally` down
+    and strand every OTHER ticket's lease for 30 minutes.
+    """
+    proc = rec.get("proc")
+    if proc is not None and proc.poll() is None:
+        proc.terminate()
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            try:
+                proc.wait(timeout=5)   # a PtyProc is reaped here or never
+            except subprocess.TimeoutExpired:
+                pass
+    close_child(rec)
+    if rec.get("prompt"):
+        rec["prompt"].unlink(missing_ok=True)
+    if rec.get("settings"):
+        rec["settings"].unlink(missing_ok=True)
+    if rec.get("mcp"):
+        rec["mcp"].unlink(missing_ok=True)
+    stage = rec.get("stage", "?")
+    try:
+        t = Ticket.load(rec["path"])
+        t.release_lease()
+        t.append(stage, "note",
+                 note or f"`{stage}` was interrupted; lease released")
+        t.save()
+    except Exception:
+        pass
+    print(f"  stopped {tid} ({stage})")
+
+
 def shut_down(project: Path, inflight: dict) -> None:
     """Terminate children and release their leases. Without this an interrupted
     dispatcher leaves agents writing into worktrees it no longer tracks, and the
     lease expiry later spawns a SECOND agent onto the same stage."""
     for tid, rec in list(inflight.items()):
-        proc = rec["proc"]
-        if proc.poll() is None:
-            proc.terminate()
-            try:
-                proc.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-                try:
-                    proc.wait(timeout=5)   # a PtyProc is reaped here or never
-                except subprocess.TimeoutExpired:
-                    pass
-        close_child(rec)
-        if rec.get("prompt"):
-            rec["prompt"].unlink(missing_ok=True)
-        if rec.get("settings"):
-            rec["settings"].unlink(missing_ok=True)
-        if rec.get("mcp"):
-            rec["mcp"].unlink(missing_ok=True)
-        try:
-            t = Ticket.load(rec["path"])
-            t.release_lease()
-            t.append(rec["stage"], "note",
-                     f"`{rec['stage']}` was interrupted; lease released")
-            t.save()
-        except Exception:
-            pass
-        print(f"  stopped {tid} ({rec['stage']})")
+        stop_child(tid, rec)
     inflight.clear()
 
 
