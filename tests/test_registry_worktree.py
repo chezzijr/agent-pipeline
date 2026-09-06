@@ -120,3 +120,31 @@ def test_check_refuses_before_the_caller_spawns_anything():
 
     assert d not in registry.projects()
     assert registry.check(d) == d
+
+
+def test_git_readiness_parses_checkout_author_and_common_directory():
+    d, sh = git_project()
+    r = sh("git add -A .project && git commit -qm 'add .project'")
+    assert r.returncode == 0, r.stderr
+
+    wt = d / ".worktrees" / "ticket-115"
+    r = sh(f"git worktree add -b ticket/115 {wt} main")
+    assert r.returncode == 0, r.stderr
+
+    assert registry.is_git_checkout(d) is True
+    assert registry.is_git_checkout(wt) is True
+    assert registry.git_author(d) == ("t", "t@t")
+    assert registry.git_common_dir(wt).resolve() == (d / ".git").resolve()
+
+
+def test_git_readiness_treats_plain_directories_as_not_applicable():
+    p = project()
+    try:
+        assert registry.is_git_checkout(p) is False
+        assert registry.git_common_dir(p) is None
+        assert registry.register(p) == p
+    finally:
+        # `p` carries a real TICKET-001, unlike the git_project() fixtures
+        # elsewhere in this file -- leaving it registered would collide with
+        # tests/test_daemon.py's own TICKET-001 project on the shared registry.
+        registry.unregister(p)

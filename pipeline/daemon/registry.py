@@ -10,6 +10,7 @@ from pathlib import Path
 
 from pipeline.core import PipelineError
 from pipeline.core.ticket import write_atomic
+from pipeline.core.worktree import run_cmd
 
 
 def config_dir() -> Path:
@@ -78,6 +79,77 @@ def is_worktree(project: Path) -> bool:
     if not text.startswith("gitdir:"):
         return False
     return Path(text.split(":", 1)[1].strip()).parent.name == "worktrees"
+
+
+def _first_line(output: str) -> str:
+    """The first non-empty line of `run_cmd()`'s output. `run_cmd()` returns
+    `stdout + stderr`, so a probe reading the last line or the whole string
+    could let a git warning on stderr stand in for the value it wants."""
+    for line in output.splitlines():
+        if line.strip():
+            return line.strip()
+    return ""
+
+
+def is_git_checkout(project: Path) -> bool:
+    """True when `project` is inside a Git working tree, main checkout or
+    linked worktree alike.
+
+    `cmd_register()` uses this to decide whether the Git author identity
+    refusal applies at all (DEC-068 -- the refusal itself lives there, not
+    here or in `register()`).
+    """
+    code, out = run_cmd("git rev-parse --is-inside-work-tree", Path(project))
+    return code == 0 and _first_line(out) == "true"
+
+
+def git_author(project: Path) -> tuple[str | None, str | None]:
+    """`user.name` and `user.email` from Git's config, or `None` for a key
+    that is unset. Used for the identity message and the `diagnostics`
+    report -- not for the pass/fail decision, which `git var
+    GIT_AUTHOR_IDENT` makes instead, because `git config --get` cannot see
+    an identity supplied through `GIT_AUTHOR_NAME`/`EMAIL`.
+    """
+    def field(key: str) -> str | None:
+        code, out = run_cmd(f"git config --get {key}", Path(project))
+        if code != 0:
+            return None
+        line = _first_line(out)
+        return line or None
+    return field("user.name"), field("user.email")
+
+
+def git_author_ready(project: Path) -> bool:
+    """Whether Git can actually author a commit here: config, environment
+    and auto-detect, resolved together by `git var GIT_AUTHOR_IDENT`.
+    `git config --get user.name`/`user.email` answer a narrower question --
+    are those two keys set -- and miss an identity supplied through
+    `GIT_AUTHOR_NAME`/`GIT_AUTHOR_EMAIL`/`EMAIL` instead.
+    """
+    code, _ = run_cmd("git var GIT_AUTHOR_IDENT", Path(project))
+    return code == 0
+
+
+def git_common_dir(project: Path) -> Path | None:
+    """The Git directory a commit here actually writes to, or `None` when it
+    is unavailable, missing, or not fully accessible. A linked worktree's
+    index and branch ref live in the MAIN checkout's common directory, not
+    its own -- `git rev-parse --git-common-dir` reports a relative path for
+    a main checkout and the main checkout's absolute path for a worktree,
+    so a relative result is resolved against `project`.
+    """
+    code, out = run_cmd("git rev-parse --git-common-dir", Path(project))
+    if code != 0:
+        return None
+    line = _first_line(out)
+    if not line:
+        return None
+    d = Path(line)
+    if not d.is_absolute():
+        d = Path(project) / d
+    if not d.is_dir() or not os.access(d, os.R_OK | os.X_OK | os.W_OK):
+        return None
+    return d
 
 
 def check(project: Path) -> Path:
