@@ -188,10 +188,12 @@ def test_the_f_key_toggles_finished_tickets_back_into_the_tree():
 
             await pilot.press("f")
             await pilot.pause()
-            assert labels(app)["alpha"] == ["TICKET-001 done",
-                                            "TICKET-002 rejected",
-                                            "TICKET-003 escalated",
-                                            "TICKET-004 implementing *"]
+            # Active-first: escalated/implementing (not FINISHED) before the
+            # restored done/rejected history, ID order within each bucket.
+            assert labels(app)["alpha"] == ["TICKET-003 escalated",
+                                            "TICKET-004 implementing *",
+                                            "TICKET-001 done",
+                                            "TICKET-002 rejected"]
             assert "hidden" not in status(app), status(app)
 
             await pilot.press("f")

@@ -344,7 +344,10 @@ class PipelineApp(App):
         grouped: dict[str, list[dict]] = {r["project"]: [] for r in rows}
         for r in self._visible(rows):
             grouped[r["project"]].append(r)
-        sig = [(p, [label(r) for r in sorted(rs, key=lambda r: r["id"])])
+        # Active first, then ticket ID within each bucket: a restored `done`/
+        # `rejected` history must not bury the live queue behind an earlier ID.
+        sig = [(p, [label(r) for r in
+                    sorted(rs, key=lambda r: (r.get("stage") in FINISHED, r["id"]))])
                for p, rs in sorted(grouped.items())]
         self._status()
         sel = self.selected
