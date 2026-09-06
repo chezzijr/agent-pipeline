@@ -22,8 +22,8 @@ from pipeline.core.config import (cap_config, compose_prompt,
                                   stage_config, stage_settings,
                                   validate_stage_overrides)
 from pipeline.core.fence import fenced_touches
-from pipeline.core.gate import (environment_only, gate, load_flaky, missing_test_file,
-                                plan_steps, structural_only)
+from pipeline.core.gate import (environment_only, gate, invalid_test, load_flaky,
+                                missing_test_file, plan_steps, structural_only)
 from pipeline.core.machine import (CLEANUP_STAGES, CONTROL_FIELDS,
                                    HUMAN_GATES, MAX_ATTEMPTS, TERMINAL,
                                    apply_claims, bound_for, conflict_holder,
@@ -1049,18 +1049,19 @@ def read_findings(rec: dict, code: int) -> tuple[bool, list[str]]:
 
 def gate_result(ok: bool, failures: list[str], stage: str) -> str:
     """The verdict string a Tier A gate's outcome charges. Only `plan-validation`
-    splits `fail` into five: a `test_file` naming no file (TICKET-087) returns
+    splits `fail` into six: a `test_file` naming no file (TICKET-087) returns
     `no-test-file`, a `test_file` that exited 0 in the worktree and on base
-    (TICKET-109) returns `load-flaky`, an all-`environment` list of findings
-    (the suite red on base too, TICKET-089) returns `environment`, `structural`
-    findings keep `fail`, and anything else is `bad-plan`. The three new
-    verdicts are checked before `structural_only()`, so a ticket whose plan is
-    ALSO bad still escalates instead of charging a counter no stage can spend
-    (DEC-065). `revalidating` always gets `fail`, because
-    `("revalidating", "bad-plan")`, `("revalidating", "no-test-file")`,
-    `("revalidating", "load-flaky")` and `("revalidating", "environment")` are
-    all unknown pairs that would escalate a stale plan instead of charging
-    `stale_regate` (DEC-029)."""
+    (TICKET-109) returns `load-flaky`, a `test_file` that hides statically
+    unreachable code (TICKET-118) returns `invalid-test`, an all-`environment`
+    list of findings (the suite red on base too, TICKET-089) returns
+    `environment`, `structural` findings keep `fail`, and anything else is
+    `bad-plan`. The four new verdicts are checked before `structural_only()`,
+    so a ticket whose plan is ALSO bad still escalates instead of charging a
+    counter no stage can spend (DEC-065). `revalidating` always gets `fail`,
+    because `("revalidating", "bad-plan")`, `("revalidating", "no-test-file")`,
+    `("revalidating", "load-flaky")`, `("revalidating", "invalid-test")` and
+    `("revalidating", "environment")` are all unknown pairs that would
+    escalate a stale plan instead of charging `stale_regate` (DEC-029)."""
     if ok:
         return "ok"
     if stage != "plan-validation":
@@ -1073,6 +1074,8 @@ def gate_result(ok: bool, failures: list[str], stage: str) -> str:
     # human reads.
     if load_flaky(failures):
         return "load-flaky"
+    if invalid_test(failures):
+        return "invalid-test"
     if environment_only(failures):
         return "environment"
     if not structural_only(failures):

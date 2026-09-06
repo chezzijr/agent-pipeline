@@ -192,6 +192,16 @@ def transition(stage: str, result: str, counters: dict, klass: str = "bugfix"):
             # explicit rather than left to the unknown-pair fallback, which
             # would escalate identically but without a row a reader can find.
             return "escalated", c
+        case ("plan-validation", "invalid-test"):
+            # the selected test hides unreachable code -- an assertion sits
+            # after an unconditional `raise`, `return`, `break` or
+            # `continue` in the same statement list and can never run.
+            # `CLAIMS` gives `test_file` to `triage` alone, so no counter is
+            # charged and no stage is retried: a human repairs the test body
+            # or re-runs triage. The row is explicit rather than left to the
+            # unknown-pair fallback, which escalates identically but without
+            # a row a reader can find.
+            return "escalated", c
         case ("revalidating", "ok"):
             return forgive("stale_regate", "implementing")
         case ("revalidating", "fail"):
