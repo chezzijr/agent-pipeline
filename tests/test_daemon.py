@@ -1109,3 +1109,77 @@ def test_the_daemon_notice_names_why_the_daemon_stopped():
     long_form = daemon_notice(s)
     assert "reason: signal" in long_form
     assert "source upgrade" not in long_form
+
+
+def test_the_restart_budget_stops_an_upgrade_restart_loop():
+    from pipeline.daemon.main import restart_budget
+
+    assert restart_budget({}, 1000.0) == (1, 1000.0)
+    assert restart_budget({"PIPELINE_UPGRADE_RESTARTS": "2",
+                            "PIPELINE_UPGRADE_SINCE": "990"}, 1000.0) == (3, 990.0)
+    assert restart_budget({"PIPELINE_UPGRADE_RESTARTS": "3",
+                            "PIPELINE_UPGRADE_SINCE": "990"}, 1000.0) is None
+    assert restart_budget({"PIPELINE_UPGRADE_RESTARTS": "3",
+                            "PIPELINE_UPGRADE_SINCE": "800"}, 1000.0) == (1, 1000.0)
+    assert restart_budget({"PIPELINE_UPGRADE_RESTARTS": "nonsense",
+                            "PIPELINE_UPGRADE_SINCE": "x"}, 1000.0) == (1, 1000.0)
+
+
+def test_pipelined_execs_only_for_a_source_change_inside_budget(capsys):
+    from pipeline.daemon import main as dmain
+
+    tmp = Path(tempfile.mkdtemp())
+    execs: list = []
+    reason = ["source_changed"]
+    orig_serve = supervisor.serve
+    orig_server = dmain.Server
+    orig_execve = dmain.os.execve
+    orig_argv = sys.argv
+    try:
+        dmain.Server = lambda store, path: types.SimpleNamespace(close=lambda: None)
+        dmain.os.execve = lambda *a: execs.append(a)
+        supervisor.serve = lambda *a, **kw: reason[0]
+        sys.argv = ["pipelined", "--db", str(tmp / "events.db"),
+                    "--socket", str(tmp / "d.sock"), "--restart-on-upgrade"]
+
+        reason[0] = "source_changed"
+        dmain.main()
+        assert len(execs) == 1
+        assert execs[0][1][1:3] == ["-m", "pipeline.daemon.main"]
+        assert "--restart-on-upgrade" in execs[0][1]
+        assert execs[0][2][dmain.COUNT_VAR] == "1"
+        assert "restarting into the merged code" in capsys.readouterr().out
+
+        reason[0] = "signal"
+        dmain.main()
+        assert len(execs) == 1, "a restart on a signal would defeat pipeline stop"
+
+        reason[0] = "drained"
+        dmain.main()
+        assert len(execs) == 1, "a restart on drained would restart pipeline stop"
+
+        reason[0] = "source_changed"
+        os.environ[dmain.COUNT_VAR] = "3"
+        os.environ[dmain.SINCE_VAR] = str(time.time())
+        try:
+            dmain.main()
+            assert False, "expected SystemExit when the restart budget is spent"
+        except SystemExit as e:
+            assert e.code == 1
+        assert len(execs) == 1
+        assert "not restarting" in capsys.readouterr().out
+
+        os.environ.pop(dmain.COUNT_VAR, None)
+        os.environ.pop(dmain.SINCE_VAR, None)
+        sys.argv = ["pipelined", "--db", str(tmp / "events.db"),
+                    "--socket", str(tmp / "d.sock")]
+        dmain.main()
+        assert len(execs) == 1, "no --restart-on-upgrade must never exec"
+    finally:
+        supervisor.serve = orig_serve
+        dmain.Server = orig_server
+        dmain.os.execve = orig_execve
+        sys.argv = orig_argv
+        os.environ.pop(dmain.COUNT_VAR, None)
+        os.environ.pop(dmain.SINCE_VAR, None)
+        shutil.rmtree(tmp, ignore_errors=True)
