@@ -658,6 +658,8 @@ def cmd_start(args) -> None:
                "--interval", str(args.interval), "-j", str(args.max_parallel)]
     if args.harness is not None:
         command += ["--harness", args.harness]
+    if args.restart_on_upgrade:
+        command += ["--restart-on-upgrade"]
     subprocess.Popen(command,
                      stdout=log, stderr=subprocess.STDOUT,
                      stdin=subprocess.DEVNULL, start_new_session=True)
@@ -890,7 +892,7 @@ def main() -> None:
     p = sub.add_parser("register"); p.add_argument("path", nargs="?", default="."); p.add_argument("--force", action="store_true", help="register without running the project's test commands"); p.set_defaults(fn=cmd_register)
     p = sub.add_parser("unregister"); p.add_argument("path", nargs="?", default="."); p.set_defaults(fn=cmd_unregister)
     p = sub.add_parser("projects"); p.set_defaults(fn=cmd_projects)
-    p = sub.add_parser("start", help="start the one daemon (interactive stages wait at `pipeline tui`)", description=START_DESC); p.add_argument("--interval", type=int, default=10); p.add_argument("--harness", help="override every project's configured harness"); p.add_argument("-j", "--max-parallel", type=int, default=3, help="agents in flight across every registered project"); p.set_defaults(fn=cmd_start)
+    p = sub.add_parser("start", help="start the one daemon (interactive stages wait at `pipeline tui`)", description=START_DESC); p.add_argument("--interval", type=int, default=10); p.add_argument("--harness", help="override every project's configured harness"); p.add_argument("-j", "--max-parallel", type=int, default=3, help="agents in flight across every registered project"); p.add_argument("--restart-on-upgrade", action="store_true", help="restart the daemon into merged dispatcher code (at most 3 times in 60s)"); p.set_defaults(fn=cmd_start)
     p = sub.add_parser("stop"); p.set_defaults(fn=cmd_stop)
     p = sub.add_parser("run", help="one project, no daemon, no socket (interactive stages run headless)", description=RUN_DESC); p.add_argument("--once", action="store_true"); p.add_argument("--interval", type=int, default=10); p.add_argument("--harness", help="override this project's configured harness"); p.add_argument("-j", "--max-parallel", type=int, default=3, help="agents in flight for this project"); p.set_defaults(fn=None)
     p = sub.add_parser("metrics", help="six views over the event log")

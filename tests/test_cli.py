@@ -6,6 +6,7 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+import types
 from pathlib import Path
 
 from helpers import ROOT, git_project, project
@@ -1303,3 +1304,43 @@ def test_status_says_the_daemon_stopped_for_an_upgrade():
         shutil.rmtree(d, ignore_errors=True)
         shutil.rmtree(state, ignore_errors=True)
         shutil.rmtree(runtime, ignore_errors=True)
+
+
+def test_start_forwards_the_upgrade_restart_flag():
+    import argparse
+
+    import pipeline.cli.main as clim
+
+    captured: list = []
+    orig_popen = clim.subprocess.Popen
+    orig_connect = clim.connect
+
+    class FakePopen:
+        def __init__(self, command, **kw):
+            captured.append(command)
+
+    calls = [0]
+
+    def fake_connect():
+        calls[0] += 1
+        if calls[0] == 1:
+            return None    # the pre-spawn probe: not running yet
+        return types.SimpleNamespace(
+            request=lambda *a, **kw: {"version": "0.1.0", "pid": 1, "socket": "x"},
+            close=lambda: None)
+
+    try:
+        clim.subprocess.Popen = FakePopen
+        clim.connect = fake_connect
+
+        clim.cmd_start(argparse.Namespace(interval=10, max_parallel=3,
+                                          harness=None, restart_on_upgrade=True))
+        assert "--restart-on-upgrade" in captured[-1]
+
+        calls[0] = 0
+        clim.cmd_start(argparse.Namespace(interval=10, max_parallel=3,
+                                          harness=None, restart_on_upgrade=False))
+        assert "--restart-on-upgrade" not in captured[-1]
+    finally:
+        clim.subprocess.Popen = orig_popen
+        clim.connect = orig_connect
