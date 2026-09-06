@@ -159,6 +159,21 @@ def test_live_codex_fixture_captures_thread_guard_and_usage():
     assert evs[-1]["usage"]["cached_input_tokens"] == 22016
 
 
+def test_codex_reasoning_tokens_map_to_the_thinking_field():
+    """TICKET-120: Codex reports `reasoning_output_tokens`; `cost_report()`
+    and `metrics._tokens()` both read Claude's
+    `output_tokens_details.thinking_tokens`, so an unmapped key showed 0."""
+    u = parse('{"type":"turn.completed","usage":{"input_tokens":29748,'
+              '"cached_input_tokens":22016,"cache_write_input_tokens":0,'
+              '"output_tokens":135,"reasoning_output_tokens":15}}')["usage"]
+    assert u["output_tokens_details"]["thinking_tokens"] == 15
+    assert u["reasoning_output_tokens"] == 15
+    kept = parse('{"type":"turn.completed","usage":{"output_tokens":9,'
+                 '"reasoning_output_tokens":15,'
+                 '"output_tokens_details":{"thinking_tokens":2}}}')["usage"]
+    assert kept["output_tokens_details"]["thinking_tokens"] == 2
+
+
 def test_codex_file_change_is_a_normal_tool_pair():
     change = {"path": "/tmp/result", "kind": "add"}
     start = parse(json.dumps({"type": "item.started", "item": {

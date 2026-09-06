@@ -115,6 +115,9 @@ def _norm(ev: dict) -> dict:
         if "cache_write_input_tokens" in raw_usage:
             usage.setdefault("cache_creation_input_tokens",
                              raw_usage["cache_write_input_tokens"])
+        if "reasoning_output_tokens" in raw_usage:
+            usage.setdefault("output_tokens_details",
+                             {"thinking_tokens": raw_usage["reasoning_output_tokens"]})
         micro = ev.get("cost_microusd")
         cost = (float(micro) / 1_000_000
                 if isinstance(micro, (int, float)) else None)
