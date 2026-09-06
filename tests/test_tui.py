@@ -5,10 +5,12 @@ async thing in the repo and it is not worth a dependency.
 """
 import asyncio
 import base64
+from unittest.mock import patch
 
 from textual.widgets import RichLog, Tree
 
 from helpers import project as make_project
+from pipeline.cli import client as client_mod
 from pipeline.core import PipelineError
 from pipeline.core.ticket import Ticket
 from pipeline.daemon.server import PTY_INPUT
@@ -568,6 +570,49 @@ def test_a_failed_ls_keeps_the_last_daemon_answer_for_a_live_interactive_stage()
                 "one timed-out ls made a live interactive stage look like a finished batch one"
             assert app.rows[(str(d), "TICKET-001")]["running"] is True
             await pilot.press("q")
+        assert app.return_code == 0
+
+    asyncio.run(go())
+
+
+def test_the_tui_reconnects_once_the_daemon_it_lost_comes_back():
+    """A client whose socket breaks stays broken -- unlike `Flaky` above,
+    toggling a flag on the same object can never make it answer again. Only
+    calling `connect()` again gets a client that works. TICKET-122: nothing
+    in `PipelineApp` ever does that, so once the daemon dies the app is
+    stuck on file rows forever, even after a new daemon starts."""
+    async def go():
+        d = make_project()
+
+        class DeadForever(FakeClient):
+            def __init__(self, rows):
+                super().__init__(rows)
+                self.broken = False
+
+            def request(self, op, **kw):
+                if self.broken:
+                    raise PipelineError("[Errno 32] Broken pipe")
+                return super().request(op, **kw)
+
+        dead = DeadForever([row(d, "TICKET-001", "planning",
+                                 running=True, mode="batch")])
+        fresh = FakeClient([row(d, "TICKET-001", "planning",
+                                 running=True, mode="interactive")])
+
+        app = PipelineApp(client=dead, project=str(d))
+        with patch.object(client_mod, "connect", return_value=fresh):
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                dead.broken = True
+                app.refresh_tree()
+                await pilot.pause()
+                # the daemon is reachable again -- connect() would now hand
+                # back `fresh`, which knows the stage is interactive
+                app.refresh_tree()
+                await pilot.pause()
+                assert app.rows[(str(d), "TICKET-001")]["mode"] == "interactive", \
+                    "TUI never reconnected once the daemon was reachable again"
+                await pilot.press("q")
         assert app.return_code == 0
 
     asyncio.run(go())
