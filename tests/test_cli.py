@@ -1281,3 +1281,25 @@ def test_diagnostics_documentation_explains_rows_and_force_boundary():
         text = path.read_text()
         for term in terms:
             assert term in text, f"{path}: missing {term!r}"
+
+
+def test_status_says_the_daemon_stopped_for_an_upgrade():
+    from pipeline.daemon.store import Store
+    d = project()
+    state = Path(tempfile.mkdtemp())
+    runtime = Path(tempfile.mkdtemp())
+    store = Store(state / "pipeline" / "events.db")
+    store.emit("", "daemon_start", pid=1)
+    store.emit("", "daemon_stop", pid=1, reason="source_changed",
+               module="pipeline.core.machine")
+    store.close()
+    try:
+        r = cli(d, "status", env={"XDG_STATE_HOME": str(state),
+                                   "XDG_RUNTIME_DIR": str(runtime)})
+        assert r.returncode == 1
+        assert "not running" in r.stdout
+        assert "source upgrade" in r.stdout
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+        shutil.rmtree(state, ignore_errors=True)
+        shutil.rmtree(runtime, ignore_errors=True)

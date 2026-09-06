@@ -27,7 +27,7 @@ from pipeline.core.worktree import exclude_project_dir, worktree
 from pipeline.daemon import registry
 from pipeline.daemon.server import (STALE_HOURS, socket_path, ticket_rows,
                                     waiting_text)
-from pipeline.daemon.store import Store, state_dir
+from pipeline.daemon.store import Store, daemon_notice, state_dir
 from pipeline.daemon.supervisor import holder_alive, run
 from pipeline.stream import StreamReader
 
@@ -632,6 +632,9 @@ def cmd_daemon_status(args) -> None:
     c = connect()
     if c is None:
         print(f"pipelined: not running ({socket_path()})")
+        notice = daemon_notice(Store())
+        if notice is not None:
+            print(f"  {notice}")
         sys.exit(1)
     try:
         d = c.request("ping")
