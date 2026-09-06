@@ -167,6 +167,7 @@ without registering, or one whose commands changed since.
 pipeline diagnostics                 # what a stage needs before it runs; read-only
 pipeline register ~/code/myproject   # runs its test_suite and probes test_one first
 pipeline start                       # spawns pipelined, detached; interactive stages need `pipeline tui` attached
+pipeline start --restart-on-upgrade  # re-exec into merged dispatcher code (max 3 in 60s)
 pipeline status                      # is it running, and how many projects
 pipeline ls                          # every registered project's tickets, done/rejected hidden
 pipeline ls --project ~/code/myproject     # --project is a FILTER here
@@ -216,6 +217,12 @@ registration outright, because every write stage commits in its worktree.
 `pipelined` itself stays a raw foreground process, so `systemd --user`, `launchd`
 or tmux can supervise it; `pipeline start` is just a convenience wrapper. There is
 no pidfile: the daemon socket is the liveness check and `ping` returns the pid.
+
+A merged change to the dispatcher's own code stops the daemon rather than run
+half-old, half-new; `pipeline status` then names the reason (a source upgrade,
+a signal, or a drained queue). `pipeline start --restart-on-upgrade` re-execs
+the daemon into the merged code, at most 3 times in 60s. A systemd unit with
+`Restart=on-success` is the other supported way to get the same handoff.
 
 ### Where it keeps things
 

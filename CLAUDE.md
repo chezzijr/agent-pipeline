@@ -265,10 +265,14 @@ still worth it: it prints one line per case, and the failure names the case.
 - **A merged change to the dispatcher's own Python is inert until restart.**
   `_source_watcher()` in `pipeline/daemon/supervisor.py` snapshots the mtimes of
   the loaded `pipeline` modules. When one moves, `run()` and `serve()` stop
-  claiming tickets, reap what is inflight and return -- so whatever started them
-  runs the merged code. Nothing restarts them: after that message, run
-  `pipeline start` (or `pipeline run`) again. Never `importlib.reload()`; live
-  child records, an open SQLite handle and signal handlers outlive the modules.
+  claiming tickets, reap what is inflight and return `reason="source_changed"` --
+  so whatever started them runs the merged code. `serve()`'s `finally` emits
+  `daemon_stop` carrying that reason and the module that moved; `pipeline
+  status` and the TUI status bar read it back through `daemon_notice()`.
+  `pipeline start --restart-on-upgrade` re-execs the daemon into the merged
+  code, at most 3 times in 60s; without that flag nothing restarts it. Never
+  `importlib.reload()`; live child records, an open SQLite handle and signal
+  handlers outlive the modules.
 - **A stage inherits the operator's `~/.claude` unless told not to.** Without
   `--setting-sources project` a spawn loads every installed plugin, its skills,
   and its `SessionStart` hooks. On the machine this was found on that meant
