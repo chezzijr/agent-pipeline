@@ -504,6 +504,58 @@ def test_ls_hides_finished_tickets_by_default():
     shutil.rmtree(d)
 
 
+def test_ls_filters_all_stage_and_ticket_views():
+    """DEC-060: bare `ls` hides `done`/`rejected` but keeps `escalated`.
+    `--all`, `--stage`, and a positional ticket ID can expose history, and an
+    explicit ticket ID plus `--stage` intersect rather than union."""
+    d = Path(tempfile.mkdtemp())
+    cli(d, "new", "a")
+    cli(d, "new", "b")
+    cli(d, "new", "c")
+    done = Ticket.load(d / ".project/tickets/TICKET-001.md")
+    done.stage = "done"
+    done.save()
+    escalated = Ticket.load(d / ".project/tickets/TICKET-002.md")
+    escalated.stage = "escalated"
+    escalated.save()
+    # TICKET-003 stays at its filed stage ("new"): the live row.
+
+    r = cli(d, "ls")
+    assert r.returncode == 0, r.stderr
+    assert "TICKET-001" not in r.stdout, r.stdout
+    assert r.stdout.index("TICKET-002") < r.stdout.index("TICKET-003"), r.stdout
+
+    r = cli(d, "ls", "--all")
+    assert r.returncode == 0, r.stderr
+    for tid in ("TICKET-001", "TICKET-002", "TICKET-003"):
+        assert tid in r.stdout, r.stdout
+    order = [r.stdout.index(t) for t in ("TICKET-001", "TICKET-002", "TICKET-003")]
+    assert order == sorted(order), r.stdout
+
+    r = cli(d, "ls", "--stage", "done")
+    assert r.returncode == 0, r.stderr
+    assert "TICKET-001" in r.stdout, r.stdout
+    assert "TICKET-002" not in r.stdout and "TICKET-003" not in r.stdout, r.stdout
+
+    r = cli(d, "ls", "TICKET-001")
+    assert r.returncode == 0, r.stderr
+    assert "TICKET-001" in r.stdout, r.stdout
+    assert "TICKET-002" not in r.stdout and "TICKET-003" not in r.stdout, r.stdout
+
+    r = cli(d, "ls", "TICKET-001", "--stage", "done")
+    assert r.returncode == 0, r.stderr
+    assert "TICKET-001" in r.stdout, r.stdout
+
+    r = cli(d, "ls", "TICKET-001", "--stage", "escalated")
+    assert r.returncode == 0, r.stderr
+    assert "TICKET-001" not in r.stdout, r.stdout
+    assert "TICKET-002" not in r.stdout and "TICKET-003" not in r.stdout, r.stdout
+
+    r = cli(d, "ls", "--stage", "bogus")
+    assert r.returncode != 0 and "is not a stage" in r.stderr, r
+    shutil.rmtree(d)
+
+
 def test_cli_new_records_a_declared_dependency():
     d = Path(tempfile.mkdtemp())
     cli(d, "new", "first", "--class", "bugfix")

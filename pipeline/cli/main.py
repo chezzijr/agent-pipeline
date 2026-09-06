@@ -20,7 +20,7 @@ from pipeline.core.config import (CONFIG_TEMPLATE, HARNESSES_DIR, PKG,
                                   selector_failure, skill_mark_key, skill_marks, skill_status,
                                   suite_failure, sync_pins)
 from pipeline.core.gate import gate
-from pipeline.core.machine import KNOWN_STAGES, cleared_key
+from pipeline.core.machine import KNOWN_STAGES, TERMINAL, cleared_key
 from pipeline.core.ticket import (SAFE_DEC_ID, SAFE_ID, Ticket, all_decisions,
                                    decisions_dir, now, tickets_dir)
 from pipeline.core.worktree import exclude_project_dir, worktree
@@ -448,6 +448,27 @@ def cmd_resume(args) -> None:
           (" (forced past a live lease)" if live else ""))
 
 
+# `escalated` is terminal but actionable -- a human still has to look at it --
+# so a bare `ls` hides only the two stages nobody needs to act on (DEC-060).
+FINISHED = TERMINAL - {"escalated"}
+
+
+def filter_ls_rows(rows: list[dict], ticket: str | None, all_: bool,
+                    stage: str | None) -> list[dict]:
+    """Presentation only: `ticket_rows()` already ran. No selector hides
+    `FINISHED`; an explicit one exposes matching history, and a ticket ID
+    plus `--stage` intersect rather than union. Source order is preserved
+    throughout."""
+    if not (ticket or all_ or stage):
+        return [r for r in rows if r.get("stage") not in FINISHED]
+    out = rows
+    if ticket:
+        out = [r for r in out if r["id"] == ticket]
+    if stage:
+        out = [r for r in out if r.get("stage") == stage]
+    return out
+
+
 def cmd_ls(args) -> None:
     """`--project` is a filter, not a target: without one, every registered
     project. The daemon and the files answer with the same rows, built by the
@@ -471,6 +492,9 @@ def cmd_ls(args) -> None:
     if rows is None:
         targets = [proj(args)] if args.project else registry.projects()
         rows = [r for p in targets for r in ticket_rows(p)]
+    if args.stage is not None and args.stage not in KNOWN_STAGES:
+        die(f"`{args.stage}` is not a stage: {', '.join(sorted(KNOWN_STAGES))}")
+    rows = filter_ls_rows(rows, args.ticket, args.all, args.stage)
     if any(r.get("running", False) is None for r in rows):
         # one line, not one token per row: with no daemon EVERY row is
         # unknown, and the per-row marks below are all file facts
@@ -856,7 +880,7 @@ def main() -> None:
     p = sub.add_parser("answer"); p.add_argument("id"); p.add_argument("text"); p.set_defaults(fn=cmd_answer)
     p = sub.add_parser("resume"); p.add_argument("id"); p.add_argument("--stage", required=True); p.add_argument("--grant", nargs="*", metavar="COUNTER[=N]", help="hand back N spent attempts (default 1) on a counter; a grant only subtracts"); p.add_argument("--reset", nargs="*"); p.add_argument("--note", metavar="TEXT", help="a note for the resumed stage; recorded in the ticket thread, attributed to you"); p.add_argument("--force", action="store_true", help="resume even while a stage holds a live lease; the running stage keeps going and the dispatcher escalates the ticket when it finishes"); p.set_defaults(fn=cmd_resume)
     p = sub.add_parser("logs"); p.add_argument("id"); p.add_argument("-f", "--follow", action="store_true"); p.set_defaults(fn=cmd_logs)
-    p = sub.add_parser("ls", help="tickets (via the daemon if one is running)"); p.add_argument("-v", "--verbose", action="store_true"); p.set_defaults(fn=cmd_ls)
+    p = sub.add_parser("ls", help="tickets (via the daemon if one is running)"); p.add_argument("ticket", nargs="?", help="show only this ticket, history included"); p.add_argument("--all", action="store_true", help="show finished tickets (done, rejected) too"); p.add_argument("--stage", help="show only tickets at this stage, history included"); p.add_argument("-v", "--verbose", action="store_true"); p.set_defaults(fn=cmd_ls)
     p = sub.add_parser("status", help="is the daemon running"); p.set_defaults(fn=cmd_daemon_status)
     p = sub.add_parser("tui", help="watch and steer running stages"); p.set_defaults(fn=cmd_tui)
     p = sub.add_parser("diagnostics", help="what a stage needs before it runs: package, harness, daemon, registration, Git identity"); p.set_defaults(fn=cmd_diagnostics)
