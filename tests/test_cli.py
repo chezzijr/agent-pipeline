@@ -9,6 +9,7 @@ import tempfile
 from pathlib import Path
 
 from helpers import ROOT, git_project, project
+from pipeline.core.config import PKG
 from pipeline.core.ticket import Ticket, stage_view
 
 
@@ -33,13 +34,39 @@ def test_diagnostics_reports_runtime_harness_and_git_readiness():
     an author identity. Existing commands hid both facts until a write stage.
     """
     d, _ = git_project()
-    r = cli(d, "diagnostics")
+    r = cli(d, "diagnostics", env={"XDG_CONFIG_HOME": str(tempfile.mkdtemp())})
     assert r.returncode == 0, r.stderr
-    for label in ("package:", "executable:", "pipeline:", "harness:",
-                  "daemon:", "registration:", "git author:",
-                  "worktree commit:"):
-        assert label in r.stdout, r.stdout
+    rows = dict(l.split(": ", 1) for l in r.stdout.splitlines() if ": " in l)
+    assert rows["package"] == str(PKG)
+    assert rows["executable"] == sys.executable
+    assert rows["pipeline"] == "not on PATH" or Path(rows["pipeline"]).name == "pipeline"
+    assert rows["harness"].startswith("claude-code ")
+    assert "claude-code.toml" in rows["harness"]
+    assert "write_tools=Read,Grep,Glob,Bash,Edit,Write" in rows["harness"]
+    assert rows["daemon"].startswith(("running pid ", "not running ("))
+    assert rows["registration"] == "not registered"
+    assert rows["git author"] == "t <t@t>"
+    assert rows["worktree commit"] == f"ready ({(d / '.git').resolve()})"
     shutil.rmtree(d, ignore_errors=True)
+
+
+def test_diagnostics_exits_nonzero_when_git_author_is_missing():
+    """The refusal `cmd_register()` makes must be visible before registration
+    is even attempted -- `diagnostics` reports why a write stage would fail."""
+    d, sh = git_project()
+    sh("git config --unset user.name && git config --unset user.email")
+    home = tempfile.mkdtemp()
+    r = cli(d, "diagnostics", env={"HOME": home, "XDG_CONFIG_HOME": home,
+                                    "GIT_CONFIG_NOSYSTEM": "1"})
+    assert r.returncode == 1, r.stdout
+    rows = dict(l.split(": ", 1) for l in r.stdout.splitlines() if ": " in l)
+    for label in ("package", "executable", "pipeline", "harness",
+                  "daemon", "registration", "git author", "worktree commit"):
+        assert label in rows, r.stdout
+    assert rows["git author"] == "missing: user.name, user.email"
+    assert rows["worktree commit"] == "blocked: no Git author identity"
+    shutil.rmtree(d, ignore_errors=True)
+    shutil.rmtree(home, ignore_errors=True)
 
 
 def test_register_refuses_a_checkout_without_a_git_author_identity():

@@ -3,6 +3,7 @@ import argparse
 import json
 import os
 import re
+import shutil
 import signal
 import subprocess
 import sys
@@ -12,9 +13,10 @@ from pathlib import Path
 from pipeline.cli import metrics
 from pipeline.cli.client import connect
 from pipeline.core import PipelineError, line_buffer_stdout
-from pipeline.core.config import (CONFIG_TEMPLATE, TICKET_TEMPLATE,
-                                  config_source, install_skill, mark_skill,
-                                  pin_dir, pin_path, project_config,
+from pipeline.core.config import (CONFIG_TEMPLATE, HARNESSES_DIR, PKG,
+                                  TICKET_TEMPLATE, config_source, harness,
+                                  install_skill, mark_skill, pin_dir,
+                                  pin_path, project_config, project_harness,
                                   selector_failure, skill_mark_key, skill_marks, skill_status,
                                   suite_failure, sync_pins)
 from pipeline.core.gate import gate
@@ -490,6 +492,59 @@ def cmd_ls(args) -> None:
                   f"{replay_text}{cost}")
 
 
+def cmd_diagnostics(args) -> None:
+    """What a stage needs before it runs, read-only: the package, harness,
+    daemon, registration and Git identity a stage would otherwise discover
+    only by failing partway through -- an editable install loading a
+    different checkout, or a write stage dying at its first `git commit`.
+
+    Prints exactly eight `label: value` rows and never mutates anything: no
+    worktree, ref, index, commit, config entry, registry entry or daemon
+    state.
+    """
+    path = proj(args)
+    print(f"package: {PKG}")
+    print(f"executable: {sys.executable}")
+    print(f"pipeline: {shutil.which('pipeline') or 'not on PATH'}")
+    try:
+        name = project_harness(path)
+        h = harness(name)
+        print(f"harness: {name} {HARNESSES_DIR / (name + '.toml')} "
+              f"write_tools={h['write_tools']}")
+    except PipelineError as e:
+        print(f"harness: unavailable ({e})")
+    c = connect()
+    if c is not None:
+        try:
+            d = c.request("ping")
+            print(f"daemon: running pid {d['pid']} on {d['socket']}")
+        finally:
+            c.close()
+    else:
+        print(f"daemon: not running ({socket_path()})")
+    print(f"registration: {'registered' if path in registry.projects() else 'not registered'}")
+
+    is_checkout = registry.is_git_checkout(path)
+    if not is_checkout:
+        print("git author: not applicable (not a git checkout)")
+        print("worktree commit: not applicable (not a git checkout)")
+        return
+    name, email = registry.git_author(path)
+    ready = registry.git_author_ready(path)
+    missing = [k for k, v in (("user.name", name), ("user.email", email)) if not v]
+    print(f"git author: {name} <{email}>" if ready
+          else f"git author: missing: {', '.join(missing) or 'unknown'}")
+    common_dir = registry.git_common_dir(path)
+    if not ready:
+        print("worktree commit: blocked: no Git author identity")
+    elif common_dir is None:
+        print("worktree commit: blocked: no usable Git common directory")
+    else:
+        print(f"worktree commit: ready ({common_dir})")
+    if not ready or common_dir is None:
+        sys.exit(1)
+
+
 # -- the registry -------------------------------------------------------
 def cmd_register(args) -> None:
     # a project whose test commands are wrong registers clean otherwise,
@@ -804,6 +859,7 @@ def main() -> None:
     p = sub.add_parser("ls", help="tickets (via the daemon if one is running)"); p.add_argument("-v", "--verbose", action="store_true"); p.set_defaults(fn=cmd_ls)
     p = sub.add_parser("status", help="is the daemon running"); p.set_defaults(fn=cmd_daemon_status)
     p = sub.add_parser("tui", help="watch and steer running stages"); p.set_defaults(fn=cmd_tui)
+    p = sub.add_parser("diagnostics", help="what a stage needs before it runs: package, harness, daemon, registration, Git identity"); p.set_defaults(fn=cmd_diagnostics)
     p = sub.add_parser("register"); p.add_argument("path", nargs="?", default="."); p.add_argument("--force", action="store_true", help="register without running the project's test commands"); p.set_defaults(fn=cmd_register)
     p = sub.add_parser("unregister"); p.add_argument("path", nargs="?", default="."); p.set_defaults(fn=cmd_unregister)
     p = sub.add_parser("projects"); p.set_defaults(fn=cmd_projects)
