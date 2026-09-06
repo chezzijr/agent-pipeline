@@ -1207,6 +1207,32 @@ def test_a_source_change_exit_is_recorded_in_the_event_store():
         f"got kinds {[e['kind'] for e in events]}")
 
 
+def test_a_drained_daemon_stop_is_not_a_source_change():
+    """A restart that fired on every exit would restart `pipeline stop` too.
+    `serve(once=True)` draining its queue must record `reason=drained`, never
+    `source_changed`."""
+    import tempfile
+
+    from pipeline.daemon.server import Server
+
+    tmp = Path(tempfile.mkdtemp())
+    store = Store(tmp / "events.db")
+    server = Server(store, tmp / "daemon.sock")
+    cursor = store.cursor()
+    try:
+        reason = supervisor.serve(0, "fake", 1, store, server, once=True)
+        events = store.since(cursor)
+    finally:
+        server.close()
+        store.close()
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    assert reason == "drained"
+    stop_events = [e for e in events if e["kind"] == "daemon_stop"]
+    assert stop_events and stop_events[0]["data"].get("reason") == "drained", (
+        f"expected daemon_stop reason=drained, got {stop_events}")
+
+
 def test_serve_rotates_which_project_ticks_first():
     """The share stops one project taking the whole cap, but whoever ticks
     first still gets first refusal on a slot that just freed. `serve()` must

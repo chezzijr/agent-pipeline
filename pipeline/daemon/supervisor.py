@@ -38,7 +38,7 @@ from pipeline.core.worktree import (base_ref, dirty_snapshot, drop_worktree,
                                     tree_snapshot, worktree)
 from pipeline.daemon import registry
 from pipeline.daemon.server import Poller
-from pipeline.daemon.store import noop
+from pipeline.daemon.store import SOURCE_CHANGED, noop
 from pipeline.pty import host
 from pipeline.stream import StreamReader
 
@@ -1619,8 +1619,13 @@ def _source_watcher():
     return changed
 
 
+def exit_message(module: str) -> str:
+    return (f"  dispatcher source changed ({module}) -- ending the "
+            f"loop so a restart runs the merged code")
+
+
 def run(project: Path, once: bool, interval: int, harness_name: str | None,
-        max_parallel: int = 3, store=None) -> None:
+        max_parallel: int = 3, store=None) -> str:
     """Standalone: the daemon minus the socket server. One supervisor
     implementation, two entry points -- the daemon is an accelerator, never a
     dependency. `store` is optional; with none, nothing is recorded and the
@@ -1645,14 +1650,15 @@ def run(project: Path, once: bool, interval: int, harness_name: str | None,
     stopping, wake, wake_w, old_handlers = _stopper()
     poller.watch(wake, lambda fd: os.read(fd, 4096))
     stale, moved = _source_watcher(), None
+    reason = "error"
 
     try:
         while not stopping():
             moved = moved or stale()
             if moved and not inflight:
-                print(f"  dispatcher source changed ({moved}) -- ending the "
-                      f"loop so a restart runs the merged code")
-                return
+                print(exit_message(moved))
+                reason = SOURCE_CHANGED
+                return reason
             try:
                 worked = tick(project, reload(), inflight, max_parallel, poller,
                               emit, (lambda: True) if moved else stopping)
@@ -1666,8 +1672,11 @@ def run(project: Path, once: bool, interval: int, harness_name: str | None,
                 print(f"  {project}: tick failed ({e.__class__.__name__}: {e})")
                 worked = False
             if once and not inflight and not worked:
-                return  # --once drains the queue, it does not do a single pass
+                reason = "drained"
+                return reason  # --once drains the queue, it does not do a single pass
             poller.poll(1 if inflight else interval)
+        reason = "signal"
+        return reason
     finally:
         shut_down(project, inflight)
         signal.set_wakeup_fd(-1)
@@ -1679,7 +1688,7 @@ def run(project: Path, once: bool, interval: int, harness_name: str | None,
 
 
 def serve(interval: int, harness_name: str | None, max_parallel: int, store, server,
-          once: bool = False) -> None:
+          once: bool = False) -> str:
     """The one global daemon: every registered project, one select loop.
 
     Per project it holds a `flock` for as long as it watches it. A project
@@ -1701,6 +1710,7 @@ def serve(interval: int, harness_name: str | None, max_parallel: int, store, ser
     print(f"pipelined {__version__}: pid {os.getpid()} on {server.path}")
     stale, moved = _source_watcher(), None
     turn = 0
+    reason = "error"
 
     def release(key: str) -> None:
         shut_down(Path(key), states.pop(key, {}))
@@ -1712,9 +1722,9 @@ def serve(interval: int, harness_name: str | None, max_parallel: int, store, ser
         while not stopping():
             moved = moved or stale()
             if moved and not any(states.values()):
-                print(f"  dispatcher source changed ({moved}) -- ending the "
-                      f"loop so a restart runs the merged code")
-                return
+                print(exit_message(moved))
+                reason = SOURCE_CHANGED
+                return reason
             wanted = {str(p): p for p in registry.projects()}
             for key in [k for k in states if k not in wanted]:
                 print(f"  unregistered: releasing {key}")
@@ -1752,12 +1762,16 @@ def serve(interval: int, harness_name: str | None, max_parallel: int, store, ser
                     print(f"  {key}: tick failed ({e.__class__.__name__}: {e})")
             busy = any(states.values())
             if once and not busy and not worked:
-                return
+                reason = "drained"
+                return reason
             server.poll(1 if busy else interval)
+        reason = "signal"
+        return reason
     finally:
         for key in list(states):
             release(key)
-        store.emit("", "daemon_stop", pid=os.getpid(), version=__version__)
+        store.emit("", "daemon_stop", pid=os.getpid(), version=__version__,
+                   reason=reason, module=moved)
         signal.set_wakeup_fd(-1)
         _restore_signals(old_handlers)
         server.close()
