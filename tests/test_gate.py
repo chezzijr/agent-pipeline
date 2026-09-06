@@ -881,6 +881,68 @@ def test_gate_rejects_an_unreachable_call_to_a_nonexistent_api():
     shutil.rmtree(d)
 
 
+def test_gate_rejects_unreachable_code_inside_a_conditional_block():
+    d = project()
+    (d / "test_thing.py").write_text(
+        "def test_broken():\n"
+        "    if True:\n"
+        "        raise RuntimeError('no frontmatter')\n"
+        "        Ticket.summary()\n")
+    (d / ".project" / "pipeline.toml").write_text(
+        'test_one = "echo test_broken: RuntimeError: no frontmatter; exit 1"\n'
+        'test_suite = "true"\ntest_suite_without_new = "true"\n')
+    ok, failures = gate(d, "TICKET-001")
+    assert not ok, failures
+    assert any("INVALID-TEST" in f for f in failures), failures
+    shutil.rmtree(d)
+
+
+def test_gate_allows_a_reachable_call_to_a_future_api():
+    d = project()
+    (d / "test_thing.py").write_text(
+        "def test_broken():\n"
+        "    t = Ticket.load('x')\n"
+        "    assert t.summary() == 'x'\n")
+    (d / ".project" / "pipeline.toml").write_text(
+        'test_one = "echo test_broken: RuntimeError: no frontmatter; exit 1"\n'
+        'test_suite = "true"\ntest_suite_without_new = "true"\n')
+    ok, failures = gate(d, "TICKET-001")
+    assert ok, failures
+    assert not any("INVALID-TEST" in f for f in failures), failures
+    shutil.rmtree(d)
+
+
+def test_gate_allows_a_call_after_a_conditional_failure():
+    d = project()
+    (d / "test_thing.py").write_text(
+        "def test_broken(flag=True):\n"
+        "    if flag:\n"
+        "        raise RuntimeError('no frontmatter')\n"
+        "    Ticket.summary()\n")
+    (d / ".project" / "pipeline.toml").write_text(
+        'test_one = "echo test_broken: RuntimeError: no frontmatter; exit 1"\n'
+        'test_suite = "true"\ntest_suite_without_new = "true"\n')
+    ok, failures = gate(d, "TICKET-001")
+    assert ok, failures
+    shutil.rmtree(d)
+
+
+def test_gate_ignores_unreachable_code_outside_the_selected_test():
+    d = project()
+    (d / "test_thing.py").write_text(
+        "def test_other():\n"
+        "    raise RuntimeError('x')\n"
+        "    Ticket.summary()\n\n"
+        "def test_broken():\n"
+        "    assert False\n")
+    (d / ".project" / "pipeline.toml").write_text(
+        'test_one = "echo test_broken: RuntimeError: no frontmatter; exit 1"\n'
+        'test_suite = "true"\ntest_suite_without_new = "true"\n')
+    ok, failures = gate(d, "TICKET-001")
+    assert ok, failures
+    shutil.rmtree(d)
+
+
 def test_expect_naming_a_temp_path_is_refused_as_unmatchable():
     """An `expect:` copied verbatim from triage's own run can carry a fresh
     `mkdtemp` path. That path cannot recur in any later run, so an expect
