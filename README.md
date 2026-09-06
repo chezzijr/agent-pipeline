@@ -168,8 +168,11 @@ pipeline diagnostics                 # what a stage needs before it runs; read-o
 pipeline register ~/code/myproject   # runs its test_suite and probes test_one first
 pipeline start                       # spawns pipelined, detached; interactive stages need `pipeline tui` attached
 pipeline status                      # is it running, and how many projects
-pipeline ls                          # every registered project's tickets
+pipeline ls                          # every registered project's tickets, done/rejected hidden
 pipeline ls --project ~/code/myproject     # --project is a FILTER here
+pipeline ls --all                    # history included: done and rejected too
+pipeline ls --stage done             # only tickets at this stage, history included
+pipeline ls TICKET-001                     # only this ticket, history included
 pipeline stop
 pipeline unregister ~/code/myproject
 ```
@@ -348,7 +351,9 @@ dispatcher's tamper detection.
 
 The tree hides `done` and `rejected` tickets and opens the cursor on the first
 ticket that is not terminal; `f` brings the hidden ones back, and `escalated`
-is never hidden.
+is never hidden. Restored history sorts active-first (anything not `done` or
+`rejected`), then by ticket ID within each bucket, so a long tail of finished
+tickets never buries the live queue.
 
 ## Concurrency
 

@@ -197,7 +197,9 @@ registers.
 Then tell the user what to expect and how to watch:
 
 ```sh
-pipeline ls                      # stage of every ticket
+pipeline ls                      # stage of every ticket, done/rejected hidden
+pipeline ls --all                # history included
+pipeline ls TICKET-003           # one ticket, history included
 pipeline decisions               # what earlier tickets already decided
 pipeline tui                     # live view; a/r/A act on the human gates
 pipeline logs TICKET-003 -f      # one stage's stream
