@@ -2185,6 +2185,34 @@ def test_the_session_entry_omits_cost_when_no_result_event_arrived():
     shutil.rmtree(d, ignore_errors=True)
 
 
+def test_the_session_entry_reports_codex_tokens_with_an_unknown_cost():
+    """TICKET-120: `cost_report()` dropped a Codex run's tokens along with
+    its absent dollar cost, so the session entry named neither."""
+    d = project()
+    path = d / ".project/tickets/TICKET-001.md"
+    snap = Ticket.load(path)
+    log = d / ".project" / "logs" / "TICKET-001.log"
+    log.parent.mkdir(parents=True, exist_ok=True)
+    (d / ".project/tickets/TICKET-001.result").write_text(
+        "result: ok\nsummary: x\n")
+    rec = {"fh": log.open("w"), "prompt": d / "gone.md", "settings": None,
+           "path": path, "tid": "TICKET-001", "stage": "planning",
+           "session": "s1", "log": log, "wt": d, "meta": snap,
+           "before": None}
+    supervisor.terminal_sink(rec, lambda ev: None)(
+        {"kind": "result", "total_cost_usd": None,
+         "usage": {"input_tokens": 438060, "output_tokens": 3719,
+                   "cache_read_input_tokens": 400384},
+         "terminal_reason": None})
+    supervisor.finish(d, rec)
+    msg = [e.text for e in Ticket.load(path).thread()
+           if "ran as session" in e.text][-1]
+    assert "- cost: unknown (the harness reported none)" in msg
+    assert ("- tokens: 3,719 out · 438,060 in · 400,384 cache read "
+            "· 0 cache write") in msg
+    shutil.rmtree(d, ignore_errors=True)
+
+
 def test_a_transient_blockingioerror_from_tick_must_not_kill_every_inflight_child():
     """TICKET-086: `run()` now wraps its `tick()` call, so a transient
     `BlockingIOError` (fork returning EAGAIN) does not reach `finally:

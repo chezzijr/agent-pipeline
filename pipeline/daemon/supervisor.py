@@ -300,16 +300,16 @@ def _int(v) -> int:
 def cost_report(rec: dict) -> str:
     """Render a run's cost and tokens for the session thread entry.
 
-    `""` when no `result` event arrived (an interactive stage, DEC-077):
-    a zero-dollar line there would read as a free run rather than an
-    unmeasured one. Every number is coerced, so a malformed `usage` never
-    raises -- it renders zeros instead.
+    The two lines are independent (TICKET-120). The cost line renders only
+    when `cost_usd` is known; the token line renders whenever a count is
+    non-zero, which a Codex `turn.completed` has and a dollar amount is not.
+    An unknown cost prints `unknown`, never `$0.00`: no price is invented.
+
+    `""` when no `result` event arrived (an interactive stage, DEC-077): its
+    `usage` stays `{}`, so neither line renders and a zero-dollar line never
+    reads as a free run. Every number is coerced, so a malformed `usage`
+    never raises -- it renders zeros instead.
     """
-    if rec.get("cost_usd") is None:
-        return ""
-    cost = f"${float(rec['cost_usd']):.2f}"
-    if rec.get("cap"):
-        cost += f" of a ${rec['cap']} cap"
     usage = rec.get("usage") or {}
     out = _int(usage.get("output_tokens"))
     thinking = _int(usage.get("output_tokens_details", {}).get("thinking_tokens")
@@ -317,6 +317,15 @@ def cost_report(rec: dict) -> str:
     inp = _int(usage.get("input_tokens"))
     cache_read = _int(usage.get("cache_read_input_tokens"))
     cache_write = _int(usage.get("cache_creation_input_tokens"))
+    known = rec.get("cost_usd") is not None
+    if not known and not (out or inp or cache_read or cache_write):
+        return ""
+    if known:
+        cost = f"${float(rec['cost_usd']):.2f}"
+        if rec.get("cap"):
+            cost += f" of a ${rec['cap']} cap"
+    else:
+        cost = "unknown (the harness reported none)"
     out_part = f"{out:,} out"
     if thinking:
         out_part += f" ({thinking:,} thinking)"

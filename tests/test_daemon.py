@@ -1070,3 +1070,18 @@ def test_cost_report_keeps_codex_token_usage_when_cost_is_unavailable():
                                         "cached_input_tokens": 400384,
                                         "output_tokens": 3719}}
     assert supervisor.cost_report(rec) != ""
+
+
+def test_cost_report_renders_codex_tokens_and_an_unknown_cost():
+    """TICKET-120: a Codex `turn.completed` has real tokens and no dollar
+    amount. The tokens must show and the cost must read `unknown` -- not
+    `$0.00`, which would price a run nobody priced."""
+    from pipeline.stream.events import parse
+    line = ('{"type":"turn.completed","usage":{"input_tokens":438060,'
+            '"cached_input_tokens":400384,"output_tokens":3719}}')
+    rec = {}
+    supervisor.terminal_sink(rec, lambda ev: None)(parse(line))
+    assert rec["cost_usd"] is None
+    assert supervisor.cost_report(rec) == (
+        "\n- cost: unknown (the harness reported none)"
+        "\n- tokens: 3,719 out · 438,060 in · 400,384 cache read · 0 cache write")
