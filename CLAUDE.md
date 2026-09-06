@@ -272,7 +272,7 @@ still worth it: it prints one line per case, and the failure names the case.
   `pipeline start --restart-on-upgrade` re-execs the daemon into the merged
   code, at most 3 times in 60s; without that flag nothing restarts it. Never
   `importlib.reload()`; live child records, an open SQLite handle and signal
-  handlers outlive the modules.
+  handlers outlive the modules. The drain is bounded by the lease: `drain_expired()` terminates an inflight child that outlives its lease during that drain, through the same `stop_child()` path `shut_down()` uses, so one stage that never exits cannot park the dispatcher while it still answers its socket (TICKET-123). A child whose lease is still live is waited for, exactly as DEC-032 requires.
 - **A stage inherits the operator's `~/.claude` unless told not to.** Without
   `--setting-sources project` a spawn loads every installed plugin, its skills,
   and its `SessionStart` hooks. On the machine this was found on that meant

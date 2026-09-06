@@ -2575,3 +2575,92 @@ def test_a_source_change_drain_waits_for_a_child_whose_lease_is_still_active():
 
     assert killed == [], "the drain terminated a child whose lease is still active"
     assert len(seen) == 3, f"expected the loop to end after tick 3, got {len(seen)}"
+
+
+def test_the_daemon_drain_completes_with_a_stuck_inflight_stage():
+    """`serve()` carries `run()`'s drain check against `any(states.values())`,
+    so it carries the same defect: a per-project inflight dict that never
+    empties parks the daemon while it still answers its socket."""
+    import os
+    import tempfile
+    import types
+
+    from pipeline.daemon import registry
+    from pipeline.daemon.server import Server
+
+    src = Path(supervisor.__file__)
+    before = src.stat().st_mtime
+    tmp = Path(tempfile.mkdtemp())
+    d = project()
+    store = Store(tmp / "events.db")
+    server = Server(store, tmp / "daemon.sock")
+    seen, orig_tick = [], supervisor.tick
+    stuck = types.SimpleNamespace(poll=lambda: None, terminate=lambda: None,
+                                  wait=lambda timeout=None: None, kill=lambda: None)
+
+    class Stop(BaseException):     # serve() catches Exception around tick()
+        pass
+
+    def fake_tick(proj, hcfg, inflight, *a, **kw):
+        seen.append(len(seen))
+        if len(seen) == 1:
+            inflight["STUCK"] = {"proc": stuck, "stage": "implementing"}
+            os.utime(src, (before + 10, before + 10))   # a merge lands
+        if len(seen) >= 5:
+            raise Stop("an inflight stage that never exits blocks the drain forever")
+        return False
+
+    supervisor.tick = fake_tick
+    registry.register(d)
+    try:
+        supervisor.serve(0, "fake", 1, store, server, once=False)
+    except Stop as e:
+        raise AssertionError(f"the daemon drain never completed: {e}")
+    finally:
+        supervisor.tick = orig_tick
+        os.utime(src, (before, before))
+        registry.unregister(d)
+        shutil.rmtree(d, ignore_errors=True)
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    assert len(seen) < 5, f"expected the daemon loop to end, got {len(seen)} ticks"
+
+
+def test_a_source_change_drain_names_what_it_waits_on(capsys):
+    """The drain was silent: the loop stopped claiming tickets, the log
+    stopped, and five tickets sat unworked for eight hours with nothing
+    saying why. One line names what the drain is waiting on."""
+    import os
+    import types
+
+    from pipeline.core import reset_notices
+
+    src = Path(supervisor.__file__)
+    before = src.stat().st_mtime
+    d = project()
+    seen, orig_tick = [], supervisor.tick
+    live = types.SimpleNamespace(poll=lambda: None, terminate=lambda: None,
+                                 wait=lambda timeout=None: None, kill=lambda: None)
+    meta = types.SimpleNamespace(lease_active=lambda: True)
+
+    def fake_tick(proj, hcfg, inflight, *a, **kw):
+        seen.append(len(seen))
+        if len(seen) == 1:
+            inflight["TICKET-001"] = {"proc": live, "stage": "implementing",
+                                      "meta": meta}
+            os.utime(src, (before + 10, before + 10))   # a merge lands
+        if len(seen) == 2:
+            inflight.clear()                            # the agent finishes
+        return False
+
+    reset_notices()
+    supervisor.tick = fake_tick
+    try:
+        supervisor.run(d, once=False, interval=0, harness_name="fake")
+    finally:
+        supervisor.tick = orig_tick
+        os.utime(src, (before, before))
+        shutil.rmtree(d, ignore_errors=True)
+
+    out = capsys.readouterr().out
+    assert "draining 1 inflight stage(s): TICKET-001 (implementing)" in out, out

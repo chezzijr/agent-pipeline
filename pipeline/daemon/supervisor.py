@@ -1771,6 +1771,10 @@ def serve(interval: int, harness_name: str | None, max_parallel: int, store, ser
     try:
         while not stopping():
             moved = moved or stale()
+            if moved:
+                for key, st in list(states.items()):
+                    drain_notice(Path(key), st)
+                    drain_expired(st)
             if moved and not any(states.values()):
                 print(exit_message(moved))
                 reason = SOURCE_CHANGED
