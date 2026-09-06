@@ -164,6 +164,7 @@ database under your state directory (see *Where it keeps things*).
 without registering, or one whose commands changed since.
 
 ```sh
+pipeline diagnostics                 # what a stage needs before it runs; read-only
 pipeline register ~/code/myproject   # runs its test_suite and probes test_one first
 pipeline start                       # spawns pipelined, detached; interactive stages need `pipeline tui` attached
 pipeline status                      # is it running, and how many projects
@@ -172,6 +173,26 @@ pipeline ls --project ~/code/myproject     # --project is a FILTER here
 pipeline stop
 pipeline unregister ~/code/myproject
 ```
+
+`pipeline diagnostics` prints eight rows and mutates nothing:
+
+- `package` -- the loaded package directory, so an editable install cannot
+  silently run a different checkout than the one you edited.
+- `executable` -- `sys.executable`, the Python actually running.
+- `pipeline` -- where `pipeline` resolves on `PATH`, or `not on PATH`.
+- `harness` -- the project's configured harness, its packaged `.toml` path,
+  and its write-stage tools.
+- `daemon` -- `running pid <pid> on <socket>` or `not running (<socket>)`.
+- `registration` -- whether this project is in the registry.
+- `git author` -- `name <email>` when Git can author a commit here, else
+  `missing: user.name, user.email` naming the unset key(s).
+- `worktree commit` -- `ready (<common dir>)` when a write stage's commit
+  would land, else `blocked: <reason>`.
+
+A project that is not a Git checkout reports both Git rows as
+`not applicable` and still registers. Otherwise `diagnostics` exits `1`
+when the Git author identity is missing or the Git common directory is
+unusable -- either would make a write stage's commit fail.
 
 `register` refuses a git worktree, because `git worktree add` copies
 `.project/` and the daemon would then tick a ticket's own checkout as a
@@ -185,6 +206,9 @@ something. `test_one` must exit non-zero when its selector matches no test,
 which is the one thing `gate()` cannot tell from a runner's output. A suite
 that runs and reports failures still registers. `pipeline register --force
 <path>` skips both checks, which is what a slow suite wants.
+`--force` skips only the `test_suite` and `test_one` probes; it never skips the Git author identity check
+-- a Git checkout with no `user.name` and no `user.email` refuses
+registration outright, because every write stage commits in its worktree.
 
 `pipelined` itself stays a raw foreground process, so `systemd --user`, `launchd`
 or tmux can supervise it; `pipeline start` is just a convenience wrapper. There is

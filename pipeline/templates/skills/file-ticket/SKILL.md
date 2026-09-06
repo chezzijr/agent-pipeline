@@ -160,10 +160,18 @@ Check something is actually running:
 ```sh
 pipeline status                  # is the daemon up
 pipeline projects                # is this repo registered
+pipeline diagnostics             # what a stage needs before it runs
 ```
 
 `pipeline status` **exits 1 when no daemon is running** — that is its answer, not a
 failure. Read the line it prints, not the exit code.
+
+`pipeline diagnostics` is read-only and prints eight rows: `package`,
+`executable`, `pipeline`, `harness`, `daemon`, `registration`, `git author`
+(`user.name`/`user.email`, or `missing: ...` naming which is unset) and
+`worktree commit` (`ready (<dir>)` or `blocked: <reason>`). A project that is
+not a Git checkout reports both Git rows as `not applicable` and still
+registers.
 
 - Not registered → `pipeline init` registers a project by default, so this
   usually means it was scaffolded with `--no-register`, in a git worktree, or
@@ -173,6 +181,9 @@ failure. Read the line it prints, not the exit code.
   matches nothing, then refuses when the suite cannot run at all or when
   `test_one` exits 0 on that probe; fix `.project/pipeline.toml` (the
   `pipeline-config` skill teaches how) or pass `--force` for a slow suite.
+  `--force` skips only the `test_suite` and `test_one` probes; it never skips the Git author identity check
+  — a Git checkout with no `user.name`/`user.email` refuses registration
+  outright, because every write stage commits in its worktree.
 - Daemon down → `pipeline run` (this project, in your terminal; `--once` drains the
   queue and exits) or `pipeline start` (detached, every registered project).
   **They differ where it matters:** `planning` is `mode: interactive`, so under the

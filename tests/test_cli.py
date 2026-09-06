@@ -1198,3 +1198,18 @@ def test_decisions_marks_superseded_reads_one_and_searches_bodies():
     r = cli(d, "decisions", "../../etc/passwd")
     assert r.returncode == 1 and "not a decision id" in r.stderr, r
     shutil.rmtree(d, ignore_errors=True)
+
+
+def test_diagnostics_documentation_explains_rows_and_force_boundary():
+    """`pipeline diagnostics` and register's Git-identity refusal must be
+    documented where an agent reads setup instructions, not just in code."""
+    terms = ("pipeline diagnostics", "package", "executable", "harness",
+             "daemon", "registration", "git author", "worktree commit",
+             "user.name", "user.email", "not applicable",
+             "never skips the Git author identity",
+             "skips only the `test_suite` and `test_one` probes")
+    for path in (Path(ROOT) / "README.md",
+                 Path(ROOT) / "pipeline/templates/skills/file-ticket/SKILL.md"):
+        text = path.read_text()
+        for term in terms:
+            assert term in text, f"{path}: missing {term!r}"
