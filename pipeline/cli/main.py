@@ -833,7 +833,7 @@ def cmd_tui(args) -> None:
     """
     from pipeline.tui.app import PipelineApp
 
-    app = PipelineApp(connect(), str(proj(args)) if args.project else None)
+    app = PipelineApp(connect(), str(proj(args)) if args.project else None, Store())
     app.run()
     sys.exit(app.return_code or 0)
 

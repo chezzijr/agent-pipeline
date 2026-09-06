@@ -39,6 +39,7 @@ from pipeline.core.machine import HUMAN_GATES, TERMINAL
 from pipeline.core.ticket import Ticket, ticket_path
 from pipeline.daemon import registry
 from pipeline.daemon.server import PTY_INPUT, ticket_rows
+from pipeline.daemon.store import daemon_notice
 from pipeline.pty.host import COLS, GEOM_OSC, ROWS, Screen, last_geometry
 from pipeline.stream import StreamReader
 
@@ -231,11 +232,14 @@ class PipelineApp(App):
         ("f", "finished", "finished"),
     ]
 
-    def __init__(self, client=None, project: str | None = None) -> None:
+    def __init__(self, client=None, project: str | None = None, store=None) -> None:
         super().__init__()
         self.client = client          # None == no daemon: the files still answer
+        self.store = store            # None == no event log to ask why the daemon went away
         self.stream = None            # the subscription's own connection
         self.project = project        # a filter, never a target
+        self.daemon_down = client is None
+        self.daemon_note = None
         self.projects: list[str] = []
         self.rows: dict[tuple[str, str], dict] = {}
         self.selected: tuple[str, str] | None = None
@@ -300,11 +304,17 @@ class PipelineApp(App):
         actually running -- and the files if there is not. Both answers are
         built by the same `ticket_rows()`, which is the whole point of it being
         one function."""
+        rows = None
         if self.client is not None:
             try:
-                return self.client.request("ls", project=self.project)
+                rows = self.client.request("ls", project=self.project)
             except PipelineError as e:
                 self.notify(f"daemon: {e}")
+        self.daemon_down = rows is None
+        self.daemon_note = (daemon_notice(self.store, short=True)
+                            if self.daemon_down and self.store is not None else None)
+        if rows is not None:
+            return rows
         targets = self.projects or ([self.project] if self.project
                                     else [str(p) for p in registry.projects()])
         return [self._carry(r) for p in targets for r in ticket_rows(Path(p))]
@@ -390,9 +400,10 @@ class PipelineApp(App):
         drops = f" - {self.dropped} events dropped" if self.dropped else ""
         mode = "RAW (esc esc to exit) - " if self.raw else ""
         unk = f" - {unknown} unknown (no daemon)" if unknown else ""
+        note = f" - {self.daemon_note}" if self.daemon_note else ""
         # the sketch's `$2.14 today` lives behind `m`: cost is TICKET-014's
         self.query_one("#status", Static).update(
-            f"{mode}{len(rows)} tickets - {running} running{unk}{finished}{drops}")
+            f"{mode}{len(rows)} tickets - {running} running{unk}{finished}{drops}{note}")
 
     # -- the event stream ---------------------------------------------------
     @work(thread=True, exclusive=True)

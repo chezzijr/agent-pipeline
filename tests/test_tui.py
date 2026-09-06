@@ -573,6 +573,33 @@ def test_a_failed_ls_keeps_the_last_daemon_answer_for_a_live_interactive_stage()
     asyncio.run(go())
 
 
+def test_the_status_bar_says_the_daemon_stopped_for_an_upgrade():
+    """The note must come from the store, not from the format string --
+    dropping the store must drop the phrase too."""
+    import tempfile
+    from pathlib import Path
+
+    from pipeline.daemon.store import Store
+
+    async def go():
+        tmp = Path(tempfile.mkdtemp())
+        store = Store(tmp / "events.db")
+        store.emit("", "daemon_stop", pid=1, reason="source_changed",
+                   module="pipeline.daemon.supervisor")
+        d = make_project()
+        app = PipelineApp(client=None, project=str(d), store=store)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            assert "daemon stopped for a source upgrade" in status(app)
+
+            app.store = None
+            app.refresh_tree()
+            await pilot.pause()
+            assert "daemon stopped for a source upgrade" not in status(app)
+
+    asyncio.run(go())
+
+
 class FakeStream:
     """The subscription connection. `send` records and hands back the id the
     daemon will tag its frames with; frames come back through `on_frame`
