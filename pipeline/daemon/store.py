@@ -35,6 +35,10 @@ CREATE TRIGGER IF NOT EXISTS events_no_delete BEFORE DELETE ON events
 
 COLUMNS = ("id", "ts", "project", "ticket", "stage", "session", "kind", "data")
 
+# `reason` on a `daemon_stop` event's `data`. `serve()` is the one writer.
+SOURCE_CHANGED = "source_changed"
+STOP_REASONS = ("source_changed", "signal", "drained", "error")
+
 
 def state_dir() -> Path:
     root = os.environ.get("XDG_STATE_HOME") or (Path.home() / ".local" / "state")
@@ -120,8 +124,38 @@ class Store:
         args.append(int(limit))
         return [_row(r) for r in self.conn.execute(sql, args)]
 
+    def last_daemon_event(self) -> dict | None:
+        r = self.conn.execute(
+            "SELECT * FROM events WHERE kind IN ('daemon_start','daemon_stop')"
+            " ORDER BY id DESC LIMIT 1").fetchone()
+        return _row(r) if r is not None else None
+
     def close(self) -> None:
         self.conn.close()
+
+
+def daemon_notice(store: "Store", short: bool = False) -> str | None:
+    """Why the daemon is not running, for `pipeline status` and the TUI
+    status bar. `None` when the store has no daemon-level event at all."""
+    ev = store.last_daemon_event()
+    if ev is None:
+        return None
+    when = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ev["ts"]))
+    if ev["kind"] == "daemon_start":
+        if short:
+            return "daemon gone with no stop recorded"
+        return (f"last started at {when} (pid {ev['data'].get('pid')}); "
+                f"no stop was recorded -- it may have been killed")
+    reason = ev["data"].get("reason", "unreported")
+    if reason == SOURCE_CHANGED:
+        module = ev["data"].get("module") or "a pipeline module"
+        if short:
+            return "daemon stopped for a source upgrade"
+        return (f"stopped for a source upgrade at {when}: {module} changed "
+                f"-- run pipeline start to load the merged code")
+    if short:
+        return f"daemon stopped ({reason})"
+    return f"stopped at {when} (reason: {reason})"
 
 
 def noop(kind: str, **kw) -> None:

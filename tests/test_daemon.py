@@ -1085,3 +1085,27 @@ def test_cost_report_renders_codex_tokens_and_an_unknown_cost():
     assert supervisor.cost_report(rec) == (
         "\n- cost: unknown (the harness reported none)"
         "\n- tokens: 3,719 out · 438,060 in · 400,384 cache read · 0 cache write")
+
+
+def test_the_daemon_notice_names_why_the_daemon_stopped():
+    from pipeline.daemon.store import daemon_notice
+    tmp = Path(tempfile.mkdtemp())
+    s = store(tmp)
+    assert daemon_notice(s) is None
+
+    s.emit("", "daemon_start", pid=7)
+    long_form = daemon_notice(s)
+    assert "no stop was recorded" in long_form
+    assert daemon_notice(s, short=True) == "daemon gone with no stop recorded"
+
+    s.emit("", "daemon_stop", pid=7, reason="source_changed",
+           module="pipeline.daemon.supervisor")
+    long_form = daemon_notice(s)
+    assert "source upgrade" in long_form
+    assert "pipeline.daemon.supervisor" in long_form
+    assert daemon_notice(s, short=True) == "daemon stopped for a source upgrade"
+
+    s.emit("", "daemon_stop", pid=7, reason="signal")
+    long_form = daemon_notice(s)
+    assert "reason: signal" in long_form
+    assert "source upgrade" not in long_form
