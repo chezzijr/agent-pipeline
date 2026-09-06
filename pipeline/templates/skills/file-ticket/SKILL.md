@@ -127,7 +127,9 @@ expected behaviour stated as something a test can check. If the user gave an exa
 string, include it — triage records it as `expect: <text>` and the gate greps the real
 test output for it, which is what stops a test that fails for an unrelated reason from
 passing as a reproduction. Give the invariant part of that string -- not a `/tmp` path, a
-pid, or a truncated tail, which the gate refuses because they cannot recur.
+pid, or a truncated tail, which the gate refuses because they cannot recur. Every line of
+the reproduction must be reachable, because an assertion hidden after an unconditional
+`raise` is unreachable -- it never runs, and the gate rejects it.
 
 **Anchor the mechanism in code.** Name the location as `path:line` --
 `pipeline/core/gate.py:383` -- and quote the two or three lines it points at.

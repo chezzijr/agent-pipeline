@@ -578,6 +578,14 @@ one, for the same reason: only `triage` may write `test_file`, so no re-plan
 can repoint it, and the finding says base PASSES too, so a human re-runs
 triage instead of reading it as a bad plan.
 
+A Tier A failure at `plan-validation` whose findings include an
+`INVALID-TEST: ` finding charges nothing either. `gate_result()` returns
+`invalid-test` and the ticket escalates on the first one, because only
+`triage` may write `test_file` and no re-plan can repair the test body: the
+gate parses the selected test with `ast` and flags a statement that sits
+after an unconditional `raise`, `return`, `break` or `continue` in the same
+statement list.
+
 A Tier A failure at `plan-validation` whose findings are all `ENVIRONMENT: `
 findings -- `test_suite_without_new` is red on base too, not this branch's
 doing -- escalates to a human and charges no counter, because no re-plan can

@@ -319,22 +319,24 @@ still worth it: it prints one line per case, and the failure names the case.
   Tier B agent -- it emits no `stage_end`, or one run would put two rows in
   view 1's denominator. Moving the gate back inline stalls the select loop
   for the length of the project's suite, exactly the bug TICKET-061 fixed.
-- **`gate_result()` splits a Tier A failure at `plan-validation` into five
+- **`gate_result()` splits a Tier A failure at `plan-validation` into six
   verdicts: `fail` (structural), `bad-plan` (substantive), `no-test-file`
   (the `test_file` names no file), `load-flaky` (the `test_file` exits 0 in
-  the worktree and on base) and `environment` (the suite is red on base
-  too) -- the last three escalate and charge nothing.** `structural_only()` in
-  `pipeline/core/gate.py` classifies the findings against `STRUCTURAL_MARKS`, a
+  the worktree and on base), `invalid-test` (the selected test hides
+  statically unreachable statements) and `environment` (the suite is red on
+  base too) -- the last four escalate and charge nothing.** `structural_only()`
+  in `pipeline/core/gate.py` classifies the findings against `STRUCTURAL_MARKS`, a
   `startswith` prefix allowlist: an unlisted finding reads as substantive on
   purpose, so a new structural finding in `gate()` needs its own mark or it
   silently charges `plan_validation_attempts` instead of
   `structural_gate_failures` like a bad plan. `MISSING_TEST_MARK`,
-  `LOAD_FLAKY_MARKS` and `ENVIRONMENT_MARKS` are three more `startswith`
-  allowlists beside it, checked by `missing_test_file()`, `load_flaky()` and
-  `environment_only()` in that order, all before `structural_only()`. Each
-  escalates through an enumerated `transition()` row that charges no counter,
-  and all three apply at `plan-validation` only: `revalidating` still gets
-  `fail`, whatever the findings say (DEC-029).
+  `LOAD_FLAKY_MARKS`, `INVALID_TEST_MARKS` and `ENVIRONMENT_MARKS` are four more
+  `startswith` allowlists beside it, checked by `missing_test_file()`,
+  `load_flaky()`, `invalid_test()` and `environment_only()` in that order, all
+  before `structural_only()`. Each escalates through an enumerated
+  `transition()` row that charges no counter, and all four apply at
+  `plan-validation` only: `revalidating` still gets `fail`, whatever the
+  findings say (DEC-029).
 - **The read-only allowlist has a per-project extension.** `[readonly] allow`
   in `.project/pipeline.toml` is exported as `PIPELINE_READONLY_ALLOW`, an
   argv-prefix list matched per shell segment. It never overrides

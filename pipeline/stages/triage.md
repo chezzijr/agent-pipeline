@@ -37,8 +37,12 @@ proof rather than a sentence.
    symptom**, in this project's existing test style and location.
 3. Run the test. Confirm it fails, and that the failure message matches the
    reported symptom rather than a setup error.
-4. Commit the test on the ticket branch.
-5. Write `## Reproduction`: the test's path, the exact failure output, and the
+4. Make every statement of the test reachable. Never put an assertion after
+   an unconditional `raise`, `return`, `break` or `continue`. The gate parses
+   the selected test and escalates the ticket to a human when the body hides
+   unreachable code.
+5. Commit the test on the ticket branch.
+6. Write `## Reproduction`: the test's path, the exact failure output, and the
    command that produces it. Also record, verbatim, the assertion or error
    text you actually saw, on a line of the form `expect: <text>` (e.g.
    `expect: KeyError: 'evict'`) -- the gate checks the test fails with this
