@@ -1,4 +1,5 @@
 """Tier A gate -- deterministic, no LLM judgment anywhere in the path."""
+import ast
 import re
 import shlex
 import shutil
@@ -331,6 +332,100 @@ def load_flaky(failures: list[str]) -> bool:
     it, and a plan that is ALSO bad still cannot satisfy Tier A.
     """
     return any(f.startswith(LOAD_FLAKY_MARKS) for f in failures)
+
+
+INVALID_TEST_MARK = "INVALID-TEST: "
+INVALID_TEST_MARKS = (INVALID_TEST_MARK,)
+TERMINATORS = (ast.Raise, ast.Return, ast.Break, ast.Continue)
+PARAM_RE = re.compile(r"\[.*\]$")
+
+
+def invalid_test(failures: list[str]) -> bool:
+    """Does `failures` include a test body that hides unreachable code?
+    `any`, not `all`: a plan that is ALSO bad cannot cancel a defect no
+    re-plan can repair."""
+    return any(f.startswith(INVALID_TEST_MARKS) for f in failures)
+
+
+def _stmt_blocks(node):
+    """Every lexical statement list `node` holds."""
+    blocks = []
+    for attr in ("body", "orelse", "finalbody"):
+        val = getattr(node, attr, None)
+        if isinstance(val, list) and val and isinstance(val[0], ast.stmt):
+            blocks.append(val)
+    for handler in getattr(node, "handlers", []):
+        blocks.append(handler.body)
+    for case in getattr(node, "cases", []):
+        blocks.append(case.body)
+    return blocks
+
+
+def _dead_pair(body):
+    """The first `(terminator, next statement)` pair in `body` where the
+    terminator is unconditional and the statement after it, in the SAME
+    statement list, can never run. `None` when there is no such pair."""
+    for i, node in enumerate(body):
+        if isinstance(node, TERMINATORS):
+            if i + 1 < len(body):
+                return node, body[i + 1]
+            return None
+        for block in _stmt_blocks(node):
+            pair = _dead_pair(block)
+            if pair:
+                return pair
+    return None
+
+
+def _selected_def(tree, names):
+    """Walk `names` from `tree`'s module body, one `FunctionDef`,
+    `AsyncFunctionDef` or `ClassDef` per level. `None` when any level is
+    not found."""
+    node = tree
+    for name in names:
+        found = None
+        for child in node.body:
+            if (isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+                    and child.name == name):
+                found = child
+                break
+        if found is None:
+            return None
+        node = found
+    return node
+
+
+def static_test_findings(wd: Path, test: str, tid: str) -> list[str]:
+    """Does the selected `.py` test hide unreachable code after an
+    unconditional `raise`, `return`, `break` or `continue`? Parses the file
+    with `ast` and never imports it, so a reachable call to an API the fix
+    will add stays valid -- this proves reachability, never member
+    existence."""
+    rel, _, selector = test.partition("::")
+    if not rel.endswith(".py") or not selector:
+        return []
+    names = selector.split("::")
+    names[-1] = PARAM_RE.sub("", names[-1])
+    try:
+        tree = ast.parse((wd / rel).read_text())
+    except (OSError, SyntaxError, ValueError):
+        return []
+    fn = _selected_def(tree, names)
+    if fn is None or not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return []
+    pair = _dead_pair(fn.body)
+    if pair is None:
+        return []
+    term, hidden = pair
+    return [
+        f"{INVALID_TEST_MARK}`{test}` hides unreachable code: "
+        f"`{ast.unparse(hidden)[:200]}` on line {hidden.lineno} can never run, "
+        f"because the unconditional `{type(term).__name__.lower()}` on line "
+        f"{term.lineno} always leaves the block first. An assertion on a "
+        f"path that does not exist proves nothing once the reported failure "
+        f"is fixed. Only `triage` may write `test_file` (`CLAIMS`), so no "
+        f"re-plan can repair it: move the assertion onto a reachable path, "
+        f"then `pipeline resume {tid} --stage triage`"]
 
 
 def _dec_mentions(dec: str) -> set[str]:
@@ -678,6 +773,8 @@ def gate(project: Path, tid: str, workdir: Path | None = None) -> tuple[bool, li
                 findings.append(f"{MISSING_TEST_MARK}{test_path} does not exist")
             else:
                 runnable.append(test)
+        for test in runnable:
+            findings += static_test_findings(wd, test, tid)
         # `reproduced`, not `failed`: `gate()` binds that name below for
         # the findings that decide the verdict.
         reproduced: list[tuple[str, str]] = []
