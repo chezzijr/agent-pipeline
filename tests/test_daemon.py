@@ -1183,3 +1183,38 @@ def test_pipelined_execs_only_for_a_source_change_inside_budget(capsys):
         os.environ.pop(dmain.COUNT_VAR, None)
         os.environ.pop(dmain.SINCE_VAR, None)
         shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_a_dead_socket_is_told_from_a_daemon_that_is_merely_slow():
+    """A daemon that exited and a daemon that is busy both fail an `ls`, and
+    only the first may cost the TUI its client, so `socket_dead()` must tell
+    them apart from what `Client.request()` actually raises."""
+    from pipeline.cli.client import Client, socket_dead
+
+    tmp = Path(tempfile.mkdtemp())
+    try:
+        path = tmp / "d.sock"
+        srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        srv.bind(str(path))
+        srv.listen(1)
+
+        c = Client(path, timeout=0.3)
+        conn, _ = srv.accept()
+        conn.close()
+        try:
+            c.request("ls")
+            assert False, "a closed peer answered"
+        except PipelineError as e:
+            assert socket_dead(e), f"a closed socket read as live: {e}"
+
+        c2 = Client(path, timeout=0.3)
+        conn2, _ = srv.accept()
+        try:
+            c2.request("ls")
+            assert False, "a silent daemon answered"
+        except PipelineError as e:
+            assert not socket_dead(e), f"a timed-out ls read as a dead socket: {e}"
+        conn2.close()
+        srv.close()
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)

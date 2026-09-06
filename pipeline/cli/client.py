@@ -4,6 +4,7 @@ Every client call has a file-based fallback, because the ticket files are the
 source of truth and the daemon only ever knew what it read from them. A
 daemon that is not running must cost you liveness, never an answer.
 """
+import errno
 import json
 import socket
 from pathlib import Path
@@ -65,6 +66,29 @@ class Client:
     def close(self) -> None:
         self.fh.close()
         self.sock.close()
+
+
+DEAD_ERRNOS = frozenset({errno.EPIPE, errno.ECONNRESET, errno.ECONNABORTED,
+                          errno.ENOTCONN, errno.EBADF, errno.ESHUTDOWN})
+DEAD_MARKS = ("broken pipe", "connection reset", "closed the connection",
+              "bad file descriptor", "not connected")
+
+
+def socket_dead(err: Exception) -> bool:
+    """Is this the error of a connection that can never answer again?
+
+    Positive evidence only -- an error it does not recognise reads as live,
+    because a busy daemon answers nothing for the length of a `test_one`
+    (DEC-061), and throwing its client away costs the TUI a working socket
+    and the PTY attach on it (DEC-062). Two channels, because `request()`
+    fails two ways: it chains the `OSError` it caught, so `__cause__` carries
+    the errno, and the EOF case raises with no cause and only its own
+    message.
+    """
+    cause = err.__cause__
+    if isinstance(cause, OSError) and cause.errno in DEAD_ERRNOS:
+        return True
+    return any(m in str(err).lower() for m in DEAD_MARKS)
 
 
 def connect(path: Path | None = None, timeout: float = 5.0) -> Client | None:

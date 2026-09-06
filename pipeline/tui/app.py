@@ -14,6 +14,12 @@ anything, because only the daemon knows the child's pid.
 
 The client is a constructor argument for exactly one reason: `tests/test_tui.py`
 passes a fake one. It is not a plugin point, and there is no second one.
+
+The app also replaces that client itself, because a `Client` whose daemon
+died can never answer again; `_rows()` asks `connect()` for a new one on the
+failed `ls` that proves the socket dead, and only then, since a timed-out
+`ls` from a busy daemon keeps the client, the subscription and the PTY
+attach; the file fallback lasts exactly as long as no daemon is reachable.
 """
 import base64
 import io
@@ -32,6 +38,7 @@ from textual.app import App, ComposeResult, SuspendNotSupported
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Footer, RichLog, Static, Tree
 
+from pipeline.cli import client as client_mod  # the module, not the name: tests patch client_mod.connect
 from pipeline.cli.main import (cmd_answer, cmd_approve, cmd_reject, plan_text,
                                 render)
 from pipeline.core import PipelineError
@@ -237,6 +244,8 @@ class PipelineApp(App):
         self.client = client          # None == no daemon: the files still answer
         self.store = store            # None == no event log to ask why the daemon went away
         self.stream = None            # the subscription's own connection
+        self.resubscribe = False      # a new client needs a new subscription worker
+        self.pending_attach = None    # the attach a reconnect dropped, to restore
         self.project = project        # a filter, never a target
         self.daemon_down = client is None
         self.daemon_note = None
@@ -284,32 +293,71 @@ class PipelineApp(App):
             [self.project] if self.project else [str(p) for p in registry.projects()])
         self._paint(rows)
         self.set_interval(REFRESH_SECS, self.refresh_tree)
-        self._subscribe()
+        self._start_stream()
 
-    def on_unmount(self) -> None:
+    def _close(self, *clients) -> None:
         """Shut the sockets down, not just close them: the reader thread parks
         in `recv` with no timeout, and a bare `close()` does not reliably wake
         it -- a live worker thread would then hold the process open long after
         `run()` returned."""
-        for c in (self.stream, self.client):
+        for c in clients:
             for call in (lambda: c.sock.shutdown(socket.SHUT_RDWR), lambda: c.close()):
                 try:
                     call()
                 except (OSError, AttributeError):
                     pass
 
+    def on_unmount(self) -> None:
+        self._close(self.stream, self.client)
+
     # -- rows ---------------------------------------------------------------
+    def _reconnect(self) -> bool:
+        """Ask for a new client and drop the one whose socket is dead.
+
+        Only a dead socket gets here (`socket_dead()`), so a timed-out `ls`
+        from a live daemon keeps its client, its subscription and its attach.
+        The old request socket and the old subscription both belong to the
+        daemon that went away; `_detach()` runs before they close because
+        `pty_id` numbers frames on the stream being dropped, and
+        `pending_attach` remembers what it dropped so `_reattach()` can put
+        it back. The early return is what stops a daemon-less TUI detaching
+        itself every 5 seconds.
+        """
+        new = client_mod.connect(getattr(self.client, "path", None))
+        if new is None and self.client is None:
+            return False
+        if self.attached is not None:
+            self.pending_attach = self.attached
+        self._detach()
+        self._close(self.stream, self.client)
+        self.client, self.stream = new, None
+        self.resubscribe = new is not None
+        return new is not None
+
     def _rows(self) -> list[dict]:
         """The daemon if there is one -- only it knows which stages are
         actually running -- and the files if there is not. Both answers are
         built by the same `ticket_rows()`, which is the whole point of it being
-        one function."""
+        one function.
+
+        `self.client is None` means "no daemon is reachable right now", never
+        "this app was started without one". The retry assigns rather than
+        returns, because `daemon_down` and `daemon_note` below it are what
+        the status bar reads (DEC-121).
+        """
         rows = None
+        if self.client is None:
+            self._reconnect()
         if self.client is not None:
             try:
                 rows = self.client.request("ls", project=self.project)
             except PipelineError as e:
                 self.notify(f"daemon: {e}")
+                if client_mod.socket_dead(e) and self._reconnect():
+                    try:
+                        rows = self.client.request("ls", project=self.project)
+                    except PipelineError as e:
+                        self.notify(f"daemon: {e}")
         self.daemon_down = rows is None
         self.daemon_note = (daemon_notice(self.store, short=True)
                             if self.daemon_down and self.store is not None else None)
@@ -333,8 +381,37 @@ class PipelineApp(App):
                     row[k] = last[k]
         return row
 
+    def _start_stream(self) -> None:
+        """The one caller of `_subscribe()` -- `_rows()` only ever sets the
+        flag, because `on_mount` calls `_rows()` and then subscribes on its
+        own, and a `_subscribe()` from inside `_rows()` would start a second
+        worker there and cancel the first mid-connect."""
+        self.resubscribe = False
+        self._subscribe()
+
+    def _reattach(self) -> None:
+        """Put back the PTY attach `_reconnect()` dropped, once the new
+        subscription has a socket. `_paint()`'s interactive-transition branch
+        cannot do it -- the row's `mode` never left `"interactive"`, so the
+        transition it tests for never happens. The operator moving the
+        cursor while the daemon was gone cancels the restore: that selection
+        is the newer instruction."""
+        key = self.pending_attach
+        if key is None:
+            return
+        row = self.rows.get(key) if key == self.selected else None
+        if row is None or row.get("mode") != "interactive":
+            self.pending_attach = None
+            return
+        if self.stream is not None and self._pty(row):
+            self.pending_attach = None
+
     def refresh_tree(self) -> None:
-        self._paint(self._rows())
+        rows = self._rows()
+        if self.resubscribe:
+            self._start_stream()
+        self._paint(rows)
+        self._reattach()
 
     def _visible(self, rows: list[dict]) -> list[dict]:
         """Which rows the tree paints. `done` and `rejected` hide by default;

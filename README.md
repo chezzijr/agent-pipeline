@@ -332,7 +332,11 @@ files instead and simply does not update itself. A ticket file cannot say
 whether a stage is running, so those rows report `running`/`mode` as unknown
 rather than idle, and the pane keeps the last answer the daemon gave for
 them; `pipeline ls` prints `-- no daemon: running/mode unknown for these
-rows` once above such a listing.
+rows` once above such a listing. Each 5s refresh asks `connect()` for a new
+connection when the one it holds is dead, a broken pipe rather than a
+request a busy daemon merely timed out, so a TUI left open across `pipeline
+stop` and `pipeline start` returns to daemon rows by itself, and an attached
+pane re-attaches on the new subscription.
 
 A ticket parked at `awaiting-approval` opens on its plan -- `## Plan`,
 `## Acceptance criteria` and `## Rollback`, the same three sections

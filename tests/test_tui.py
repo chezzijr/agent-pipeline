@@ -560,16 +560,65 @@ def test_a_failed_ls_keeps_the_last_daemon_answer_for_a_live_interactive_stage()
         flaky = Flaky([row(d, "TICKET-001", "planning",
                             running=True, mode="interactive")])
         app = PipelineApp(client=flaky, project=str(d))
-        async with app.run_test() as pilot:
-            await pilot.pause()
-            assert app.rows[(str(d), "TICKET-001")]["mode"] == "interactive"
-            flaky.fail = True
-            app.refresh_tree()
-            await pilot.pause()
-            assert app.rows[(str(d), "TICKET-001")]["mode"] == "interactive", \
-                "one timed-out ls made a live interactive stage look like a finished batch one"
-            assert app.rows[(str(d), "TICKET-001")]["running"] is True
-            await pilot.press("q")
+        # pinned: this file does not override XDG_RUNTIME_DIR, and a real daemon would answer
+        with patch.object(client_mod, "connect", return_value=None) as conn:
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                assert app.rows[(str(d), "TICKET-001")]["mode"] == "interactive"
+                flaky.fail = True
+                app.refresh_tree()
+                await pilot.pause()
+                assert app.rows[(str(d), "TICKET-001")]["mode"] == "interactive", \
+                    "one timed-out ls made a live interactive stage look like a finished batch one"
+                assert app.rows[(str(d), "TICKET-001")]["running"] is True
+                assert conn.call_count == 0, \
+                    "a timed-out ls asked connect() for a new client"
+                await pilot.press("q")
+        assert app.return_code == 0
+
+    asyncio.run(go())
+
+
+def test_a_timed_out_ls_keeps_the_client_and_its_pty_attach():
+    """DEC-062's failure one layer down. A busy daemon answers nothing for the
+    length of a `test_one` (DEC-061) and the 5s deadline reads as `daemon:
+    timed out`; swapping the client there closes the socket the PTY attach
+    lives on."""
+    async def go():
+        d = make_project()
+
+        class Slow(FakeClient):
+            def __init__(self, rows):
+                super().__init__(rows)
+                self.slow = False
+
+            def request(self, op, **kw):
+                if op == "ls" and self.slow:
+                    raise PipelineError("daemon: timed out")
+                return super().request(op, **kw)
+
+        slow = Slow([row(d, "TICKET-001", "planning",
+                          running=True, mode="interactive")])
+        app = PipelineApp(client=slow, project=str(d))
+        with patch.object(client_mod, "connect", return_value=FakeClient([])) as conn:
+            async with app.run_test() as pilot:
+                app.stream = FakeStream()
+                app.query_one(Tree).focus()
+                await select(app, pilot, str(d), "TICKET-001")
+                await pilot.pause()
+                assert app.attached == (str(d), "TICKET-001")
+
+                slow.slow = True
+                app.refresh_tree()
+                await pilot.pause()
+                assert conn.call_count == 0, \
+                    "a timed-out ls asked connect() for a new client"
+                assert app.client is slow, \
+                    "a timed-out ls threw away a live daemon's client"
+                assert app.attached == (str(d), "TICKET-001"), \
+                    "a timed-out ls detached the pane from a live interactive stage"
+
+                await pilot.press("q")
         assert app.return_code == 0
 
     asyncio.run(go())
@@ -612,6 +661,89 @@ def test_the_tui_reconnects_once_the_daemon_it_lost_comes_back():
                 await pilot.pause()
                 assert app.rows[(str(d), "TICKET-001")]["mode"] == "interactive", \
                     "TUI never reconnected once the daemon was reachable again"
+                await pilot.press("q")
+        assert app.return_code == 0
+
+    asyncio.run(go())
+
+
+def test_a_reconnect_puts_the_pty_attach_back_on_the_new_stream():
+    """The reconnect drops the subscription the attach lived on, and
+    `_paint()`'s interactive-transition branch cannot restore it, because
+    `mode` is `"interactive"` on both sides of the swap and there is no
+    transition to see."""
+    async def go():
+        d = make_project()
+
+        class DeadForever(FakeClient):
+            def __init__(self, rows):
+                super().__init__(rows)
+                self.broken = False
+
+            def request(self, op, **kw):
+                if self.broken:
+                    raise PipelineError("[Errno 32] Broken pipe")
+                return super().request(op, **kw)
+
+        live = row(d, "TICKET-001", "planning", running=True, mode="interactive")
+        dead = DeadForever([live])
+        fresh = FakeClient([live])
+
+        app = PipelineApp(client=dead, project=str(d))
+        with patch.object(client_mod, "connect", return_value=fresh):
+            async with app.run_test() as pilot:
+                app.stream = FakeStream()
+                app.query_one(Tree).focus()
+                await select(app, pilot, str(d), "TICKET-001")
+                await pilot.pause()
+                assert app.attached == (str(d), "TICKET-001")
+
+                dead.broken = True
+                app.refresh_tree()
+                await pilot.pause()
+                assert app.client is fresh
+                assert app.attached is None, "the dead stream kept its attach"
+                assert app.pending_attach == (str(d), "TICKET-001")
+
+                app.stream = FakeStream()
+                app.refresh_tree()
+                await pilot.pause()
+                assert app.attached == (str(d), "TICKET-001"), \
+                    "the reconnect dropped the pty attach and never put it back"
+                assert app.stream.ops() == ["attach"]
+                assert app.pending_attach is None
+
+                await pilot.press("q")
+        assert app.return_code == 0
+
+    asyncio.run(go())
+
+
+def test_a_tui_started_before_the_daemon_picks_it_up():
+    """`cmd_tui` builds `PipelineApp(connect(), ...)`, so a TUI opened before
+    `pipeline start` holds `client=None`, which is the same assignment-once
+    defect."""
+    async def go():
+        d = make_project()
+        fresh = FakeClient([row(d, "TICKET-001", "planning",
+                                 running=True, mode="interactive")])
+        app = PipelineApp(client=None, project=str(d))
+        with patch.object(client_mod, "connect", return_value=None) as conn:
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                assert app.client is None
+                assert app.rows[(str(d), "TICKET-001")]["mode"] is None, \
+                    "a file row cannot know the mode (DEC-062)"
+
+                conn.return_value = fresh
+                app.refresh_tree()
+                await pilot.pause()
+                assert app.client is fresh, \
+                    "a TUI started before the daemon never picked it up"
+                assert app.rows[(str(d), "TICKET-001")]["mode"] == "interactive"
+                assert app.daemon_down is False, \
+                    "the status bar still said no daemon after one answered"
+
                 await pilot.press("q")
         assert app.return_code == 0
 
