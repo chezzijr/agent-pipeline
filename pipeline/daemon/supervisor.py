@@ -1421,6 +1421,39 @@ def shut_down(project: Path, inflight: dict) -> None:
     inflight.clear()
 
 
+def drain_expired(inflight: dict) -> None:
+    """Bound a source-change drain by the lease. A child whose lease has
+    already expired is forfeit -- `start()` treats it that way -- so the drain
+    terminates it instead of waiting forever for a child that never exits.
+
+    Two records are skipped. One whose lease is still live is waited for, per
+    DEC-032 ruling 3. One with no `proc` is not a running child at all: there
+    is nothing to terminate, and popping it would end the drain a tick early.
+    """
+    for tid, rec in list(inflight.items()):
+        if rec.get("proc") is None:
+            continue
+        meta = rec.get("meta")
+        if meta is not None and meta.lease_active():
+            continue
+        stage = rec.get("stage", "?")
+        print(f"  drain: {tid} ({stage}) outlived its lease -- terminating")
+        stop_child(tid, rec, f"`{stage}` outlived its lease during a "
+                             f"source-change drain; terminated and lease released")
+        inflight.pop(tid, None)
+
+
+def drain_notice(project: Path, inflight: dict) -> None:
+    """One line naming what a source-change drain is waiting on. Without it the
+    drain is silent: the loop stops claiming tickets and nothing says why."""
+    if not inflight:
+        return
+    held = ", ".join(f"{tid} ({rec.get('stage', '?')})"
+                     for tid, rec in sorted(inflight.items()))
+    notice_once(f"  dispatcher source changed -- draining {len(inflight)} "
+                f"inflight stage(s): {held}", "drain", str(project))
+
+
 def _start_cap(project: Path, max_parallel: int) -> int:
     """A project's `max_parallel` lowers the daemon `-j`, it never raises it.
 
@@ -1669,6 +1702,9 @@ def run(project: Path, once: bool, interval: int, harness_name: str | None,
     try:
         while not stopping():
             moved = moved or stale()
+            if moved:
+                drain_notice(project, inflight)
+                drain_expired(inflight)
             if moved and not inflight:
                 print(exit_message(moved))
                 reason = SOURCE_CHANGED

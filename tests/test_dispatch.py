@@ -2529,3 +2529,49 @@ def test_ls_names_the_ticket_a_dependency_is_waiting_on():
     assert waiting_text(row["waiting"]).startswith(
         "waiting on TICKET-001 (depends_on, at implementing)")
     shutil.rmtree(d, ignore_errors=True)
+
+
+def test_a_source_change_drain_waits_for_a_child_whose_lease_is_still_active():
+    """The bound is the lease, not an unconditional kill. DEC-032 ruling 3
+    keeps the drain waiting so a live agent's work is not thrown away, so a
+    child whose lease is still active must survive the drain and finish."""
+    import os
+    import types
+
+    src = Path(supervisor.__file__)
+    before = src.stat().st_mtime
+
+    class Stop(BaseException):     # run() catches Exception around tick()
+        pass
+
+    d = project()
+    seen, killed, orig_tick = [], [], supervisor.tick
+    live = types.SimpleNamespace(poll=lambda: None,
+                                 terminate=lambda: killed.append("TICKET-001"),
+                                 wait=lambda timeout=None: None, kill=lambda: None)
+    meta = types.SimpleNamespace(lease_active=lambda: True)
+
+    def fake_tick(proj, hcfg, inflight, *a, **kw):
+        seen.append(len(seen))
+        if len(seen) == 1:
+            inflight["TICKET-001"] = {"proc": live, "stage": "implementing",
+                                      "meta": meta}
+            os.utime(src, (before + 10, before + 10))   # a merge lands
+        if len(seen) == 3:
+            inflight.clear()                            # the agent finishes
+        if len(seen) >= 5:
+            raise Stop("the loop never ended after the child finished")
+        return False
+
+    supervisor.tick = fake_tick
+    try:
+        supervisor.run(d, once=False, interval=0, harness_name="fake")
+    except Stop as e:
+        raise AssertionError(str(e))
+    finally:
+        supervisor.tick = orig_tick
+        os.utime(src, (before, before))
+        shutil.rmtree(d, ignore_errors=True)
+
+    assert killed == [], "the drain terminated a child whose lease is still active"
+    assert len(seen) == 3, f"expected the loop to end after tick 3, got {len(seen)}"
