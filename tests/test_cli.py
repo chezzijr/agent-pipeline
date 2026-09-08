@@ -108,6 +108,22 @@ def test_resume_refuses_a_stage_that_does_not_exist():
     shutil.rmtree(d)
 
 
+def test_resume_uses_the_last_session_stage_when_stage_is_omitted():
+    d = Path(tempfile.mkdtemp())
+    cli(d, "new", "t")
+    t = Ticket.load(d / ".project/tickets/TICKET-001.md")
+    t.extra["last_session"] = {"stage": "implementing", "id": "session-1"}
+    t.save()
+
+    r = cli(d, "resume", "TICKET-001")
+
+    assert r.returncode == 0, r.stderr
+    assert r.stdout == "TICKET-001: -> implementing (from last_session.stage)\n"
+    t = Ticket.load(d / ".project/tickets/TICKET-001.md")
+    assert t.stage == "implementing"
+    shutil.rmtree(d)
+
+
 def test_resume_reset_only_zeroes_it_cannot_grant_back_one():
     """--grant hands back exactly what was spent (2 -> 1); --reset still
     zeroes the whole counter."""
