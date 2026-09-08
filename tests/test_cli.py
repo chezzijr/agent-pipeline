@@ -12,7 +12,7 @@ import tempfile
 import types
 from pathlib import Path
 
-from helpers import ROOT, git_project, project
+from helpers import FIXTURE, ROOT, git_project, project
 from pipeline.core.config import PKG
 from pipeline.core.ticket import Ticket, stage_view
 
@@ -690,6 +690,49 @@ def test_ls_names_an_unregistered_project_when_the_daemon_lists_others():
         clim.connect = old_connect
         clim.registry.projects = old_projects
         os.chdir(old_cwd)
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def test_ls_does_not_offer_registration_from_a_linked_worktree():
+    """A linked worktree has tickets but `pipeline register .` rejects it."""
+    import pipeline.cli.main as clim
+
+    d, sh = git_project()
+    (d / ".project" / "tickets" / "TICKET-001.md").write_text(FIXTURE)
+    assert sh("git add -A .project && git commit -qm project").returncode == 0
+    wt = d / "linked" / "TICKET-001"
+    assert sh(f"git worktree add -b ticket/001 {wt} main").returncode == 0
+    old_cwd = Path.cwd()
+    old_connect = clim.connect
+    old_projects = clim.registry.projects
+
+    class Client:
+        def request(self, op, project=None):
+            assert (op, project) == ("ls", None)
+            return [{"id": "TICKET-999", "stage": "escalated",
+                     "class": "bugfix", "counters": {}}]
+
+        def close(self):
+            pass
+
+    try:
+        os.chdir(wt)
+        clim.connect = lambda: Client()
+        clim.registry.projects = lambda: [d]
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            clim.cmd_ls(argparse.Namespace(project=None, ticket=None,
+                                           all=False, stage=None,
+                                           verbose=False))
+        text = out.getvalue()
+        assert "TICKET-999" in text, text
+        assert "\nTICKET-001 " not in text, text
+        assert "pipeline register ." not in text, text
+    finally:
+        clim.connect = old_connect
+        clim.registry.projects = old_projects
+        os.chdir(old_cwd)
+        sh(f"git worktree remove --force {wt}")
         shutil.rmtree(d, ignore_errors=True)
 
 

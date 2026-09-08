@@ -505,7 +505,8 @@ def cmd_ls(args) -> None:
     if args.stage is not None and args.stage not in KNOWN_STAGES:
         die(f"`{args.stage}` is not a stage: {', '.join(sorted(KNOWN_STAGES))}")
     registration_notice = None
-    if successful_global_response and proj(args) not in registry.projects():
+    if (successful_global_response and not registry.is_worktree(proj(args))
+            and proj(args) not in registry.projects()):
         local_rows = ticket_rows(proj(args))
         if local_rows:
             registration_notice = (
