@@ -1,4 +1,7 @@
 """The CLI as a human runs it: a real process, not an in-process call."""
+import argparse
+import contextlib
+import io
 import json
 import os
 import shutil
@@ -638,6 +641,49 @@ def test_ls_says_running_is_unknown_when_no_daemon_answers():
     assert "-- no daemon: running/mode unknown for these rows" in r.stdout, r.stdout
     assert "TICKET-001" in r.stdout
     shutil.rmtree(d)
+
+
+def test_ls_names_an_unregistered_project_when_the_daemon_lists_others():
+    """A global daemon reply must not silently hide this directory's tickets.
+
+    `ls` without `--project` asks the daemon for every watched project.  This
+    project is deliberately absent from that reply, but it still has a ticket
+    on disk.  The command must name that mismatch and its recovery command.
+    """
+    import pipeline.cli.main as clim
+
+    d = project()
+    old_cwd = Path.cwd()
+    old_connect = clim.connect
+    closed = []
+
+    class Client:
+        def request(self, op, project=None):
+            assert op == "ls"
+            assert project is None
+            return [{"id": "TICKET-999", "stage": "escalated",
+                     "class": "bugfix", "counters": {}}]
+
+        def close(self):
+            closed.append(True)
+
+    try:
+        os.chdir(d)
+        clim.connect = lambda: Client()
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            clim.cmd_ls(argparse.Namespace(project=None, ticket=None,
+                                           all=False, stage=None,
+                                           verbose=False))
+        text = out.getvalue()
+        assert "TICKET-999" in text, text
+        assert (f"1 tickets in {d}, which is not registered -- "
+                "run `pipeline register .`") in text, text
+        assert closed == [True]
+    finally:
+        clim.connect = old_connect
+        os.chdir(old_cwd)
+        shutil.rmtree(d, ignore_errors=True)
 
 
 def test_ls_v_prints_the_last_session_cost():
