@@ -124,6 +124,40 @@ def test_resume_uses_the_last_session_stage_when_stage_is_omitted():
     shutil.rmtree(d)
 
 
+def test_resume_without_stage_requires_a_valid_last_session_stage():
+    for last_session in (None, "implementing", {"stage": "not-a-stage"}):
+        d = Path(tempfile.mkdtemp())
+        cli(d, "new", "t")
+        path = d / ".project/tickets/TICKET-001.md"
+        t = Ticket.load(path)
+        if last_session is not None:
+            t.extra["last_session"] = last_session
+            t.save()
+        before = path.read_text()
+
+        r = cli(d, "resume", "TICKET-001")
+
+        assert r.returncode != 0, r
+        assert "--stage" in r.stderr, r.stderr
+        assert path.read_text() == before
+        shutil.rmtree(d)
+
+
+def test_resume_explicit_stage_overrides_last_session_stage():
+    d = Path(tempfile.mkdtemp())
+    cli(d, "new", "t")
+    t = Ticket.load(d / ".project/tickets/TICKET-001.md")
+    t.extra["last_session"] = {"stage": "implementing", "id": "session-1"}
+    t.save()
+
+    r = cli(d, "resume", "TICKET-001", "--stage", "planning")
+
+    assert r.returncode == 0, r.stderr
+    assert r.stdout == "TICKET-001: -> planning\n"
+    assert Ticket.load(d / ".project/tickets/TICKET-001.md").stage == "planning"
+    shutil.rmtree(d)
+
+
 def test_resume_reset_only_zeroes_it_cannot_grant_back_one():
     """--grant hands back exactly what was spent (2 -> 1); --reset still
     zeroes the whole counter."""
@@ -440,6 +474,17 @@ def test_resume_help_and_readme_name_the_force_flag():
     assert "--force" in r.stdout, r.stdout
     readme = (Path(ROOT) / "README.md").read_text()
     assert "resume TICKET-017 --stage planning --force" in readme, readme
+
+
+def test_resume_help_and_docs_name_last_session_default():
+    r = subprocess.run([sys.executable, "-m", "pipeline", "resume", "--help"],
+                       cwd=ROOT, capture_output=True, text=True)
+    assert "last_session.stage" in r.stdout, r.stdout
+    for path in (Path(ROOT) / "README.md",
+                 Path(ROOT) / "pipeline/templates/skills/file-ticket/SKILL.md"):
+        text = path.read_text()
+        assert "last_session.stage" in text, path
+        assert "--stage" in text, path
 
 
 def test_start_and_run_help_explain_the_interactive_stage_difference():

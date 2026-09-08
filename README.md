@@ -75,6 +75,7 @@ pipeline --project ~/code/myproject decisions DEC-011       # print one record i
 pipeline --project ~/code/myproject decisions --grep flush  # only records whose text matches
 pipeline --project ~/code/myproject approve TICKET-001   # -> revalidating, or -> merging from awaiting-merge
 pipeline --project ~/code/myproject reject  TICKET-001 "ignores cache invalidation"
+pipeline --project ~/code/myproject resume  TICKET-001  # resumes last_session.stage
 pipeline --project ~/code/myproject resume  TICKET-001 \
     --stage planning --reset plan_validation_attempts
 pipeline --project ~/code/myproject resume  TICKET-001 \
@@ -547,6 +548,10 @@ Then one of three:
 `--reset` zeroes a counter; `--grant` hands back one spent attempt (`N` with
 `--grant counter=N`) and cannot return more than was spent. Naming the same
 counter in both is an error, not a merge.
+
+Bare `pipeline resume TICKET-017` returns to the dispatcher-recorded
+`last_session.stage`. An explicit `--stage` overrides that default. A ticket
+without a valid recorded stage requires `--stage`.
 
 `--note` attaches your reasoning to the resume. It lands in `## Thread`
 attributed to you, as a kind the stage view never omits, so the stage you

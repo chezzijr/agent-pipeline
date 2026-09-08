@@ -253,7 +253,9 @@ can fail on, so triage returns `result: rejected` and the ticket dies there.
   skips both.
 - **Do not resume or reject an escalated ticket on the user's behalf.** The bound it
   hit is the checkpoint, the same as approval is. Read it -- README's *When a ticket
-  escalates* is the procedure -- and hand the user the command.
+  escalates* is the procedure -- and hand the user the command. Bare `pipeline resume
+  TICKET-NNN` returns to `last_session.stage`; `--stage` overrides it. A ticket without
+  a valid recorded stage requires `--stage`.
 - **Do not edit a ticket that is not in `new`.** A stage may hold its lease; use
   `pipeline answer <id> "..."` or `pipeline reject <id> "why"`, which append to the
   thread properly. To edit a running ticket by hand, interrupt the stage first
