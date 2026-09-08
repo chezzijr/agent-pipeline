@@ -531,6 +531,29 @@ def test_a_still_good_plan_is_implemented_after_the_rebase():
     shutil.rmtree(d, ignore_errors=True)
 
 
+def test_a_dirty_worktree_is_cleaned_before_revalidating_rebases():
+    """TICKET-124: interrupted work leaves tracked changes behind. Revalidation
+    owns no branch work, so it must discard those changes before its rebase."""
+    d, sh, path, wt = _ticket_awaiting_approval()
+    (wt / "test_thing.py").write_text("interrupted implementation\n")
+    (d / "unrelated.py").write_text("base moved\n")
+    sh("git add unrelated.py && git commit -qm 'base moved'")
+
+    did, rec = supervisor.start(d, path, harness("fake"), {})
+    assert did and rec and rec["kind"] == "regate"
+    rec["proc"].wait()
+    supervisor.finish(d, rec)
+
+    t = Ticket.load(path)
+    assert t.stage == "implementing", (
+        "a dirty worktree escalated instead of being cleaned before rebase")
+    assert (wt / "test_thing.py").read_text() == "", \
+        "revalidation did not discard interrupted work before rebasing"
+    assert (wt / "unrelated.py").exists(), "the branch did not rebase onto base"
+    assert not t.lease_active()
+    shutil.rmtree(d, ignore_errors=True)
+
+
 def test_a_rebase_conflict_recuts_the_branch_and_returns_to_triage():
     """A conflicting rebase is repaired by discarding the branch's commits,
     not by resolving them: abort the rebase, reset the branch onto base, and
