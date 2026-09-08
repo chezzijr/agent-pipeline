@@ -639,6 +639,7 @@ def test_ls_says_running_is_unknown_when_no_daemon_answers():
     cli(d, "new", "cache leaks", "--class", "bugfix")
     r = cli(d, "ls")
     assert "-- no daemon: running/mode unknown for these rows" in r.stdout, r.stdout
+    assert "which is not registered" not in r.stdout, r.stdout
     assert "TICKET-001" in r.stdout
     shutil.rmtree(d)
 
@@ -655,7 +656,9 @@ def test_ls_names_an_unregistered_project_when_the_daemon_lists_others():
     d = project()
     old_cwd = Path.cwd()
     old_connect = clim.connect
+    old_projects = clim.registry.projects
     closed = []
+    registered = [Path("/registered-project")]
 
     class Client:
         def request(self, op, project=None):
@@ -670,6 +673,7 @@ def test_ls_names_an_unregistered_project_when_the_daemon_lists_others():
     try:
         os.chdir(d)
         clim.connect = lambda: Client()
+        clim.registry.projects = lambda: registered
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
             clim.cmd_ls(argparse.Namespace(project=None, ticket=None,
@@ -677,11 +681,14 @@ def test_ls_names_an_unregistered_project_when_the_daemon_lists_others():
                                            verbose=False))
         text = out.getvalue()
         assert "TICKET-999" in text, text
+        assert "TICKET-001" not in text, text
         assert (f"1 tickets in {d}, which is not registered -- "
                 "run `pipeline register .`") in text, text
         assert closed == [True]
+        assert registered == [Path("/registered-project")]
     finally:
         clim.connect = old_connect
+        clim.registry.projects = old_projects
         os.chdir(old_cwd)
         shutil.rmtree(d, ignore_errors=True)
 

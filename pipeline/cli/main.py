@@ -498,12 +498,22 @@ def cmd_ls(args) -> None:
             rows = None    # unregistered, or a daemon in trouble: read the files
         finally:
             c.close()
+    successful_global_response = rows is not None and not args.project
     if rows is None:
         targets = [proj(args)] if args.project else registry.projects()
         rows = [r for p in targets for r in ticket_rows(p)]
     if args.stage is not None and args.stage not in KNOWN_STAGES:
         die(f"`{args.stage}` is not a stage: {', '.join(sorted(KNOWN_STAGES))}")
+    registration_notice = None
+    if successful_global_response and proj(args) not in registry.projects():
+        local_rows = ticket_rows(proj(args))
+        if local_rows:
+            registration_notice = (
+                f"{len(local_rows)} tickets in {proj(args)}, which is not registered -- "
+                "run `pipeline register .`")
     rows = filter_ls_rows(rows, args.ticket, args.all, args.stage)
+    if registration_notice:
+        print(registration_notice)
     if any(r.get("running", False) is None for r in rows):
         # one line, not one token per row: with no daemon EVERY row is
         # unknown, and the per-row marks below are all file facts
