@@ -422,6 +422,8 @@ that the next re-gate does not reproduce -- a flaky suite, a machine under
 load -- costs a re-plan and not the ticket. Two failures with no pass between
 them still escalate.
 
+Before that rebase, revalidation discards uncommitted tracked and ordinary untracked work from the ticket worktree. It uses `git clean -fd`, so ignored artifacts remain in place.
+
 Two tickets whose `files_declared` intersect never run at the same time -- the
 second one waits rather than failing. That ordering is silent, so `ls` flags
 anything sitting still for more than `STALE_HOURS`.

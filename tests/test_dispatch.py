@@ -465,7 +465,8 @@ def _gating_project():
     commit."""
     d, sh = git_project()
     (d / "test_thing.py").write_text("")
-    sh("git add test_thing.py && git commit -qm 'the test file'")
+    (d / ".gitignore").write_text("build-cache/\n")
+    sh("git add test_thing.py .gitignore && git commit -qm 'the test file'")
     (d / ".project/pipeline.toml").write_text(
         'test_one = "echo test_broken; exit 1"\n'
         'test_suite = "true"\n'
@@ -550,6 +551,32 @@ def test_a_dirty_worktree_is_cleaned_before_revalidating_rebases():
     assert (wt / "test_thing.py").read_text() == "", \
         "revalidation did not discard interrupted work before rebasing"
     assert (wt / "unrelated.py").exists(), "the branch did not rebase onto base"
+    assert not t.lease_active()
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_an_untracked_collision_is_cleaned_before_revalidating_rebases():
+    """TICKET-124: cleanup removes colliding untracked files but preserves
+    ignored artifacts before the revalidation rebase."""
+    d, sh, path, wt = _ticket_awaiting_approval()
+    (wt / "added.txt").write_text("interrupted implementation\n")
+    (wt / "build-cache").mkdir()
+    (wt / "build-cache/artifact.bin").write_text("cached artifact\n")
+    (d / "added.txt").write_text("base version\n")
+    sh("git add added.txt && git commit -qm 'base adds added.txt'")
+
+    did, rec = supervisor.start(d, path, harness("fake"), {})
+    assert did and rec and rec["kind"] == "regate"
+    rec["proc"].wait()
+    supervisor.finish(d, rec)
+
+    t = Ticket.load(path)
+    assert t.stage == "implementing", (
+        "an untracked collision escalated instead of being cleaned before rebase")
+    assert (wt / "added.txt").read_text() == "base version\n", \
+        "cleanup did not let the rebase replace the untracked collision"
+    assert (wt / "build-cache/artifact.bin").read_text() == "cached artifact\n", \
+        "cleanup removed an ignored artifact; git clean must omit -x"
     assert not t.lease_active()
     shutil.rmtree(d, ignore_errors=True)
 

@@ -582,7 +582,8 @@ def regate_cmd(project: Path, tid: str, base: str, findings: Path) -> str:
     gate has to judge the tree the rebase produced. `REBASE_FAILED` (3) marks
     a rebase conflict distinctly from `pipeline gate`'s own 0/1, so
     `finish_regate()` can tell DEC-029's repair path from a gate failure."""
-    return (f"git rebase {shlex.quote(base)} || exit {REBASE_FAILED}\n"
+    return ("git reset --hard HEAD && git clean -fd\n"
+            f"git rebase {shlex.quote(base)} || exit {REBASE_FAILED}\n"
             f"{gate_cmd(project, tid, findings)}")
 
 

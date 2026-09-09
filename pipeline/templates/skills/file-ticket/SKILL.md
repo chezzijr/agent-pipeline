@@ -12,6 +12,8 @@ A ticket is a work order for an agent pipeline, not a bug report for a person. T
 dispatcher picks it up, a triage agent reproduces it, a planning agent plans it, and a
 gate refuses to let any of that proceed on a vague ticket.
 
+Before approved plans revalidate, the dispatcher discards uncommitted tracked and ordinary untracked work from the ticket worktree. Ignored artifacts survive because the cleanup uses `git clean -fd`, not `git clean -fdx`.
+
 **You fill in only what a human knows and an agent cannot guess.** Everything else is
 deliberately left empty — filling it in yourself is not helpfulness, it is guessing
 inside a system built to stop agents guessing.
