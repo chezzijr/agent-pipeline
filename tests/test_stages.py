@@ -85,6 +85,14 @@ def test_common_rules_say_where_a_code_edit_goes():
     assert "the ticket file and the result file" in text
 
 
+def test_common_rules_state_the_commit_message_format():
+    f = C.compose_prompt("review")
+    text = f.read_text()
+    f.unlink()
+    assert "TICKET-nnn" in text and "conventional" in text.lower(), \
+        "_common.md never tells a committing stage how to name its commit"
+
+
 def test_the_composed_prompt_carries_the_stage_view():
     """The view reaches the agent through the system prompt, not a file
     it has to open. A prompt built without one is the pre-TICKET-023
