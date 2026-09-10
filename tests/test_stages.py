@@ -42,6 +42,12 @@ def test_triage_checks_the_test_file_path_exists():
         "triage is never told to check that the path half of test_file is a file"
 
 
+def test_quick_review_compares_against_the_cheap_route_head():
+    text = (C.STAGES_DIR / "quick-review.md").read_text()
+    assert "cheap_route_head" in text, \
+        "quick-review question 1 still names <base>, which always shows the new test as added"
+
+
 def test_triage_requires_reachable_post_fix_assertions():
     for path in (C.STAGES_DIR / "triage.md", C.SKILL_TEMPLATE):
         assert "unreachable" in path.read_text(), \
