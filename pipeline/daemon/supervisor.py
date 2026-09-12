@@ -475,7 +475,7 @@ def spawn(project: Path, wt: Path, tid: str, stage: str, hcfg: dict,
     servers = mcp_servers(project, cfg)
     mcp = mcp_config(servers, hcfg)
     allow = readonly_allow(project)
-    # A review cap scales with the plan its diff came from, the way
+    # A default-scaled stage cap scales with the plan it works from, the way
     # `bound_for()` scales an attempt budget (DEC-047). The counters ride
     # the ticket load the view already pays for. This rebind must precede
     # the `stage_cap(cfg, hcfg)` call below so `rec["cap"]` carries the

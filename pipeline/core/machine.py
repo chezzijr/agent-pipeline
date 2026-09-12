@@ -23,14 +23,15 @@ FILES_PER_ATTEMPT = 4
 # the largest plan this repo has produced (24 steps, 10 files), which
 # converged on its fifth planning run.
 BOUND_CEILING = 5
-# The three review stages spawn with a `max_usd` that grows one dollar per 4
-# declared files or per 8 plan steps, whichever is larger. A $4 review cap
-# covered ten small tickets on 2026-08-27 and was exhausted by the one
-# 677-line, 15-file diff, killing the stage mid-verdict. The ceiling is
-# twice the stage's own number, so one runaway diff cannot buy an unbounded
-# spend. Every other stage stays out of `USD_SCALED` until evidence says
-# otherwise.
-USD_SCALED = {"review", "quick-review", "holistic-review"}
+# The review stages and `implementing` spawn with a `max_usd` that grows one
+# dollar per 4 declared files or per 8 plan steps, whichever is larger. A $4
+# review cap covered ten small tickets on 2026-08-27 and was exhausted by the
+# one 677-line, 15-file diff, killing the stage mid-verdict. An $8 implementing
+# cap was exhausted by a 21-step VM plan in 2026-09, killing the stage mid-step.
+# The ceiling is twice the stage's own number, so one runaway diff cannot buy
+# unbounded spend. Every other stage stays out of `USD_SCALED` until evidence
+# says otherwise.
+USD_SCALED = {"implementing", "review", "quick-review", "holistic-review"}
 USD_FILES_PER_DOLLAR = 4
 USD_STEPS_PER_DOLLAR = 8
 USD_CEILING_FACTOR = 2
