@@ -178,6 +178,41 @@ def sections(body: str) -> dict[str, str]:
     return out
 
 
+def replace_section(body: str, name: str, content: str) -> str:
+    """Replace all real `## name` sections with one canonical section.
+
+    Fence-aware scans keep captured Markdown inert. Duplicate target headings
+    collapse because a dict-shaped section view cannot preserve two owners.
+    A missing section is inserted before Thread, or at the body end.
+    """
+    lines = body.splitlines(keepends=True)
+    plain = [line.rstrip("\n") for line in lines]
+    fenced = _fenced(plain)
+    headings = [(i, re.match(r"^##\s+(.+?)\s*$", line))
+                for i, line in enumerate(plain) if not fenced[i]]
+    headings = [(i, match.group(1)) for i, match in headings if match]
+    targets = [i for i, heading in headings if heading == name]
+    replacement = f"## {name}\n{content.strip()}\n"
+    if not targets:
+        thread = next((i for i, heading in headings if heading == "Thread"), len(lines))
+        prefix = "".join(lines[:thread]).rstrip("\n")
+        suffix = "".join(lines[thread:])
+        return prefix + ("\n" if prefix else "") + replacement + ("\n" if suffix else "") + suffix
+
+    end_by_start = {start: next((other for other, _ in headings if other > start), len(lines))
+                    for start in targets}
+    out, cursor = [], 0
+    for start in targets:
+        end = end_by_start[start]
+        if cursor < start:
+            out.extend(lines[cursor:start])
+        if start == targets[0]:
+            out.append(replacement)
+        cursor = end
+    out.extend(lines[cursor:])
+    return "".join(out)
+
+
 def append_entry(body: str, header: str, text: str) -> str:
     """Append at the end of the `## Thread` SECTION, not the end of the body.
     Today's template happens to put `## Thread` last; the moment anything

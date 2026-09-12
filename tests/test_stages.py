@@ -117,6 +117,18 @@ def test_an_interactive_prompt_reverses_the_sidecar_ordering():
     assert "Write the result file LAST" in inter
 
 
+def test_batch_and_interactive_prompts_forbid_summary_rewrites():
+    """Summary belongs to the filer in both prompt forms.
+
+    These fail while the shared prompt directs a stage to rewrite Summary.
+    """
+    batch = C.compose_prompt("planning").read_text()
+    inter = C.compose_prompt("planning", None, "", None, interactive=True).read_text()
+    assert "rewrite `## Summary`" not in batch
+    assert "rewrite `## Summary`" not in inter
+    assert "## Thread" in batch and "## Thread" in inter
+
+
 def test_every_stage_named_by_the_state_machine_has_a_prompt():
     # `counters` and `klass` are part of the table, not decoration:
     # `holistic-review` needs a non-bugfix class AND `review_loops > 0` -- it

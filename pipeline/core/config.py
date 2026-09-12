@@ -702,7 +702,8 @@ def compose_prompt(stage: str, hcfg: dict | None = None, view: str = "",
     if interactive:
         text += ("\n\n---\n\n# This session runs on a terminal\n\n"
                  "Write the result file LAST: after your `## Thread` entry "
-                 "and your `## Summary` rewrite. The dispatcher ends an "
+                 "and other ticket prose edits. Do not edit `## Summary`; it "
+                 "belongs to the filer. The dispatcher ends an "
                  "interactive session as soon as the sidecar appears, so "
                  "anything you have not written by then is lost. This "
                  "reverses rule 6's ordering and nothing else.")

@@ -428,6 +428,20 @@ def test_a_fence_closes_only_on_its_own_terms():
     assert s["After"] == "tail"
 
 
+def test_replace_section_ignores_fenced_duplicates_and_inserts_missing_heading():
+    """Only real duplicate headings are canonicalized; fenced headings stay raw.
+
+    This fails before `replace_section()` exists. The replacement must preserve
+    bytes outside the real Summary ranges and add a missing Summary before Thread.
+    """
+    body = ("intro\n## Summary\nfirst\n\n```\n## Summary\nfenced\n```\n"
+            "## Summary\nsecond\n\n## Thread\nentry\n")
+    out = T.replace_section(body, "Summary", "human scope")
+    assert out == "intro\n## Summary\nhuman scope\n## Thread\nentry\n"
+
+    missing = T.replace_section("intro\n## Thread\nentry\n", "Summary", "human scope")
+    assert missing == "intro\n## Summary\nhuman scope\n\n## Thread\nentry\n"
+
 def test_a_lease_nobody_can_read_escalates_instead_of_crashing():
     """`lease.expires` is the field `validate_meta` never checked. Unquoted,
     YAML hands back a `datetime` and `fromisoformat` raised TypeError; a naive

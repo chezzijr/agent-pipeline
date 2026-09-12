@@ -30,6 +30,7 @@ from pipeline.core.machine import (CLEANUP_STAGES, CONTROL_FIELDS,
                                    dep_holder, dep_unsatisfiable, transition)
 from pipeline.core.ticket import (Ticket, all_tickets, as_list, drop_result,
                                   now, read_result, record_decision,
+                                  replace_section, sections,
                                   result_file, stage_view, ticket_path,
                                   tickets_dir, validate_meta)
 from pipeline.core.worktree import (base_ref, dirty_snapshot, drop_worktree,
@@ -1247,6 +1248,14 @@ def _finish(project: Path, rec: dict, emit=noop) -> str:
     # dispatcher rather than requested in a prompt.
     snap = rec["meta"]
     owned = snap.frontmatter()
+    snapshot_summary = snap.section("Summary")
+    agent_summary = sections(agent_body).get("Summary", "")
+    # DEC-113 keeps a frontmatterless recovery path: without an envelope the
+    # dispatcher cannot distinguish a legacy body-only ticket from an agent
+    # replacing protected prose, so it restores frontmatter but adopts prose.
+    summary_tampered = agent is not None and agent_summary != snapshot_summary
+    if summary_tampered:
+        agent_body = replace_section(agent_body, "Summary", snapshot_summary)
     tampered = ({k: v for k, v in agent.frontmatter().items()
                  if k in CONTROL_FIELDS and v != owned.get(k)}
                 if agent is not None else {})
@@ -1273,6 +1282,13 @@ def _finish(project: Path, rec: dict, emit=noop) -> str:
                     + ", ".join(f"{k}={v!r}" for k, v in tampered.items())
                     + " -- the snapshot diff shows the change, not its author"
                       " (a `pipeline resume --force` during the run does this too)", emit)
+        return "tampered"
+
+    if summary_tampered:
+        drop_result(project, tid)
+        escalate(t, f"Summary changed while `{stage}` held the ticket: "
+                    f"{agent_summary!r} -> {snapshot_summary!r} -- the snapshot "
+                    "diff shows the change, not its author", emit)
         return "tampered"
 
     if rec["before"] is not None and tree_snapshot(wt) != rec["before"]:

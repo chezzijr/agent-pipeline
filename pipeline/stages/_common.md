@@ -18,8 +18,8 @@ it is lost.
 3. Never edit the YAML frontmatter. The dispatcher owns it, and `stage` in
    particular. You cannot advance, retry, or escalate a ticket -- you only
    report what happened in your own stage.
-4. Append your findings to `## Thread` (never rewrite existing entries) and
-   rewrite `## Summary` so the next stage can skip the thread. Locate the
+4. Append your findings to `## Thread` (never rewrite existing entries). Do not
+   edit `## Summary`; it belongs to the filer. Locate the
    section by grepping the file for `^## `, then read only that range
    before you edit it. Never read the whole ticket file in order to make
    an edit -- that is the cost the view exists to remove.
@@ -47,7 +47,7 @@ test_file: null     # optional; triage only; one test or a list
 ```
 
 Write it as soon as your stage's work is done -- before you append your
-`## Thread` entry and rewrite `## Summary`. A stage killed at its spending cap
+`## Thread` entry. A stage killed at its spending cap
 loses whatever it had not written yet, and the sidecar is the one thing the
 dispatcher cannot reconstruct.
 
