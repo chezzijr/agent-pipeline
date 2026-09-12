@@ -98,6 +98,7 @@ That prints the path. If the repo is not registered with the daemon, it also
 prints a warning that `pipeline start` cannot discover it -- the ticket is
 still filed; see *Not registered* below for the fix. Then rewrite `## Summary` — the template puts the bare title
 there, which is not enough for an agent starting cold with no other context.
+Name every expected change file in `## Summary`. quick-review judges cheap-route scope from ticket prose, not `files_declared`.
 
 A good summary is three short paragraphs:
 
@@ -105,6 +106,8 @@ A good summary is three short paragraphs:
 ## Summary
 
 evict() never drops the key when the cache is at capacity
+
+Expected change files: `cache/lru.py` and `tests/test_lru.py`.
 
 `Cache.evict()` is supposed to make room by removing the LRU entry. It picks
 the victim and never removes it -- `cache/lru.py:64`, on main at a1b2c3d:
