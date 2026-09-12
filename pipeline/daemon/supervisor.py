@@ -30,7 +30,7 @@ from pipeline.core.machine import (CLEANUP_STAGES, CONTROL_FIELDS,
                                    dep_holder, dep_unsatisfiable, transition)
 from pipeline.core.ticket import (Ticket, all_tickets, as_list, drop_result,
                                   now, read_result, record_decision,
-                                  replace_section, sections,
+                                  replace_section, section_count, sections,
                                   result_file, stage_view, ticket_path,
                                   tickets_dir, validate_meta)
 from pipeline.core.worktree import (base_ref, dirty_snapshot, drop_worktree,
@@ -1253,7 +1253,9 @@ def _finish(project: Path, rec: dict, emit=noop) -> str:
     # DEC-113 keeps a frontmatterless recovery path: without an envelope the
     # dispatcher cannot distinguish a legacy body-only ticket from an agent
     # replacing protected prose, so it restores frontmatter but adopts prose.
-    summary_tampered = agent is not None and agent_summary != snapshot_summary
+    summary_tampered = agent is not None and (
+        agent_summary != snapshot_summary
+        or section_count(agent_body, "Summary") != 1)
     if summary_tampered:
         agent_body = replace_section(agent_body, "Summary", snapshot_summary)
     tampered = ({k: v for k, v in agent.frontmatter().items()

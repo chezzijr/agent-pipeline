@@ -178,6 +178,13 @@ def sections(body: str) -> dict[str, str]:
     return out
 
 
+def section_count(body: str, name: str) -> int:
+    """Count real `## name` headings without treating fenced output as prose."""
+    lines = body.splitlines()
+    return sum(1 for line, fenced in zip(lines, _fenced(lines))
+               if not fenced and re.match(r"^##\s+" + re.escape(name) + r"\s*$", line))
+
+
 def replace_section(body: str, name: str, content: str) -> str:
     """Replace all real `## name` sections with one canonical section.
 

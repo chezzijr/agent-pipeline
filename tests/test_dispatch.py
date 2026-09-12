@@ -2246,6 +2246,33 @@ def test_finish_preserves_the_human_summary_while_adopting_agent_sections():
     shutil.rmtree(d, ignore_errors=True)
 
 
+def test_finish_rejects_duplicate_summary_that_hides_an_earlier_change():
+    """A later matching Summary cannot hide an earlier protected-prose edit."""
+    d = project(FIXTURE.replace("stage: plan-validation", "stage: quick-review")
+                .replace("## Summary\nx", "## Summary\nhuman scope"))
+    path = d / ".project/tickets/TICKET-001.md"
+    snap = Ticket.load(path)
+    path.write_text(FIXTURE.replace("stage: plan-validation", "stage: quick-review")
+                    .replace("## Summary\nx\n", "## Summary\nagent replacement\n"
+                             "## Summary\nhuman scope\n")
+                    .replace("## Reproduction\nfails", "## Reproduction\nagent evidence"))
+    T.result_file(d, "TICKET-001").write_text("result: ok\nsummary: ✓ reviewed\n")
+    log = d / ".project" / "logs" / "TICKET-001.log"
+    log.parent.mkdir(parents=True, exist_ok=True)
+    rec = {"fh": log.open("w"), "prompt": d / "gone.md", "settings": None,
+           "path": path, "tid": "TICKET-001", "stage": "quick-review",
+           "session": "s1", "log": log, "wt": d, "meta": snap, "before": None}
+
+    assert supervisor._finish(d, rec) == "tampered"
+    t = Ticket.load(path)
+    assert t.stage == "escalated"
+    assert t.body.count("## Summary\n") == 1
+    assert t.section("Summary") == "human scope"
+    assert t.section("Reproduction").startswith("agent evidence")
+    assert not T.result_file(d, "TICKET-001").exists()
+    shutil.rmtree(d, ignore_errors=True)
+
+
 def test_finish_restores_a_missing_summary_and_accepts_an_unchanged_one():
     """Missing and unchanged Summary bodies preserve filer ownership outcomes.
 
