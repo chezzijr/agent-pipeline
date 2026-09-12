@@ -159,13 +159,15 @@ def test_the_pinned_cap_warning_prints_once_per_process(capsys):
 
 
 def test_the_project_decides_which_stages_scale_their_cap():
-    """Only the stages in `USD_SCALED` scale by default, and a project can
-    opt a scaled stage back out with `scale_usd = false`."""
+    """Implementing and review scale by default; projects can opt out."""
     d, _ = git_project()
-    counters = {"plan_files": 15, "plan_steps": 40}
+    counters = {"plan_files": 0, "plan_steps": 20}
     assert "counters" in cap_config("review", stage_config("review", d), d, counters)
-    assert "counters" not in cap_config("implementing", stage_config("implementing", d), d, counters)
-    assert "--max-budget-usd 8" in cmd(cap_config("implementing", stage_config("implementing", d), d, counters))
+    implementing = cap_config("implementing", stage_config("implementing", d), d, counters)
+    assert "counters" in implementing, (
+        "expected implementing's 20-step plan to receive its size counters")
+    assert "--max-budget-usd 10" in cmd(implementing), (
+        "expected implementing's 20-step plan to scale its $8 cap to $10")
 
     d2, sh2 = git_project()
     with open(d2 / ".project" / "pipeline.toml", "a") as f:
