@@ -149,6 +149,13 @@ def test_codex_jsonl_is_normalised_without_inventing_cost():
     assert evs[4]["usage"]["input_tokens"] == 100
 
 
+def test_codex_turn_failure_is_an_api_refusal():
+    """A Codex refusal must reach the dispatcher's external-error path."""
+    ev = parse('{"type":"turn.failed","error":{"message":"usage limit"}}')
+    assert ev["kind"] == "result"
+    assert ev["terminal_reason"] == "api_error"
+
+
 def test_live_codex_fixture_captures_thread_guard_and_usage():
     evs = StreamReader().feed(CODEX_FIXTURE.read_bytes())
     assert evs[0]["kind"] == "init"

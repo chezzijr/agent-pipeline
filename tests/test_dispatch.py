@@ -2374,6 +2374,7 @@ def test_an_api_error_kill_is_not_charged_to_no_result():
     supervisor.finish(d, rec())
     t = Ticket.load(path)
     assert t.counters.get("no_result", 0) == 0
+    assert t.counters.get("api_errors", 0) == 0, "an API refusal must defer before charging"
     assert t.stage != "escalated"
     shutil.rmtree(d, ignore_errors=True)
 
