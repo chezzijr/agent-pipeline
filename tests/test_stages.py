@@ -485,6 +485,27 @@ def test_the_file_ticket_skill_requires_a_code_anchor_and_a_docs_only_shape():
         f"{skill} does not name TICKET-084's test as the docs-only pattern")
 
 
+def test_the_file_ticket_skill_requires_expected_change_files():
+    """TICKET-128: quick-review checks cheap-route scope against ticket prose,
+    but filing guidance did not require summary text to name each planned file."""
+    skill = C.SKILL_TEMPLATE
+    text = skill.read_text()
+    assert "every expected change file" in text, (
+        f"{skill} does not require every expected change file in ## Summary")
+    assert "quick-review judges cheap-route scope from ticket prose" in text, (
+        f"{skill} does not explain the quick-review consequence")
+
+
+def test_the_file_ticket_skill_states_when_to_merge_findings():
+    """TICKET-128: findings share a ticket only when they share both file and cause."""
+    skill = C.SKILL_TEMPLATE
+    text = skill.read_text()
+    assert "share both a file and a cause" in text, (
+        f"{skill} does not state the shared-file and shared-cause boundary")
+    assert "different causes remain separate" in text, (
+        f"{skill} does not keep same-file, different-cause findings separate")
+
+
 def test_the_build_cache_docs_warn_that_a_key_must_exclude_the_checkout_path():
     """TICKET-097: `README.md`, `CONFIG_TEMPLATE` and the pipeline-config
     skill all tell an agent to key a build cache per checkout, but none
