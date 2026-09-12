@@ -455,6 +455,15 @@ def cmd_resume(args) -> None:
           (" (from last_session.stage)" if args.stage is None else "") +
           (f" ({', '.join(granted)})" if granted else "") +
           (" (forced past a live lease)" if live else ""))
+    if config_source(project) == "pinned":
+        pin = pin_path(project, ".project/pipeline.toml")
+        disk = project / ".project" / "pipeline.toml"
+        if pin.is_file() and (not disk.is_file() or pin.read_text() != disk.read_text()):
+            print("warning: the working tree differs from the pin -- "
+                  "run `pipeline config --sync` to adopt it")
+        else:
+            print("notice: this private project's config is pinned -- "
+                  "run `pipeline config --sync` to adopt disk edits")
 
 
 # `escalated` is terminal but actionable -- a human still has to look at it --

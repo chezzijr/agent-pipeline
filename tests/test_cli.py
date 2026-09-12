@@ -122,15 +122,30 @@ def test_resume_warns_when_a_private_projects_config_differs_from_its_pin():
     env = {"XDG_CONFIG_HOME": tempfile.mkdtemp()}
     assert cli(d, "init", "--private", env=env).returncode == 0
     assert cli(d, "config", env=env).returncode == 0  # create the pin
+
+    assert cli(d, "new", "equal pin", env=env).returncode == 0
+    equal = cli(d, "resume", "TICKET-001", "--stage", "triage", env=env)
+
+    assert equal.returncode == 0, equal.stderr
+    assert "pipeline config --sync" in equal.stdout
+    assert "working tree differs" not in equal.stdout
     (d / ".project" / "pipeline.toml").write_text(
         'test_one="edited"\ntest_suite="true"\n'
         'test_suite_without_new="true"\nbase="main"\n')
-    assert cli(d, "new", "resume pin", env=env).returncode == 0
+    assert cli(d, "new", "edited pin", env=env).returncode == 0
 
-    r = cli(d, "resume", "TICKET-001", "--stage", "triage", env=env)
+    edited = cli(d, "resume", "TICKET-002", "--stage", "triage", env=env)
 
-    assert r.returncode == 0, r.stderr
-    assert "pipeline config --sync" in r.stdout
+    assert edited.returncode == 0, edited.stderr
+    assert "pipeline config --sync" in edited.stdout
+    assert "working tree differs" in edited.stdout
+    (d / ".project" / "pipeline.toml").unlink()
+    assert cli(d, "new", "missing pin", env=env).returncode == 0
+    missing = cli(d, "resume", "TICKET-003", "--stage", "triage", env=env)
+
+    assert missing.returncode == 0, missing.stderr
+    assert "pipeline config --sync" in missing.stdout
+    assert "working tree differs" in missing.stdout
     shutil.rmtree(d, ignore_errors=True)
     shutil.rmtree(env["XDG_CONFIG_HOME"], ignore_errors=True)
 

@@ -262,7 +262,9 @@ can fail on, so triage returns `result: rejected` and the ticket dies there.
   hit is the checkpoint, the same as approval is. Read it -- README's *When a ticket
   escalates* is the procedure -- and hand the user the command. Bare `pipeline resume
   TICKET-NNN` returns to `last_session.stage`; `--stage` overrides it. A ticket without
-  a valid recorded stage requires `--stage`.
+  a valid recorded stage requires `--stage`. A successful private-project resume names
+  its pinned config. A changed or missing disk config warns without blocking the resume.
+  Run `pipeline config --sync` before respawn to adopt disk edits.
 - **Do not edit a ticket that is not in `new`.** A stage may hold its lease; use
   `pipeline answer <id> "..."` or `pipeline reject <id> "why"`, which append to the
   thread properly. To edit a running ticket by hand, interrupt the stage first
