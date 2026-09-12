@@ -83,6 +83,8 @@ to say so now:
   *A docs-only ticket* below for the shape it needs.
 - **Two unrelated changes.** `files_conflict` orders tickets by the files they touch, so
   one ticket spanning two areas blocks both. File two.
+- **Merged findings.** Merge findings only when they share both a file and a cause.
+  Findings with different causes remain separate even when they touch one file.
 - **A solution instead of a problem.** "Switch to a ring buffer" pre-empts the planning
   stage, whose job is to choose. Record the idea in `## Summary` as a suggestion, but
   lead with the symptom.
