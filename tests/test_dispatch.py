@@ -2219,6 +2219,31 @@ def test_a_tier_b_rejection_charges_the_plan_not_the_structural_counter():
     shutil.rmtree(d, ignore_errors=True)
 
 
+def test_finish_preserves_the_human_summary_while_adopting_agent_sections():
+    """A stage may write its assigned prose, but `## Summary` belongs to
+    the filer and must survive `_finish()` unchanged."""
+    d = project(FIXTURE.replace("stage: plan-validation", "stage: quick-review")
+                .replace("## Summary\nx", "## Summary\nhuman scope"))
+    path = d / ".project/tickets/TICKET-001.md"
+    snap = Ticket.load(path)
+    path.write_text(FIXTURE.replace("stage: plan-validation", "stage: quick-review")
+                    .replace("## Summary\nx", "## Summary\nagent replacement")
+                    .replace("## Reproduction\nfails", "## Reproduction\nagent evidence"))
+    T.result_file(d, "TICKET-001").write_text("result: ok\nsummary: ✓ reviewed\n")
+    log = d / ".project" / "logs" / "TICKET-001.log"
+    log.parent.mkdir(parents=True, exist_ok=True)
+    rec = {"fh": log.open("w"), "prompt": d / "gone.md", "settings": None,
+           "path": path, "tid": "TICKET-001", "stage": "quick-review",
+           "session": "s1", "log": log, "wt": d, "meta": snap, "before": None}
+
+    supervisor.finish(d, rec)
+
+    t = Ticket.load(path)
+    assert t.section("Summary") == "human scope"
+    assert t.section("Reproduction") == "agent evidence"
+    shutil.rmtree(d, ignore_errors=True)
+
+
 def test_a_budget_kill_is_charged_and_retried_exactly_like_a_crash():
     """A stage killed at its `--max-budget-usd` cap escalates on the FIRST
     kill, charged to its own counter, naming the cap it hit -- not a blind
