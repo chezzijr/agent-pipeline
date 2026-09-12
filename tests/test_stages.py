@@ -89,7 +89,7 @@ def test_common_rules_state_the_commit_message_format():
     f = C.compose_prompt("review")
     text = f.read_text()
     f.unlink()
-    assert "TICKET-nnn" in text and "conventional" in text.lower(), \
+    assert "conventional `<type>(TICKET-nnn): <description>` commit message" in text, \
         "_common.md never tells a committing stage how to name its commit"
 
 
