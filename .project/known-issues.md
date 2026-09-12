@@ -256,13 +256,10 @@ Confirmed (B6), low. Documented as "queued pty frames per client" but measures `
 the shared outbox that also holds subscription event frames. No shipped client sends
 `since`, so it is protocol-only today — file it before a client does.
 
-## 11. Two `worktree.py` weaknesses the Tier A gate depends on
+## 11. `project_env()` hash-order weakness the Tier A gate depends on
 
 Raised by TICKET-004's review, out of scope there because they live in another file:
 
-- `run_cmd` keeps only the last 4000 chars of output, so a real `expect:` match can fall
-  outside the retained tail on a verbose suite. The same weakness applies to the existing
-  `node not in out` check.
 - `project_env()` does not pin `PYTHONHASHSEED`, so a hash-order-dependent repr (a set in
   an assertion) can differ between triage's run and the gate's rerun of the same test.
 

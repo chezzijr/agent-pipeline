@@ -10,6 +10,7 @@ from pathlib import Path
 
 EAGAIN_TRIES = 4
 EAGAIN_BACKOFF = 0.25
+OUTPUT_EDGE = 2000
 
 
 def retry_eagain(fn, tries: int = EAGAIN_TRIES, backoff: float = EAGAIN_BACKOFF, sleep=time.sleep):
@@ -45,10 +46,18 @@ def project_env() -> dict:
     return env
 
 
+def bounded_output(output: str) -> str:
+    if len(output) <= OUTPUT_EDGE * 2:
+        return output
+    omitted = len(output) - OUTPUT_EDGE * 2
+    return (output[:OUTPUT_EDGE] + f"\n... {omitted} characters omitted ...\n"
+            + output[-OUTPUT_EDGE:])
+
+
 def run_cmd(cmd: str, cwd: Path) -> tuple[int, str]:
     p = retry_eagain(lambda: subprocess.run(cmd, shell=True, cwd=cwd, capture_output=True,
                                              text=True, env=project_env()))
-    return p.returncode, (p.stdout + p.stderr)[-4000:]
+    return p.returncode, bounded_output(p.stdout + p.stderr)
 
 
 def worktree(project: Path, meta: dict) -> Path:
@@ -162,8 +171,8 @@ def head_file(project: Path, rel: str) -> str | None:
     `HEAD:./<rel>` resolves relative to cwd, so a project inside a
     subdirectory of its repo reads its own copy.
 
-    Not `run_cmd()`: that returns `(stdout + stderr)[-4000:]`, which would
-    merge git's stderr into the file and truncate a long one.
+    Not `run_cmd()`: that bounds and merges stdout with stderr, which would
+    corrupt a long tracked file.
     """
     if not project.is_dir():
         return None
