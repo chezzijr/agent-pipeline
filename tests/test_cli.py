@@ -111,6 +111,30 @@ def test_resume_refuses_a_stage_that_does_not_exist():
     shutil.rmtree(d)
 
 
+def test_resume_warns_when_a_private_projects_config_differs_from_its_pin():
+    """Resume must name the ignored config divergence without refusing work.
+
+    A private project's pin remains authoritative until `config --sync`; a
+    resume after an on-disk cap edit must make that fact visible.
+    """
+    d = Path(tempfile.mkdtemp())
+    subprocess.run("git init -qb main", shell=True, cwd=d, check=True)
+    env = {"XDG_CONFIG_HOME": tempfile.mkdtemp()}
+    assert cli(d, "init", "--private", env=env).returncode == 0
+    assert cli(d, "config", env=env).returncode == 0  # create the pin
+    (d / ".project" / "pipeline.toml").write_text(
+        'test_one="edited"\ntest_suite="true"\n'
+        'test_suite_without_new="true"\nbase="main"\n')
+    assert cli(d, "new", "resume pin", env=env).returncode == 0
+
+    r = cli(d, "resume", "TICKET-001", "--stage", "triage", env=env)
+
+    assert r.returncode == 0, r.stderr
+    assert "pipeline config --sync" in r.stdout
+    shutil.rmtree(d, ignore_errors=True)
+    shutil.rmtree(env["XDG_CONFIG_HOME"], ignore_errors=True)
+
+
 def test_resume_uses_the_last_session_stage_when_stage_is_omitted():
     d = Path(tempfile.mkdtemp())
     cli(d, "new", "t")
