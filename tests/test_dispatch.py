@@ -1829,6 +1829,73 @@ def test_the_cheap_routes_branch_tip_is_recorded_before_the_fix_is_written():
     shutil.rmtree(d, ignore_errors=True)
 
 
+def test_quick_review_receives_the_recorded_cheap_route_head():
+    """A real quick-review ticket exports its validated route boundary."""
+    d, sh = git_project()
+    path = d / ".project/tickets/TICKET-001.md"
+    path.write_text(FIXTURE.replace("stage: plan-validation", "stage: quick-review"))
+    head = sh("git rev-parse HEAD").stdout.strip()
+    t = Ticket.load(path)
+    t.extra["cheap_route_head"] = head
+    t.save()
+    dump = d / "cheap-route-head.txt"
+    hcfg = dict(harness("fake"))
+    hcfg["cmd"] = f'printf "%s\\n" "$PIPELINE_CHEAP_ROUTE_HEAD" > {dump}'
+
+    rec = supervisor.spawn(d, d, "TICKET-001", "quick-review", hcfg)
+    rec["proc"].wait()
+    supervisor.close_child(rec)
+
+    assert dump.read_text().strip() == head
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_quick_review_refuses_missing_or_malformed_cheap_route_head_before_popen():
+    """Missing and hostile boundaries must stop before an agent launches."""
+    d, _ = git_project()
+    path = d / ".project/tickets/TICKET-001.md"
+    path.write_text(FIXTURE.replace("stage: plan-validation", "stage: quick-review"))
+    real = supervisor.subprocess
+
+    class NoPopen:
+        PIPE = subprocess.PIPE
+        STDOUT = subprocess.STDOUT
+
+        def Popen(self, *args, **kwargs):
+            raise AssertionError("Popen ran for an invalid cheap_route_head")
+
+    supervisor.subprocess = NoPopen()
+    try:
+        for value in (None, "not-a-sha"):
+            t = Ticket.load(path)
+            if value is None:
+                t.extra.pop("cheap_route_head", None)
+            else:
+                t.extra["cheap_route_head"] = value
+            t.save()
+            try:
+                supervisor.spawn(d, d, "TICKET-001", "quick-review", harness("fake"))
+            except PipelineError:
+                pass
+            else:
+                raise AssertionError(f"{value!r} launched quick-review")
+    finally:
+        supervisor.subprocess = real
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def test_ticketless_quick_review_spawn_keeps_empty_view_fallback():
+    """DEC-023 permits direct quick-review spawns without a ticket."""
+    d, _ = git_project()
+    rec = supervisor.spawn(d, d, "TICKET-404", "quick-review", harness("fake"))
+    rec["proc"].wait()
+    prompt = rec["prompt"].read_text()
+    supervisor.close_child(rec)
+
+    assert "# The ticket" not in prompt
+    shutil.rmtree(d, ignore_errors=True)
+
+
 def test_a_promoted_cheap_route_ticket_reaches_planning_with_its_fix_unwound():
     """A ticket promoted out of `quick-review` still carries the cheap route's
     commit. `unwinding` discards it before `planning` sees the branch, and

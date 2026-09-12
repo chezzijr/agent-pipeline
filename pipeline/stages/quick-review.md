@@ -21,9 +21,10 @@ Answer exactly two questions. Do not review style, naming or design.
 1. **Does the committed test fail without this diff?** You cannot revert
    the diff: you are read-only, and `git stash` is not on your allowlist.
    Read `## Reproduction` for the failure triage recorded, then run
-   `git diff <base>...HEAD -- <test file>` for the file named in
-   `test_file`. If the diff changed the test triage committed, that
-   recorded failure no longer proves anything: answer no.
+   `git diff "$PIPELINE_CHEAP_ROUTE_HEAD"..HEAD -- <test file>` for the
+   file named in `test_file`. The dispatcher supplies triage's validated
+   boundary. If the diff changed the test triage committed, that recorded
+   failure no longer proves anything: answer no.
 2. **Does the diff touch a file the ticket did not name?** Run
    `git diff --name-only <base>...HEAD`. For each file, quote the line in
    `## Summary` or `## Reproduction` that names it. A file no section names

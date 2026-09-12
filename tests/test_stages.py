@@ -44,8 +44,13 @@ def test_triage_checks_the_test_file_path_exists():
 
 def test_quick_review_compares_against_the_cheap_route_head():
     text = (C.STAGES_DIR / "quick-review.md").read_text()
-    assert "cheap_route_head" in text, \
-        "quick-review question 1 still names <base>, which always shows the new test as added"
+    first, second = text.split("2. **Does the diff touch a file the ticket did not name?**")
+    assert 'git diff "$PIPELINE_CHEAP_ROUTE_HEAD"..HEAD -- <test file>' in first, \
+        "quick-review question 1 does not compare the test against the cheap-route boundary"
+    assert "git diff <base>...HEAD -- <test file>" not in first, \
+        "quick-review question 1 still compares the test against <base>"
+    assert "git diff --name-only <base>...HEAD" in second, \
+        "quick-review question 2 no longer audits the whole ticket branch"
 
 
 def test_triage_requires_reachable_post_fix_assertions():

@@ -454,6 +454,8 @@ def spawn(project: Path, wt: Path, tid: str, stage: str, hcfg: dict,
     logs.mkdir(parents=True, exist_ok=True)
     log = logs / f"{tid}-{stage}-{session[:8]}.log"
     counters: dict = {}
+    t: Ticket | None = None
+    cheap_route_head: str | None = None
     try:
         t = Ticket.find(project, tid)
         counters, view = t.counters, stage_view(t, stage)
@@ -462,6 +464,11 @@ def spawn(project: Path, wt: Path, tid: str, stage: str, hcfg: dict,
         # (tests/test_pty.py:393). No view means the agent reads the file,
         # which is exactly what it did before this existed.
         view = ""
+    if t is not None and stage == "quick-review":
+        cheap_route_head = str(t.extra.get("cheap_route_head") or "")
+        if not SAFE_SHA.fullmatch(cheap_route_head):
+            raise PipelineError("quick-review requires cheap_route_head to be "
+                                "a commit sha")
     prompt = compose_prompt(stage, hcfg, view, project, interactive=interactive)
     settings = stage_settings(stage, cfg, hcfg)
     servers = mcp_servers(project, cfg)
@@ -502,6 +509,8 @@ def spawn(project: Path, wt: Path, tid: str, stage: str, hcfg: dict,
     # A broken [readonly] table surfaces here exactly as a broken [mcp.<name>]
     # one does; a project with no config at all yields [] and spawns as before.
     env["PIPELINE_READONLY_ALLOW"] = json.dumps(allow)
+    if cheap_route_head is not None:
+        env["PIPELINE_CHEAP_ROUTE_HEAD"] = cheap_route_head
     if interactive:
         # ponytail: the master fd dies with the daemon, so the child gets
         # SIGHUP and an interactive stage does NOT survive a daemon restart --
