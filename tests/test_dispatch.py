@@ -2740,6 +2740,43 @@ def test_spawn_command_survives_a_transient_blockingioerror_from_fork():
     assert calls["n"] == 2
 
 
+def test_stopping_a_batch_agent_also_stops_its_background_descendant():
+    """TICKET-134: stopping a batch stage must not leave tool children alive."""
+    import os
+    import signal
+
+    d = project()
+    child_pid = d / "background.pid"
+    hcfg = dict(harness("fake"))
+    hcfg["cmd"] = f"sleep 60 & echo $! > {child_pid}; wait"
+    rec = supervisor.spawn(d, d, "TICKET-001", "review", hcfg)
+    try:
+        deadline = time.monotonic() + 5
+        while not child_pid.exists() and time.monotonic() < deadline:
+            time.sleep(.01)
+        assert child_pid.exists(), "the batch agent did not start its background child"
+        pid = int(child_pid.read_text())
+
+        supervisor.stop_child("TICKET-001", rec)
+
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            pass
+        else:
+            raise AssertionError(
+                f"stopping the batch agent left background descendant {pid} alive")
+    finally:
+        if child_pid.exists():
+            pid = int(child_pid.read_text())
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        supervisor.close_child(rec)
+        shutil.rmtree(d, ignore_errors=True)
+
+
 def test_a_spawn_that_keeps_failing_escalates_one_ticket_and_keeps_the_loop():
     d, _ = git_project()
     path = d / ".project" / "tickets" / "TICKET-001.md"
