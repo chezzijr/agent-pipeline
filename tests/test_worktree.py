@@ -353,3 +353,13 @@ def test_run_cmd_survives_a_transient_blockingioerror_from_fork():
     assert code == 0
     assert out.strip() == "hi"
     assert calls["n"] == 2
+
+
+def test_run_cmd_keeps_an_early_failure_marker_in_oversized_output():
+    code, out = W.run_cmd(
+        "printf 'TICKET-135 early failure marker\\n'; yes x | head -c 5000",
+        Path(tempfile.mkdtemp()),
+    )
+
+    assert code == 0
+    assert "TICKET-135 early failure marker" in out
