@@ -172,12 +172,11 @@ Only `[stages.<name>] max_usd` is read; a top-level one is ignored.
 
 ### `[stages.<name>] scale_usd` -- opt in to size-scaled caps
 
-`review`, `quick-review` and `holistic-review` grow their cap by one
-dollar per 4 declared files or per 8 plan steps, whichever is larger,
-capped at twice the stage's own number. Your `max_usd` pins the cap and
-is never scaled past unless you also set `scale_usd = true`;
-`scale_usd = false` turns scaling off for a stage that scales by
-default.
+`implementing`, `review`, `quick-review`, and `holistic-review` grow their
+cap by one dollar per 4 declared files or per 8 plan steps, whichever is
+larger, capped at twice the stage's own number. Your `max_usd` pins the cap
+and is never scaled past unless you also set `scale_usd = true`;
+`scale_usd = false` turns scaling off for a stage that scales by default.
 
 ```toml
 [stages.review]

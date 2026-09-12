@@ -100,10 +100,10 @@ base                    = "main"
 # skills = []
 # scale_usd = true
 #
-# review, quick-review and holistic-review grow their max_usd with the
-# plan's declared files and steps, up to twice the stage's own value. A
-# max_usd set here pins the cap instead, unless scale_usd = true is set
-# alongside it.
+# implementing, review, quick-review and holistic-review grow their max_usd
+# with the plan's declared files and steps, up to twice the stage's own value.
+# A max_usd set here pins the cap instead, unless scale_usd = true is set
+# alongside it. scale_usd = false opts a default-scaled stage out.
 #
 # Prose that adds to a stage's instructions, rather than its settings, goes
 # in .project/stages/<name>.extra.md instead -- appended after the packaged

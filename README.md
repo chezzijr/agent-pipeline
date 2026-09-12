@@ -707,10 +707,10 @@ the same stage files by default. A project can override one in two ways:
   `$name` for Codex). Codex has no enforceable `max_usd`; an override prints a
   warning and its attempt bounds and lease remain the backstops.
 
-  `review`, `quick-review` and `holistic-review` are spawned with `max_usd`
-  grown by one dollar per 4 declared files or per 8 plan steps, whichever is
-  larger, capped at twice the stage's own number. A project's own `max_usd`
-  pins the cap and is never scaled past unless the table also sets
+  `implementing`, `review`, `quick-review`, and `holistic-review` are spawned
+  with `max_usd` grown by one dollar per 4 declared files or per 8 plan steps,
+  whichever is larger, capped at twice the stage's own number. A project's own
+  `max_usd` pins the cap and is never scaled past unless the table also sets
   `scale_usd = true`. `scale_usd = false` turns scaling off for a stage that
   has it by default.
 - **Prose**, in `.project/stages/<name>.extra.md` -- free text appended after
