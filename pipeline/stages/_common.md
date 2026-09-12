@@ -33,7 +33,9 @@ it is lost.
    are in the wrong tree.
    The one path under your working directory you must not write is its own
    `.project/tickets/` copy -- it is read-only, and a write there is lost work.
-6. Write the result file **at the exact absolute path given in
+6. Use a single-line conventional `<type>(TICKET-nnn): <description>` commit message.
+   Use `test` for reproduction and `fix` or `feat` for implementation.
+7. Write the result file **at the exact absolute path given in
    your instructions** (your working directory is a git worktree, not the
    project root, so a relative path lands in the wrong tree):
 
