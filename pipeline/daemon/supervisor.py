@@ -1088,12 +1088,12 @@ def read_findings(rec: dict, code: int) -> tuple[bool, list[str]]:
 
 def gate_result(ok: bool, failures: list[str], stage: str) -> str:
     """The verdict string a Tier A gate's outcome charges. Only `plan-validation`
-    splits `fail` into six: a `test_file` naming no file (TICKET-087) returns
+    splits `fail` into six: an `environment` finding (the suite red on base
+    too, TICKET-089) returns `environment`; a `test_file` naming no file (TICKET-087) returns
     `no-test-file`, a `test_file` that exited 0 in the worktree and on base
     (TICKET-109) returns `load-flaky`, a `test_file` that hides statically
-    unreachable code (TICKET-118) returns `invalid-test`, an all-`environment`
-    list of findings (the suite red on base too, TICKET-089) returns
-    `environment`, `structural` findings keep `fail`, and anything else is
+    unreachable code (TICKET-118) returns `invalid-test`, `structural`
+    findings keep `fail`, and anything else is
     `bad-plan`. The four new verdicts are checked before `structural_only()`,
     so a ticket whose plan is ALSO bad still escalates instead of charging a
     counter no stage can spend (DEC-065). `revalidating` always gets `fail`,
@@ -1105,18 +1105,17 @@ def gate_result(ok: bool, failures: list[str], stage: str) -> str:
         return "ok"
     if stage != "plan-validation":
         return "fail"
+    if environment_only(failures):
+        return "environment"
     if missing_test_file(failures):
         return "no-test-file"
-    # checked beside `missing_test_file()` and before `environment_only()`:
-    # both verdicts belong to `triage`'s field and either escalates charging
+    # Both verdicts belong to `triage`'s field and either escalates charging
     # nothing, so the order between them only picks the verdict string a
     # human reads.
     if load_flaky(failures):
         return "load-flaky"
     if invalid_test(failures):
         return "invalid-test"
-    if environment_only(failures):
-        return "environment"
     if not structural_only(failures):
         return "bad-plan"
     return "fail"

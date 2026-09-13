@@ -1540,6 +1540,52 @@ def test_a_suite_red_identically_on_base_does_not_charge_plan_validation_attempt
     shutil.rmtree(d, ignore_errors=True)
 
 
+def test_gate_reruns_a_red_worktree_suite_before_classifying_it():
+    d, wt = _git_ticket_project("buggy\n", "buggy\n")
+    (d / ".project" / "pipeline.toml").write_text(
+        'test_one = "echo test_broken; exit 1"\n'
+        'test_suite = "true"\n'
+        'test_suite_without_new = "test -f .suite-ran || { touch .suite-ran; echo 1 failed; exit 1; }"\n'
+        'base = "main"\n')
+    subprocess.run("git add -A && git commit -qm cfg", shell=True, cwd=d,
+                   capture_output=True, text=True)
+    ok, failures = gate(d, "TICKET-001", workdir=wt)
+    assert ok, failures
+    assert (wt / ".suite-ran").exists()
+    assert not any("RED -- pre-existing breakage" in f for f in failures), failures
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_gate_reruns_a_red_base_suite_before_classifying_it():
+    d, wt = _git_ticket_project("base\n", "branch\n")
+    (d / ".project" / "pipeline.toml").write_text(
+        'test_one = "echo test_broken; exit 1"\n'
+        'test_suite = "true"\n'
+        'test_suite_without_new = "grep -q base f.py && { test -f .base-suite-ran || { touch .base-suite-ran; echo 1 failed; exit 1; }; } || { echo 1 failed; exit 1; }"\n'
+        'base = "main"\n')
+    subprocess.run("git add -A && git commit -qm cfg", shell=True, cwd=d,
+                   capture_output=True, text=True)
+    ok, failures = gate(d, "TICKET-001", workdir=wt)
+    assert not ok
+    assert not any(f.startswith("ENVIRONMENT: ") for f in failures), failures
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_gate_reports_a_confirmed_environment_failure():
+    d, wt = _git_ticket_project("buggy\n", "buggy\n")
+    (d / ".project" / "pipeline.toml").write_text(
+        'test_one = "echo test_broken; exit 1"\n'
+        'test_suite = "true"\n'
+        'test_suite_without_new = "echo 1 failed; exit 1"\n'
+        'base = "main"\n')
+    subprocess.run("git add -A && git commit -qm cfg", shell=True, cwd=d,
+                   capture_output=True, text=True)
+    ok, failures = gate(d, "TICKET-001", workdir=wt)
+    assert not ok
+    assert any(f.startswith("ENVIRONMENT: ") for f in failures), failures
+    shutil.rmtree(d, ignore_errors=True)
+
+
 def test_a_suite_red_only_in_the_worktree_still_charges_the_plan():
     """TICKET-089: base is green, so the environment verdict must not fire --
     today's verdict and today's charge both stand."""

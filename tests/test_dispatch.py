@@ -2822,7 +2822,7 @@ def test_environment_overrides_mixed_tier_a_findings():
            "breakage, and it is RED on base `main` too"]
     assert environment_only(env) is True
     assert environment_only([]) is False
-    assert environment_only(env + ["`files_declared` is empty"]) is False
+    assert environment_only(env + ["`files_declared` is empty"]) is True
     assert environment_only(
         ["the plan quotes " + ENVIRONMENT_MARK + " in its own output"]) is False
 
@@ -2835,6 +2835,13 @@ def test_environment_overrides_mixed_tier_a_findings():
     assert gate_result(
         False, env + ["test file /x/test_thing.py does not exist"],
         "plan-validation") == "environment"
+    for finding in [
+            "LOAD-FLAKY: test_file exits 0",
+            "INVALID-TEST: unreachable statement",
+            "`files_declared` is empty",
+            "the implementation is incomplete",
+    ]:
+        assert gate_result(False, env + [finding], "plan-validation") == "environment"
     assert gate_result(True, [], "plan-validation") == "ok"
 
 

@@ -308,12 +308,12 @@ LOAD_FLAKY_MARKS = (LOAD_FLAKY_MARK,)
 
 
 def environment_only(failures: list[str]) -> bool:
-    """Are every one of `failures` an environment finding -- the suite red on
+    """Does `failures` include an environment finding -- the suite red on
     base too, not this branch's doing?
 
     Empty is False: no findings is a PASS, not this function's question.
     """
-    return bool(failures) and all(f.startswith(ENVIRONMENT_MARKS) for f in failures)
+    return any(f.startswith(ENVIRONMENT_MARKS) for f in failures)
 
 
 def missing_test_file(failures: list[str]) -> bool:
@@ -676,6 +676,18 @@ def suite_ran(code: int, out: str) -> bool:
     return code in SUITE_FAILED_CODES or bool(SUITE_RAN_RE.search(out))
 
 
+def _confirmed_suite(cmd: str, cwd: Path) -> tuple[int, str]:
+    """Run a suite once more when its first result is a recognized red.
+
+    A command error is not a provisional red. The second result decides
+    whether the target remains broken.
+    """
+    code, out = run_cmd(cmd, cwd)
+    if code != 0 and suite_ran(code, out):
+        return run_cmd(cmd, cwd)
+    return code, out
+
+
 def _base_suite(project: Path, cfg: dict, wd: Path,
                  tests: list[str]) -> tuple[str | None, str]:
     """Re-run `test_suite_without_new` on a throwaway checkout of base.
@@ -705,7 +717,8 @@ def _base_suite(project: Path, cfg: dict, wd: Path,
         # test_suite_without_new's selector; one naming a node base does not
         # have is a no-op (pytest: --deselect nosuch.py::test_x exits 0).
         # _base_findings() still copies -- DEC-017.
-        code, out = run_cmd(format_tests_cmd(cfg["test_suite_without_new"], tests), base_wt)
+        code, out = _confirmed_suite(
+            format_tests_cmd(cfg["test_suite_without_new"], tests), base_wt)
     if code != 0 and suite_ran(code, out):
         return out, ""
     if code == 0:
@@ -905,7 +918,7 @@ def gate(project: Path, tid: str, workdir: Path | None = None) -> tuple[bool, li
                     f"after one flag")
             else:
                 suite_cmd = format_tests_cmd(cfg["test_suite_without_new"], runnable)
-                code, out = run_cmd(suite_cmd, wd)
+                code, out = _confirmed_suite(suite_cmd, wd)
                 if code != 0 and suite_ran(code, out):
                     base_out, why = _base_suite(project, cfg, wd, runnable)
                     if base_out is not None:
