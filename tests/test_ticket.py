@@ -102,6 +102,12 @@ def test_deleted_tests_are_validated_and_round_trip():
     assert t.deletes == ["a.py::test_a"]
     t.save()
     assert Ticket.load(t.path).deletes == ["a.py::test_a"]
+    bad_path = d / ".project/tickets/TICKET-002.md"
+    bad_path.write_text(FIXTURE.replace("id: TICKET-001", "id: TICKET-002")
+                        .replace("files_declared: [thing.py]",
+                                 "files_declared: [thing.py]\ndeletes: ''"))
+    assert "deletes must be a list" in Ticket.load(bad_path).errors(), \
+        "Ticket.load normalized a scalar deletes value before validation"
     shutil.rmtree(d, ignore_errors=True)
 
 

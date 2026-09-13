@@ -677,7 +677,9 @@ class Ticket:
                    klass=meta.pop("class", None) or "bugfix",
                    branch=meta.pop("branch", None) or "",
                    test_file=meta.pop("test_file", None),
-                   deletes=meta.pop("deletes", None) or [],
+                   # Preserve an invalid falsey value for `errors()` rather
+                   # than turning it into a valid empty list before validation.
+                   deletes=meta.pop("deletes", []),
                    files_declared=meta.pop("files_declared", None) or [],
                    counters=meta.pop("counters", None) or {},
                    lease=lease, extra=meta, body=body)
