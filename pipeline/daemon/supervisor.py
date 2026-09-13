@@ -1367,7 +1367,9 @@ def _finish(project: Path, rec: dict, emit=noop) -> str:
         drop_result(project, tid)
         escalate(t, "`.result` claimed an unusable value: " + "; ".join(bad), emit)
         return "bad-claim"
-    t.test_file, t.files_declared = claimed["test_file"], claimed["files_declared"]
+    t.test_file = claimed["test_file"]
+    t.deletes = claimed["deletes"]
+    t.files_declared = claimed["files_declared"]
     t.counters["no_result"] = 0
     t.save()
     drop_result(project, tid)

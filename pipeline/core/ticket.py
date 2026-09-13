@@ -86,6 +86,16 @@ def validate_meta(meta: dict) -> list[str]:
     for one in as_test_list(meta.get("test_file")):
         if not SAFE_TEST.match(str(one)):
             bad.append(f"test_file {one!r} contains shell metacharacters")
+    deletes = meta.get("deletes", [])
+    if not isinstance(deletes, list):
+        bad.append("deletes must be a list")
+    else:
+        tests = as_test_list(meta.get("test_file"))
+        for one in deletes:
+            if not SAFE_TEST.match(str(one)):
+                bad.append(f"deletes entry {one!r} contains shell metacharacters")
+            elif one not in tests:
+                bad.append(f"deletes entry {one!r} is not in test_file")
     for f in meta.get("files_declared") or []:
         if not SAFE_FILE.match(str(f)) or ".." in str(f) or str(f).startswith("/"):
             bad.append(f"files_declared entry {f!r} is not a plain relative path")
@@ -259,7 +269,7 @@ def result_file(project: Path, tid: str) -> Path:
     return tickets_dir(project) / f"{tid}.result"
 
 
-SIDECAR_KEYS = ("result", "summary", "test_file")
+SIDECAR_KEYS = ("result", "summary", "test_file", "deletes")
 
 # The two keys a sidecar may write as a YAML list. This tuple gates the
 # `- item` collector only; the `key: value` store condition below still
@@ -267,7 +277,7 @@ SIDECAR_KEYS = ("result", "summary", "test_file")
 # bare scalar line: as a string it reaches the frontmatter, where
 # validate_meta() iterates it one character at a time and conflict_holder()
 # builds a set of characters out of it.
-BLOCK_LIST_KEYS = ("files_declared", "test_file")
+BLOCK_LIST_KEYS = ("files_declared", "test_file", "deletes")
 
 
 def _flow_list(v: str) -> list[str] | None:
@@ -312,9 +322,10 @@ def loose_result(text: str) -> dict:
         if key in SIDECAR_KEYS and key not in data:
             data[key] = rest.strip()
     data.update(items)
-    flow = _flow_list(data["test_file"]) if isinstance(data.get("test_file"), str) else None
-    if flow is not None:
-        data["test_file"] = flow
+    for key in ("test_file", "deletes"):
+        flow = _flow_list(data[key]) if isinstance(data.get(key), str) else None
+        if flow is not None:
+            data[key] = flow
     return data
 
 
@@ -603,7 +614,7 @@ def stage_view(t: "Ticket", stage: str) -> str:
 
 # `class` is a Python keyword, so the attribute is `klass`; the YAML key stays
 # `class`. `frontmatter()` is the only place that translation lives.
-TYPED_KEYS = ("id", "stage", "class", "branch", "test_file", "files_declared",
+TYPED_KEYS = ("id", "stage", "class", "branch", "test_file", "deletes", "files_declared",
               "counters", "lease")
 
 
@@ -642,6 +653,7 @@ class Ticket:
     klass: str = "bugfix"
     branch: str = ""
     test_file: str | list[str] | None = None
+    deletes: list[str] = field(default_factory=list)
     files_declared: list[str] = field(default_factory=list)
     counters: dict[str, int] = field(default_factory=dict)
     lease: dict = field(default_factory=lambda: {"holder": None, "expires": None})
@@ -665,6 +677,7 @@ class Ticket:
                    klass=meta.pop("class", None) or "bugfix",
                    branch=meta.pop("branch", None) or "",
                    test_file=meta.pop("test_file", None),
+                   deletes=meta.pop("deletes", None) or [],
                    files_declared=meta.pop("files_declared", None) or [],
                    counters=meta.pop("counters", None) or {},
                    lease=lease, extra=meta, body=body)
@@ -677,6 +690,7 @@ class Ticket:
         """Typed fields first in a stable order, then everything else."""
         fm = {"id": self.id, "stage": self.stage, "class": self.klass,
               "branch": self.branch, "test_file": self.test_file,
+              "deletes": self.deletes,
               "files_declared": self.files_declared, "counters": self.counters,
               "lease": self.lease}
         fm.update({k: v for k, v in self.extra.items() if k not in TYPED_KEYS})

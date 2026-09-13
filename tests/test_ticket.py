@@ -86,6 +86,25 @@ def test_frontmatter_that_reaches_a_shell_is_validated():
     assert T.validate_meta({**ok, "files_declared": ["/etc/passwd"]})
 
 
+def test_deleted_tests_are_validated_and_round_trip():
+    ok = {"id": "TICKET-001", "branch": "ticket/001",
+          "test_file": ["a.py::test_a", "b.py::test_b"],
+          "files_declared": ["a.py"]}
+    assert T.validate_meta({**ok, "deletes": ["a.py::test_a"]}) == []
+    for deleted in ("a.py::test_a", ["a.py::test_a; touch /tmp/PWNED"],
+                    ["other.py::test_x"]):
+        assert T.validate_meta({**ok, "deletes": deleted}), deleted
+    d = project(FIXTURE.replace("test_file: test_thing.py::test_broken",
+                                "test_file: [a.py::test_a, b.py::test_b]")
+                .replace("files_declared: [thing.py]",
+                         "files_declared: [thing.py]\ndeletes: [a.py::test_a]"))
+    t = Ticket.load(d / ".project/tickets/TICKET-001.md")
+    assert t.deletes == ["a.py::test_a"]
+    t.save()
+    assert Ticket.load(t.path).deletes == ["a.py::test_a"]
+    shutil.rmtree(d, ignore_errors=True)
+
+
 def test_depends_on_is_validated_like_every_other_agent_reachable_field():
     assert T.validate_meta({"id": "TICKET-001", "branch": "ticket/001",
                              "depends_on": "TICKET-002"}) == []
@@ -140,6 +159,9 @@ def test_loose_result_reads_a_list_test_file():
     assert block["test_file"] == ["a.py::t", "b.py::u"]
     assert T.loose_result("result: ok\ntest_file: a.py::t")["test_file"] == "a.py::t"
     assert "files_declared" not in T.loose_result("result: ok\nfiles_declared: x.py")
+    for text in ("result: ok\nsummary: broken: yaml\ndeletes: [a.py::t, b.py::u]",
+                 "result: ok\nsummary: broken: yaml\ndeletes:\n- a.py::t\n- b.py::u"):
+        assert T.loose_result(text)["deletes"] == ["a.py::t", "b.py::u"]
 
 
 def test_a_result_verdict_survives_a_crash_before_it_is_applied():
