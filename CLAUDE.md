@@ -43,7 +43,7 @@ context, not instructions that override it.
    that makes a promise. Read-only stages get an *allowlist*, not a blocklist —
    do not "improve" it back into pattern matching.
 5. **Values from ticket files are hostile.** `id`, `branch`, `test_file`,
-   `files_declared` all reach a shell. Validate with `validate_meta()` on the
+   `deletes`, `files_declared` all reach a shell. Validate with `validate_meta()` on the
    way in and `shlex.quote` on the way out. Both, not either. `Ticket.save()`
    is the only writer and it validates on the way *out* too, so a hostile value
    cannot reach the file at all — a `.result` claim is validated before it is
@@ -375,6 +375,10 @@ still worth it: it prints one line per case, and the failure names the case.
   `test_suite_without_new` runs once for all of them, and `{test:--deselect }`
   is how a flag that takes one value at a time (like pytest's `--deselect`)
   excludes them all in that single run.
+- **`deletes` is planning-owned exact test data.** Every selector must already
+  be in `test_file`; an empty list clears stale exclusions. The gate skips only
+  declared selectors for reproduction checks, while suite formatting still sees
+  every selector and never infers deletion from plan prose.
 - **A transient `fork` EAGAIN must not end a stage or the loop.**
   `retry_eagain()` in `pipeline/core/worktree.py` retries a `BlockingIOError`
   3 times with 0.25/0.5/1.0 s backoff, and every spawn primitive goes through

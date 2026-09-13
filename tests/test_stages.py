@@ -458,6 +458,14 @@ def test_the_config_docs_name_every_test_placeholder():
         assert "sed 's/.*:://'" not in text, f"{p} still splits the test id in shell"
 
 
+def test_planning_declares_deleted_tests_as_data():
+    text = (C.PKG / "stages" / "planning.md").read_text()
+    common = (C.PKG / "stages" / "_common.md").read_text()
+    assert "deletes" in text and "exact `test_file` selectors" in text
+    assert "edits never qualify" in text and "empty list clears" in text
+    assert "deletes: []" in common
+
+
 def test_the_config_skill_names_every_knob_the_code_reads():
     """TICKET-084: `max_usd`, `scale_usd`, `worktree_setup`, the
     `.project/stages/<name>.extra.md` prose append, and `pinned` are all

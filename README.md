@@ -635,7 +635,7 @@ ticket is wrong, not that the budget is small.
    the ticket if any of them changed. An unrecognised result escalates rather
    than guessing.
    It also cannot rewrite a field it does not own: only `triage` sets
-   `test_file`, only `planning` sets `files_declared` (implementation may add to
+   `test_file`, only `planning` sets `deletes` and `files_declared` (implementation may add to
    it, never shrink it). Otherwise a reviewer could shrink the declared set and
    unblock a ticket that overlaps one already in flight.
 2. **Read-only stages are checked, not trusted.** The dispatcher snapshots the
@@ -644,7 +644,7 @@ ticket is wrong, not that the budget is small.
    test runners, grep and friends — so a bypass needs a hole in a short list of
    permitted programs, not a gap between blocked patterns.
 3. **Every value that reaches a shell is validated and quoted.** `id`, `branch`,
-   `test_file` and `files_declared` all live in a file an agent can write and all
+   `test_file`, `deletes` and `files_declared` all live in a file an agent can write and all
    end up in shell commands, so they are pattern-checked on the way in
    (`validate_meta`) and `shlex.quote`d on the way out. A ticket that fails
    validation is escalated, never executed.
