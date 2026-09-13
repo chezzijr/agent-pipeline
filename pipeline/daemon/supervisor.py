@@ -527,7 +527,7 @@ def spawn(project: Path, wt: Path, tid: str, stage: str, hcfg: dict,
         # the child at 64K.
         proc = retry_eagain(lambda: subprocess.Popen(
             cmd, shell=True, cwd=wt, stdout=subprocess.PIPE if poller else fh,
-            stderr=subprocess.STDOUT, env=env))
+            stderr=subprocess.STDOUT, env=env, start_new_session=True))
         pipe = proc.stdout
     mode = "interactive" if interactive else "batch"
     rec = {"proc": proc, "fh": fh, "prompt": prompt, "settings": settings,
@@ -614,7 +614,8 @@ def spawn_command(project: Path, wt: Path, tid: str, stage: str, cmd: str,
     fh.flush()
     proc = retry_eagain(lambda: subprocess.Popen(
         cmd, shell=True, cwd=wt, stdout=fh,
-        stderr=subprocess.STDOUT, env=env or project_env()))
+        stderr=subprocess.STDOUT, env=env or project_env(),
+        start_new_session=True))
     print(f"  start {tid}: {stage} (script) pid {proc.pid} -> {log.name}")
     emit("stage_start", ticket=tid, stage=stage, model=None, mode=kind,
          pid=proc.pid, log=str(log), wt=str(wt))
@@ -1415,6 +1416,23 @@ def reap(project: Path, inflight: dict, emit=noop) -> bool:
     return bool(done)
 
 
+def _signal_child(rec: dict, sig: int) -> None:
+    """Signal an owned batch group or preserve PTY and partial-record calls."""
+    proc = rec.get("proc")
+    if proc is None:
+        return
+    if rec.get("mode") not in (None, "interactive"):
+        try:
+            os.killpg(proc.pid, sig)
+        except ProcessLookupError:
+            pass
+        return
+    if sig == signal.SIGTERM:
+        proc.terminate()
+    elif sig == signal.SIGKILL:
+        proc.kill()
+
+
 def stop_child(tid: str, rec: dict, note: str | None = None) -> None:
     """Terminate one child and release its lease. This is `shut_down()`'s
     per-record body, extracted so a source-change drain reaps an expired child
@@ -1427,11 +1445,11 @@ def stop_child(tid: str, rec: dict, note: str | None = None) -> None:
     """
     proc = rec.get("proc")
     if proc is not None and proc.poll() is None:
-        proc.terminate()
+        _signal_child(rec, signal.SIGTERM)
         try:
             proc.wait(timeout=10)
         except subprocess.TimeoutExpired:
-            proc.kill()
+            _signal_child(rec, signal.SIGKILL)
             try:
                 proc.wait(timeout=5)   # a PtyProc is reaped here or never
             except subprocess.TimeoutExpired:
