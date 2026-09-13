@@ -4,6 +4,7 @@ import json
 import shutil
 import subprocess
 import tempfile
+from datetime import timedelta
 import time
 from pathlib import Path
 
@@ -2376,6 +2377,83 @@ def test_an_api_error_kill_is_not_charged_to_no_result():
     assert t.counters.get("no_result", 0) == 0
     assert t.counters.get("api_errors", 0) == 0, "an API refusal must defer before charging"
     assert t.stage != "escalated"
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_an_api_error_waits_without_blocking_then_charges(monkeypatch):
+    """The first refusal waits 30 seconds without retaining a lease.
+
+    This fails if `_finish()` charges immediately or `start()` spawns before
+    `api_retry_at` expires.
+    """
+    d, _ = git_project()
+    path = d / ".project/tickets/TICKET-001.md"
+    path.write_text(FIXTURE)
+    snap = Ticket.load(path)
+    log = d / ".project" / "logs" / "TICKET-001.log"
+    log.parent.mkdir(parents=True, exist_ok=True)
+    at = T.now()
+    monkeypatch.setattr(supervisor, "now", lambda: at)
+    rec = {"fh": log.open("w"), "prompt": d / "gone.md", "settings": None,
+           "path": path, "tid": "TICKET-001", "stage": "plan-validation",
+           "session": "s1", "log": log, "wt": d, "meta": snap,
+           "before": None, "terminal_reason": "api_error"}
+
+    supervisor.finish(d, rec)
+    waiting = Ticket.load(path)
+    assert waiting.counters.get("api_errors", 0) == 0
+    assert not waiting.lease_active()
+    assert T.lease_expiry(waiting.extra["api_retry_at"]) == at + timedelta(seconds=30)
+
+    monkeypatch.setattr(supervisor, "now", lambda: at + timedelta(seconds=29))
+    assert supervisor.start(d, path, harness("fake"), {}) == (False, None)
+    assert Ticket.load(path).counters.get("api_errors", 0) == 0
+
+    monkeypatch.setattr(supervisor, "now", lambda: at + timedelta(seconds=30))
+    did, child = supervisor.start(d, path, harness("fake"), {})
+    assert did and child is not None
+    child["proc"].terminate()
+    child["proc"].wait()
+    assert Ticket.load(path).counters["api_errors"] == 1
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_api_error_backoff_increases_and_escalates_at_bound(monkeypatch):
+    """A second refusal waits 60 seconds, then charges and escalates.
+
+    This fails if the second delay does not increase or an expired retry can
+    respawn beyond `MAX_ATTEMPTS`.
+    """
+    d, _ = git_project()
+    path = d / ".project/tickets/TICKET-001.md"
+    path.write_text(FIXTURE)
+    log = d / ".project" / "logs" / "TICKET-001.log"
+    log.parent.mkdir(parents=True, exist_ok=True)
+    at = T.now()
+    monkeypatch.setattr(supervisor, "now", lambda: at)
+
+    def refuse():
+        return {"fh": log.open("w"), "prompt": d / "gone.md", "settings": None,
+                "path": path, "tid": "TICKET-001", "stage": "plan-validation",
+                "session": "s1", "log": log, "wt": d, "meta": Ticket.load(path),
+                "before": None, "terminal_reason": "api_error"}
+
+    supervisor.finish(d, refuse())
+    monkeypatch.setattr(supervisor, "now", lambda: at + timedelta(seconds=30))
+    did, child = supervisor.start(d, path, harness("fake"), {})
+    assert did and child is not None
+    child["proc"].terminate()
+    child["proc"].wait()
+
+    supervisor.finish(d, refuse())
+    waiting = Ticket.load(path)
+    assert T.lease_expiry(waiting.extra["api_retry_at"]) == at + timedelta(seconds=90)
+    monkeypatch.setattr(supervisor, "now", lambda: at + timedelta(seconds=89))
+    assert supervisor.start(d, path, harness("fake"), {}) == (False, None)
+    monkeypatch.setattr(supervisor, "now", lambda: at + timedelta(seconds=90))
+    did, child = supervisor.start(d, path, harness("fake"), {})
+    assert did and child is None
+    assert Ticket.load(path).stage == "escalated"
     shutil.rmtree(d, ignore_errors=True)
 
 

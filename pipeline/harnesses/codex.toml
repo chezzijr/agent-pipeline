@@ -8,6 +8,7 @@ supports_hooks = true
 settings_mode = "inline"
 mcp_mode = "inline"
 usage_source = "none"
+api_error_types = ["error", "turn.failed"]
 skill_format = "${name}"
 skill_root = ".agents/skills"
 # `{skill_settings}` suppresses the catalog on ordinary stages. For a stage

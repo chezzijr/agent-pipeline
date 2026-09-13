@@ -151,9 +151,20 @@ def test_codex_jsonl_is_normalised_without_inventing_cost():
 
 def test_codex_turn_failure_is_an_api_refusal():
     """A Codex refusal must reach the dispatcher's external-error path."""
-    ev = parse('{"type":"turn.failed","error":{"message":"usage limit"}}')
-    assert ev["kind"] == "result"
+    for line in ('{"type":"error","message":"usage limit"}',
+                 '{"type":"turn.failed","error":{"message":"usage limit"}}'):
+        ev = parse(line, api_error_types=["error", "turn.failed"])
+        assert ev["kind"] == "result"
+        assert ev["terminal_reason"] == "api_error"
+    ev = StreamReader(["turn.failed"]).feed(
+        b'{"type":"turn.failed","error":{"message":"usage limit"}}\n')[0]
     assert ev["terminal_reason"] == "api_error"
+
+
+def test_undeclared_failure_event_remains_other():
+    """A new harness must opt in through data before a failure is classified."""
+    ev = parse('{"type":"turn.failed","error":{"message":"usage limit"}}')
+    assert ev["kind"] == "other"
 
 
 def test_live_codex_fixture_captures_thread_guard_and_usage():

@@ -10,6 +10,7 @@ import subprocess
 import sys
 import uuid
 from dataclasses import replace
+from datetime import timedelta
 from pathlib import Path
 
 from pipeline import __version__
@@ -29,7 +30,7 @@ from pipeline.core.machine import (CLEANUP_STAGES, CONTROL_FIELDS,
                                    apply_claims, bound_for, conflict_holder,
                                    dep_holder, dep_unsatisfiable, transition)
 from pipeline.core.ticket import (Ticket, all_tickets, as_list, drop_result,
-                                  now, read_result, record_decision,
+                                  lease_expiry, now, read_result, record_decision,
                                   replace_section, section_count, sections,
                                   result_file, stage_view, ticket_path,
                                   tickets_dir, validate_meta)
@@ -546,7 +547,8 @@ def spawn(project: Path, wt: Path, tid: str, stage: str, hcfg: dict,
     if interactive or poller:
         # `Screen` is shaped like `StreamReader`, so pump() tees the raw bytes
         # to the log and feeds this with no PTY branch of its own.
-        rec["reader"] = host.Screen() if interactive else StreamReader()
+        rec["reader"] = (host.Screen() if interactive else
+                         StreamReader(hcfg.get("api_error_types")))
         rec["screen"] = rec["reader"] if interactive else None
         rec["pipe"] = pipe
         os.set_blocking(pipe.fileno(), False)
@@ -834,6 +836,22 @@ def start(project: Path, path: Path, hcfg: dict, inflight: dict,
             print(f"  cleaned worktree for {tid} ({stage})")
             return True, None
         return False, None
+
+    if "api_retry_at" in t.extra:
+        retry_at = lease_expiry(t.extra["api_retry_at"])
+        if retry_at is None:
+            return bail("unusable api_retry_at timestamp")
+        if now() < retry_at:
+            return False, None
+        t.extra.pop("api_retry_at")
+        n = t.counters.get("api_errors", 0) + 1
+        t.counters["api_errors"] = n
+        if n >= MAX_ATTEMPTS:
+            return bail(f"`{stage}` was refused by the API "
+                        f"(terminal_reason=api_error) {n} times")
+        t.append(stage, "note",
+                 f"`{stage}` API retry wait expired (attempt {n}) -- respawning")
+        t.save()
 
     # A live lease held by a dead pid is a daemon that was killed, not work in
     # progress. Falling through here charges `lease_expiries` and takes the
@@ -1319,15 +1337,12 @@ def _finish(project: Path, rec: dict, emit=noop) -> str:
         # cannot spend the budget meant for a broken harness.
         if rec.get("terminal_reason") == "api_error":
             n = t.counters.get("api_errors", 0) + 1
-            t.counters["api_errors"] = n
-            if n >= MAX_ATTEMPTS:
-                escalate(t, f"`{stage}` was refused by the API "
-                            f"(terminal_reason=api_error) {n} times", emit)
-                return "api-error"
+            delay = 30 * (2 ** (n - 1))
             t.release_lease()
+            t.extra["api_retry_at"] = (now() + timedelta(seconds=delay)).isoformat()
             t.append(stage, "note",
                      f"`{stage}` was refused by the API (terminal_reason="
-                     f"api_error, attempt {n}) -- will respawn")
+                     f"api_error, attempt {n}) -- waiting {delay} seconds")
             t.save()
             return "api-error"
         # L4: a harness that dies before writing a result must not respawn

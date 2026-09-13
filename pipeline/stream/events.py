@@ -50,8 +50,18 @@ def _num(v) -> float:
         return 0.0
 
 
-def _norm(ev: dict) -> dict:
+def _norm(ev: dict, api_error_types=frozenset()) -> dict:
     typ, sub = ev.get("type"), ev.get("subtype")
+
+    if typ in api_error_types:
+        nested = ev.get("error") if isinstance(ev.get("error"), dict) else {}
+        text = _first(ev, "message") or nested.get("message") or ""
+        return {"kind": "result", "total_cost_usd": None,
+                "num_turns": 1, "duration_ms": ev.get("duration_ms"),
+                "usage": {}, "modelUsage": {}, "permission_denials": [],
+                "stop_reason": None, "is_error": True,
+                "terminal_reason": "api_error", "subtype": sub or "failure",
+                "error": str(text)[:MAX_TEXT]}
 
     # Codex `exec --json` lifecycle. Keep these beside the Claude branches,
     # because the dispatcher consumes one harness-neutral event vocabulary.
@@ -190,7 +200,7 @@ def _norm(ev: dict) -> dict:
                      or str(ev.get("summary") or ev.get("description") or ""))[:MAX_TEXT]}
 
 
-def parse(line: str) -> dict:
+def parse(line: str, api_error_types=None) -> dict:
     """One stream-json line -> one normalised dict. Never raises."""
     try:
         ev = json.loads(line)
@@ -204,7 +214,8 @@ def parse(line: str) -> dict:
     if not isinstance(ev, dict):
         return {"kind": "other", "raw_type": None, "raw": line[:MAX_TEXT]}
     try:
-        return _norm(ev)
+        types = frozenset(str(v) for v in (api_error_types or []) if isinstance(v, str))
+        return _norm(ev, types)
     except Exception as e:            # a shape no fixture covered; degrade, do not die
         return {"kind": "other", "raw_type": ev.get("type"),
                 "error": f"{e.__class__.__name__}: {e}"}
@@ -219,16 +230,18 @@ class StreamReader:
     Today `pipeline logs -f` feeds it from the log file the child writes.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, api_error_types=None) -> None:
         self.buf = b""
         self.stopped = False
+        self.api_error_types = tuple(api_error_types or ())
 
     def feed(self, chunk: bytes) -> list[dict]:
         if self.stopped:
             return []
         self.buf += chunk
         *lines, self.buf = self.buf.split(b"\n")
-        out = [parse(ln.decode("utf-8", "replace")) for ln in lines if ln.strip()]
+        out = [parse(ln.decode("utf-8", "replace"), self.api_error_types)
+               for ln in lines if ln.strip()]
         if len(self.buf) > MAX_BUF:
             self.buf, self.stopped = b"", True
             out.append({"kind": "other", "raw_type": None,
