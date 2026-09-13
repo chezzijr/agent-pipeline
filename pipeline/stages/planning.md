@@ -100,10 +100,20 @@ Fill in these sections:
   parse or whose suffix it does not recognize is unclassified and falls
   through to the plain command-outcome rule above instead of being
   rejected.
-- `## Rollback` -- what to revert if this ships and breaks.
+- `## Rollback` -- what to revert if this ships and breaks. Name the plan's
+  RISKIEST step here too, with the fallback the implementer takes when that
+  step's own check goes red; plan-validation fails a plan whose riskiest step
+  has no stated fallback (four bounces in wave 12 were exactly this).
 
 Report the full list of files the plan will modify in your result's
 `files_declared`.
+
+Before you write the result file, run `pipeline gate <ticket-id>` yourself and
+fix every finding it prints, then run it again until it prints none. It is the
+same Tier A check plan-validation runs first; a finding you leave in costs a
+full planning respawn (eleven of wave 12's thirty-two bounces were formal:
+an `expect:` line missing or indented, a criterion that names no test or
+command, a step citing a file not in `files_declared`, an empty section).
 
 Search for existing helpers and patterns before planning new ones. The best
 plan reuses what is already here.
