@@ -2815,7 +2815,7 @@ def test_a_spawn_that_keeps_failing_escalates_one_ticket_and_keeps_the_loop():
         shutil.rmtree(d, ignore_errors=True)
 
 
-def test_environment_only_classifies_a_suite_red_on_base_and_nothing_else():
+def test_environment_overrides_mixed_tier_a_findings():
     from pipeline.core.gate import environment_only, ENVIRONMENT_MARK
     from pipeline.daemon.supervisor import gate_result
     env = [ENVIRONMENT_MARK + "suite excluding `t` is RED -- pre-existing "
@@ -2828,8 +2828,13 @@ def test_environment_only_classifies_a_suite_red_on_base_and_nothing_else():
 
     assert gate_result(False, env, "plan-validation") == "environment"
     assert gate_result(False, env, "revalidating") == "fail"
+    # A broken base cannot be repaired by triage or planning. Its finding must
+    # decide the verdict even when another gate finding is present.
     assert gate_result(
-        False, env + ["`files_declared` is empty"], "plan-validation") == "bad-plan"
+        False, env + ["`files_declared` is empty"], "plan-validation") == "environment"
+    assert gate_result(
+        False, env + ["test file /x/test_thing.py does not exist"],
+        "plan-validation") == "environment"
     assert gate_result(True, [], "plan-validation") == "ok"
 
 
