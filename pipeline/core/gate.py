@@ -780,7 +780,7 @@ def gate(project: Path, tid: str, workdir: Path | None = None) -> tuple[bool, li
         findings.append("no `test_file` recorded in frontmatter")
     else:
         runnable = []
-        for test in tests:
+        for test in (test for test in tests if test not in t.deletes):
             test_path = wd / test.split("::")[0]
             if not test_path.is_file():
                 findings.append(f"{MISSING_TEST_MARK}{test_path} does not exist")
@@ -901,15 +901,15 @@ def gate(project: Path, tid: str, workdir: Path | None = None) -> tuple[bool, li
             # test failed in the worktree.
             base, _, _ = _base_findings(project, cfg, wd, candidates)
         findings += base
-        if runnable:
-            names = " ".join(f"`{x}`" for x in runnable)
+        if tests:
+            names = " ".join(f"`{x}`" for x in tests)
             bare = next((m for m in BARE_PLACEHOLDER_RE.finditer(
                 cfg["test_suite_without_new"])
-                if len({selector_parts(x)[m.group(1)] for x in runnable}) > 1), None)
+                if len({selector_parts(x)[m.group(1)] for x in tests}) > 1), None)
             if bare:
                 findings.append(
                     f"`test_suite_without_new` substitutes a bare `{bare.group(0)}` "
-                    f"and this ticket names {len(runnable)} tests -- a flag that "
+                    f"and this ticket names {len(tests)} tests -- a flag that "
                     f"takes one value at a time excludes only the first, and the "
                     f"rest come back as pre-existing breakage. Write "
                     f"`{{{bare.group(1)}:<flag> }}` (pytest: "
@@ -917,10 +917,10 @@ def gate(project: Path, tid: str, workdir: Path | None = None) -> tuple[bool, li
                     f"or `{{{bare.group(1)}:}}` if the runner takes them all "
                     f"after one flag")
             else:
-                suite_cmd = format_tests_cmd(cfg["test_suite_without_new"], runnable)
+                suite_cmd = format_tests_cmd(cfg["test_suite_without_new"], tests)
                 code, out = _confirmed_suite(suite_cmd, wd)
                 if code != 0 and suite_ran(code, out):
-                    base_out, why = _base_suite(project, cfg, wd, runnable)
+                    base_out, why = _base_suite(project, cfg, wd, tests)
                     if base_out is not None:
                         findings.append(
                             f"{ENVIRONMENT_MARK}suite excluding {names} is RED -- "
