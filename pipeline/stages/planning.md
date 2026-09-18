@@ -115,6 +115,16 @@ full planning respawn (eleven of wave 12's thirty-two bounces were formal:
 an `expect:` line missing or indented, a criterion that names no test or
 command, a step citing a file not in `files_declared`, an empty section).
 
+The gate reads `files_declared` from the ticket's frontmatter, and the
+dispatcher copies your result's `files_declared` there only after you finish.
+Until then, two kinds of finding are expected and are not a reason to fail:
+
+1. `` `files_declared` is empty ``.
+2. `names no declared file` for a step or line whose path IS in the
+   `files_declared` your result file will carry.
+
+Fix every other finding. Do not return `fail` for these two.
+
 Search for existing helpers and patterns before planning new ones. The best
 plan reuses what is already here.
 
