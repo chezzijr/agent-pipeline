@@ -851,6 +851,41 @@ def test_reject_refuses_an_empty_reason():
     shutil.rmtree(d)
 
 
+def test_new_reads_the_summary_before_publishing_the_ticket():
+    """A dispatcher must never observe the title placeholder as a summary."""
+    d = Path(tempfile.mkdtemp())
+    summary = d / "summary.md"
+    summary.write_text("The dispatcher must not claim an incomplete ticket.\n")
+
+    r = cli(d, "new", "placeholder title", "--summary-file", str(summary))
+
+    assert r.returncode == 0, r.stderr
+    t = Ticket.load(d / ".project/tickets/TICKET-001.md")
+    assert t.section("Summary") == summary.read_text().strip()
+    assert "placeholder title" not in t.section("Summary")
+    shutil.rmtree(d)
+
+
+def test_close_rejects_an_escalated_ticket_with_a_human_reason():
+    """Closing must be available outside the plan-approval rejection path."""
+    d = Path(tempfile.mkdtemp())
+    cli(d, "new", "superseded")
+    path = d / ".project/tickets/TICKET-001.md"
+    t = Ticket.load(path)
+    t.stage = "escalated"
+    t.save()
+
+    r = cli(d, "close", "TICKET-001", "--reason", "superseded by TICKET-141")
+
+    assert r.returncode == 0, r.stderr
+    t = Ticket.load(path)
+    assert t.stage == "rejected"
+    entry = [e for e in t.thread() if e.stage == "human"][-1]
+    assert "superseded by TICKET-141" in entry.text
+    assert t.lease == {"holder": None, "expires": None}
+    shutil.rmtree(d)
+
+
 def test_logs_pretty_prints_a_stream_json_log():
     """`pipeline logs` is the dogfood view and the fallback when the TUI breaks."""
     d = Path(tempfile.mkdtemp())
