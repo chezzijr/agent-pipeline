@@ -56,6 +56,19 @@ This sidecar is your only channel for anything that belongs in the frontmatter.
 If you do not write that file the dispatcher assumes you crashed and respawns
 your stage from scratch -- twice, then the ticket is escalated to a human.
 
+8. Never wait on a long-running job. A command that polls (`until grep ...;
+   do sleep ...; done`, `tail -f`, `watch`) spends your budget and your lease
+   and produces nothing; a stage killed mid-wait loses every uncommitted
+   change and writes no result file. Run a long job with its output
+   redirected to a file under your working directory, then:
+   1. If the job finishes within a single command, read the file once.
+   2. If it does not, commit what you have (`WIP: <what is pending>`),
+      record the job, its output file and what is left in `## Thread`, and
+      write the result file now, with the result your stage lists for
+      work it could not finish (`blocked` in implementing, `fail` in a
+      review stage). A stage whose list has no such result must not start
+      a job it cannot finish within one command.
+
 ## How to write
 
 Everything you write is read twice: by a human at a gate, and by an agent that
