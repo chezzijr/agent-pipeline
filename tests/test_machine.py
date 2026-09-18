@@ -175,9 +175,9 @@ def test_dep_holder_names_the_first_dependency_short_of_done():
 
 
 def test_a_dependency_that_can_never_land_escalates_instead_of_waiting():
-    assert "escalated" in M.dep_unsatisfiable(
+    assert "rejected" in M.dep_unsatisfiable(
         "TICKET-002", {"TICKET-002": ["TICKET-001"]},
-        {"TICKET-001": "escalated", "TICKET-002": "new"})
+        {"TICKET-001": "rejected", "TICKET-002": "new"})
     assert "not a ticket" in M.dep_unsatisfiable(
         "TICKET-002", {"TICKET-002": ["TICKET-404"]}, {"TICKET-002": "new"})
     assert "cycle" in M.dep_unsatisfiable(
@@ -186,6 +186,14 @@ def test_a_dependency_that_can_never_land_escalates_instead_of_waiting():
     assert M.dep_unsatisfiable(
         "TICKET-002", {"TICKET-002": ["TICKET-001"]},
         {"TICKET-001": "done", "TICKET-002": "new"}) is None
+
+
+def test_an_escalated_dependency_waits_for_human_resume():
+    deps = {"TICKET-002": ["TICKET-001"]}
+    stages = {"TICKET-001": "escalated", "TICKET-002": "new"}
+
+    assert M.dep_unsatisfiable("TICKET-002", deps, stages) is None
+    assert M.dep_holder("TICKET-002", deps, stages) == ("TICKET-001", "escalated")
 
 
 def test_control_fields_are_the_dispatchers_alone():
