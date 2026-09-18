@@ -3000,6 +3000,40 @@ def test_a_source_change_drain_waits_for_a_child_whose_lease_is_still_active():
     assert len(seen) == 3, f"expected the loop to end after tick 3, got {len(seen)}"
 
 
+def test_tick_renews_an_inflight_lease_before_a_source_change_drain():
+    """A healthy child can outlive its original 30-minute lease.
+
+    The dispatcher must renew the ticket on a normal tick before a
+    source-change drain reads the inflight snapshot. Otherwise the drain kills
+    a healthy child merely because the lease taken at spawn elapsed.
+    """
+    import os
+    import types
+
+    d = project()
+    path = d / ".project/tickets/TICKET-001.md"
+    t = Ticket.load(path)
+    t.lease = {"holder": f"implementing-{os.getpid()}",
+               "expires": (T.now() - timedelta(minutes=1)).isoformat()}
+    t.save()
+    killed = []
+    child = types.SimpleNamespace(
+        poll=lambda: None,
+        terminate=lambda: killed.append("terminated"),
+        wait=lambda timeout=None: None,
+        kill=lambda: None,
+    )
+    inflight = {t.id: {"proc": child, "stage": "implementing", "meta": t}}
+
+    supervisor.tick(d, harness("fake"), inflight, max_parallel=1)
+
+    assert Ticket.load(path).lease_active(), "a live child kept its expired spawn lease"
+    supervisor.drain_expired(inflight)
+    assert killed == [], "the drain terminated a child after its lease renewal"
+    assert t.id in inflight
+    shutil.rmtree(d, ignore_errors=True)
+
+
 def test_the_daemon_drain_completes_with_a_stuck_inflight_stage():
     """`serve()` carries `run()`'s drain check against `any(states.values())`,
     so it carries the same defect: a per-project inflight dict that never

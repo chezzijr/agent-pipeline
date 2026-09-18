@@ -261,6 +261,23 @@ def test_a_lease_held_by_a_dead_pid_is_not_a_lease():
     assert holder_alive(None) is True
 
 
+def test_ls_does_not_report_an_unexpired_lease_held_by_a_dead_pid():
+    """The file fallback must not mislead an operator after a dispatcher dies."""
+    d = project()
+    dead = subprocess.Popen([sys.executable, "-c", "pass"])
+    dead.wait()
+    t = Ticket.find(d, "TICKET-001")
+    t.take_lease(f"implementing-{dead.pid}")
+    t.save()
+
+    row = ticket_rows(d)[0]
+
+    assert t.lease_active(), "the fixture must retain an unexpired lease"
+    assert holder_alive(t.lease["holder"]) is False, "the fixture pid was reused"
+    assert row["leased"] is False, row
+    shutil.rmtree(d, ignore_errors=True)
+
+
 def test_watch_and_unwatch_are_the_extension_point():
     """Three tickets in the next wave register an fd with this loop. If this
     breaks, they all have to edit server.py instead."""
