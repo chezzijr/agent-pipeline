@@ -2327,6 +2327,41 @@ def test_finish_accepts_an_unchanged_summary_while_adopting_other_prose():
     shutil.rmtree(d, ignore_errors=True)
 
 
+def test_a_stage_result_appends_a_correction_to_an_existing_decision():
+    """TICKET-142: any stage can correct a false decision without rewriting it.
+
+    DEC-125 must remain active: a correction qualifies one claim, whereas a
+    superseding ticket replaces the whole decision. The sidecar is the only
+    channel every stage can write, so the dispatcher must validate and append
+    this correction when it finishes the stage.
+    """
+    d = project(FIXTURE.replace("stage: plan-validation", "stage: review"))
+    path = d / ".project/tickets/TICKET-001.md"
+    dec = d / ".project/decisions"
+    dec.mkdir(parents=True)
+    record = dec / "DEC-125.md"
+    original = "# DEC-125\n\njoin_eager_nursery has no replacement-worker call.\n"
+    record.write_text(original)
+    snap = Ticket.load(path)
+    T.result_file(d, "TICKET-001").write_text(
+        "result: ok\nsummary: ✓ reported correction\n"
+        "correction: DEC-125 -- join_eager_nursery has no "
+        "spawn_replacement_worker call\n")
+    log = d / ".project/logs/TICKET-001.log"
+    log.parent.mkdir(parents=True, exist_ok=True)
+    rec = {"fh": log.open("w"), "prompt": d / "gone.md", "settings": None,
+           "path": path, "tid": "TICKET-001", "stage": "review",
+           "session": "s1", "log": log, "wt": d, "meta": snap, "before": None}
+
+    assert supervisor._finish(d, rec) == "ok"
+    text = record.read_text()
+    assert text.startswith(original), text
+    assert "<!-- pipeline:correction -->" in text, text
+    assert "- corrected-by: TICKET-001" in text, text
+    assert "join_eager_nursery has no spawn_replacement_worker call" in text, text
+    shutil.rmtree(d, ignore_errors=True)
+
+
 def test_a_budget_kill_is_charged_and_retried_exactly_like_a_crash():
     """A stage killed at its `--max-budget-usd` cap escalates on the FIRST
     kill, charged to its own counter, naming the cap it hit -- not a blind
