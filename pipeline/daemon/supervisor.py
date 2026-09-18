@@ -882,6 +882,11 @@ def start(project: Path, path: Path, hcfg: dict, inflight: dict,
         if dep is not None:
             note_wait(t, {"on": dep[0], "stage": dep[1]})
             return False, None
+        if stage == "new":
+            # `advance()` saves this in-memory removal. Do not call
+            # `note_wait()` here: a non-new ticket must make one final wait
+            # decision below, so a persistent file holder retains its `since`.
+            t.extra.pop("waiting", None)
 
     if stage == "new":
         advance(project, t, "new", "dispatcher pickup", emit, agent=False)

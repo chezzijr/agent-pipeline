@@ -153,9 +153,9 @@ edited is escalated rather than trusted.
 `depends_on: [TICKET-023]` or pass `pipeline new --depends-on TICKET-023`, and only when
 the later ticket's work genuinely cannot be planned until the earlier one lands — prose
 in `## Summary` saying "land TICKET-023 first" enforces nothing. The dispatcher WAITS
-rather than failing, `pipeline ls` names what a ticket waits on, and a dependency that
-is missing, `escalated`, `rejected`, or part of a cycle escalates the dependent instead
-of hanging. Two tickets that touch the same file are already ordered by
+until it reaches `done`, and `pipeline ls` names what a ticket waits on. A missing,
+rejected, or cyclic dependency escalates the dependent. An escalated dependency waits
+for human resume. Two tickets that touch the same file are already ordered by
 `files_declared`; do not restate that as a dependency.
 
 ### 4. Hand it over

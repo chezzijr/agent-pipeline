@@ -2902,6 +2902,58 @@ def test_ls_names_the_ticket_a_dependency_is_waiting_on():
     shutil.rmtree(d, ignore_errors=True)
 
 
+def test_an_escalated_dependency_waits_then_advances_after_resume():
+    d, _ = git_project()
+    blocker = FIXTURE.replace("stage: plan-validation", "stage: escalated")
+    (d / ".project/tickets/TICKET-001.md").write_text(blocker)
+    dependent = FIXTURE.replace("id: TICKET-001", "id: TICKET-002") \
+        .replace("branch: ticket/001", "branch: ticket/002") \
+        .replace("stage: plan-validation", "stage: new") \
+        .replace("---\n\n## Summary", "depends_on: TICKET-001\n---\n\n## Summary")
+    path = d / ".project/tickets/TICKET-002.md"
+    path.write_text(dependent)
+
+    assert supervisor.start(d, path, harness("fake"), {}) == (False, None)
+    row = [r for r in ticket_rows(d) if r["id"] == "TICKET-002"][0]
+    assert waiting_text(row["waiting"]).startswith(
+        "waiting on TICKET-001 (depends_on, at escalated)")
+
+    blocker = Ticket.load(d / ".project/tickets/TICKET-001.md")
+    blocker.stage = "done"
+    blocker.save()
+
+    assert supervisor.start(d, path, harness("fake"), {}) == (True, None)
+    resolved = Ticket.load(path)
+    assert resolved.stage == "triage"
+    assert "waiting" not in resolved.extra
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_a_resolved_dependency_keeps_one_stable_file_wait():
+    d, _ = git_project()
+    blocker = FIXTURE.replace("stage: plan-validation", "stage: done")
+    (d / ".project/tickets/TICKET-001.md").write_text(blocker)
+    dependent = FIXTURE.replace("id: TICKET-001", "id: TICKET-002") \
+        .replace("branch: ticket/001", "branch: ticket/002") \
+        .replace("stage: plan-validation", "stage: implementing") \
+        .replace("---\n\n## Summary", "depends_on: TICKET-001\n---\n\n## Summary")
+    path = d / ".project/tickets/TICKET-002.md"
+    path.write_text(dependent)
+    owner_path = d / ".project/tickets/TICKET-003.md"
+    owner_path.write_text(FIXTURE.replace("id: TICKET-001", "id: TICKET-003")
+                          .replace("branch: ticket/001", "branch: ticket/003")
+                          .replace("stage: plan-validation", "stage: implementing"))
+    inflight = {"TICKET-003": {"meta": Ticket.load(owner_path)}}
+
+    assert supervisor.start(d, path, harness("fake"), inflight) == (False, None)
+    first = Ticket.load(path).extra["waiting"]
+    assert supervisor.start(d, path, harness("fake"), inflight) == (False, None)
+    assert Ticket.load(path).extra["waiting"] == first
+    assert set(first) == {"on", "file", "since"}
+    assert first["on"] == "TICKET-003" and first["file"] == "thing.py"
+    shutil.rmtree(d, ignore_errors=True)
+
+
 def test_a_source_change_drain_waits_for_a_child_whose_lease_is_still_active():
     """The bound is the lease, not an unconditional kill. DEC-032 ruling 3
     keeps the drain waiting so a live agent's work is not thrown away, so a

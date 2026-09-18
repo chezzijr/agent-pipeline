@@ -363,10 +363,11 @@ def dep_holder(tid: str, deps: dict[str, list[str]], stages: dict[str, str]) -> 
 def dep_unsatisfiable(tid: str, deps: dict[str, list[str]], stages: dict[str, str]) -> str | None:
     """A reason `tid`'s dependency chain can never reach `done`, or `None`.
 
-    Covers a missing id, a dependency parked at a terminal stage other than
-    `done`, and a cycle reachable from `tid`. `dep_holder()` only ever sees
-    the direct dependency, so this is the one function here that walks the
-    graph -- and it walks it only to find a reason to stop waiting."""
+    Covers a missing id, a rejected dependency, and a cycle reachable from
+    `tid`. An escalated dependency can reach `done` after human resume, so it
+    waits through `dep_holder()`. `dep_holder()` only ever sees the direct
+    dependency, so this is the one function here that walks the graph -- and
+    it walks it only to find a reason to stop waiting."""
     stack: list[tuple[str, list[str]]] = [(tid, [tid])]
     seen: set[str] = set()
     while stack:
@@ -376,7 +377,7 @@ def dep_unsatisfiable(tid: str, deps: dict[str, list[str]], stages: dict[str, st
                 return "depends_on is a cycle: " + " -> ".join(path[path.index(dep):] + [dep])
             if dep not in stages:
                 return f"{cur} depends_on {dep}, which is not a ticket in this project"
-            if stages[dep] in TERMINAL and stages[dep] != "done":
+            if stages[dep] == "rejected":
                 return f"{cur} depends_on {dep}, which is {stages[dep]} and can never reach done"
             if dep not in seen:
                 seen.add(dep)
