@@ -29,8 +29,8 @@ from pipeline.core.machine import (CLEANUP_STAGES, CONTROL_FIELDS,
                                    HUMAN_GATES, MAX_ATTEMPTS, TERMINAL,
                                    apply_claims, bound_for, conflict_holder,
                                    dep_holder, dep_unsatisfiable, transition)
-from pipeline.core.ticket import (Ticket, all_tickets, as_list, drop_result,
-                                  lease_expiry, now, read_result, record_decision,
+from pipeline.core.ticket import (LEASE_MINUTES, Ticket, all_tickets, as_list,
+                                  drop_result, holder_alive, lease_expiry, now, read_result, record_decision,
                                   replace_section, section_count, sections,
                                   result_file, stage_view, ticket_path,
                                   tickets_dir, validate_meta)
@@ -43,33 +43,6 @@ from pipeline.daemon.server import Poller
 from pipeline.daemon.store import SOURCE_CHANGED, noop
 from pipeline.pty import host
 from pipeline.stream import StreamReader
-
-
-def _pid_of(holder) -> int | None:
-    """A lease holder is `f"{stage}-{os.getpid()}"` -- the supervisor's pid."""
-    m = re.search(r"-(\d{1,9})$", str(holder or ""))
-    return int(m.group(1)) if m else None
-
-
-def holder_alive(holder) -> bool:
-    """A daemon restart must not park every in-flight ticket for half an hour.
-    The lease holder is a pid: if it is gone, the supervisor that took the
-    lease died and the lease is stale whatever its clock says.
-
-    Fail-safe, never fail-open: an unparseable holder, or a pid that has been
-    recycled onto some live process, reads as alive and we wait out the normal
-    30-minute expiry instead of spawning a second agent onto a live one.
-    """
-    pid = _pid_of(holder)
-    if pid is None or pid <= 0:
-        return True
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True      # someone else's process: alive, just not ours
-    return True
 
 
 def escalate(t: Ticket, reason: str, emit=noop) -> None:
@@ -1594,6 +1567,36 @@ def machine_demand(project: Path, want: bool) -> None:
         entry["want"] = want
 
 
+def renew_leases(project: Path, inflight: dict) -> None:
+    """Keep a live child's lease from lapsing while it works.
+
+    Only below half of `LEASE_MINUTES`: a save rewrites the ticket, its
+    mirror and the skip-worktree mark, and each write widens the window in
+    which the agent's own edit of the same file races the dispatcher's. The
+    lease must still equal the pre-spawn snapshot's, so a forced resume or an
+    agent that rewrote it stays visible to `_finish()`; only the renewed
+    lease is copied into the snapshot. A stage that rewrites the file between
+    our load and save can still lose that race -- the threshold narrows it.
+    """
+    half = timedelta(minutes=LEASE_MINUTES / 2)
+    for tid, rec in list(inflight.items()):
+        snap = rec.get("meta")
+        try:
+            if snap is None or rec["proc"].poll() is not None:
+                continue
+            exp = lease_expiry((snap.lease or {}).get("expires"))
+            if exp is not None and exp - now() >= half:
+                continue
+            t = Ticket.load(snap.path)
+            if t.lease != snap.lease or not (t.lease or {}).get("holder"):
+                continue
+            t.renew_lease()
+            t.save()
+            snap.lease = t.lease
+        except Exception as e:  # one ticket's failure must not stall the tick
+            print(f"  {tid}: lease renewal failed: {e}")
+
+
 def tick(project: Path, hcfg: dict, inflight: dict, max_parallel: int = 3,
          poller: Poller | None = None, emit=noop, stopping=lambda: False) -> bool:
     """One pass over one project: reap what finished, start what can start.
@@ -1602,6 +1605,8 @@ def tick(project: Path, hcfg: dict, inflight: dict, max_parallel: int = 3,
     `-j` argument, this project's share of it, and the project's own
     `max_parallel` key."""
     worked = reap(project, inflight, emit)
+    if not stopping():
+        renew_leases(project, inflight)
     tickets = all_tickets(project)
     share = machine_share(project, inflight, max_parallel)
     cap = min(_start_cap(project, max_parallel), share) if tickets else share

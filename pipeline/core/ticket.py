@@ -31,6 +31,33 @@ SAFE_TEST = re.compile(r"^[A-Za-z0-9._/-]{1,200}(::[A-Za-z0-9_\[\].-]{1,100})*$"
 SAFE_FILE = re.compile(r"^[A-Za-z0-9._/-]{1,200}$")
 
 
+def _pid_of(holder) -> int | None:
+    """A lease holder is `f"{stage}-{os.getpid()}"` -- the supervisor's pid."""
+    m = re.search(r"-(\d{1,9})$", str(holder or ""))
+    return int(m.group(1)) if m else None
+
+
+def holder_alive(holder) -> bool:
+    """A daemon restart must not park every in-flight ticket for half an hour.
+    The lease holder is a pid: if it is gone, the supervisor that took the
+    lease died and the lease is stale whatever its clock says.
+
+    Fail-safe, never fail-open: an unparseable holder, or a pid that has been
+    recycled onto some live process, reads as alive and we wait out the normal
+    30-minute expiry instead of spawning a second agent onto a live one.
+    """
+    pid = _pid_of(holder)
+    if pid is None or pid <= 0:
+        return True
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True      # someone else's process: alive, just not ours
+    return True
+
+
 def lease_expiry(exp) -> datetime | None:
     """`lease.expires` -> an aware datetime, or None if it is not a timestamp.
 
@@ -749,6 +776,11 @@ class Ticket:
     def take_lease(self, holder: str, minutes: int = LEASE_MINUTES) -> None:
         self.lease = {"holder": holder,
                       "expires": (now() + timedelta(minutes=minutes)).isoformat()}
+
+    def renew_lease(self, minutes: int = LEASE_MINUTES) -> None:
+        """Push the expiry out and keep the holder: the same dispatcher still
+        owns the stage, so `holder_alive()` keeps answering for it."""
+        self.take_lease((self.lease or {}).get("holder"), minutes)
 
     def release_lease(self) -> None:
         self.lease = {"holder": None, "expires": None}

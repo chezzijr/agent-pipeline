@@ -26,7 +26,7 @@ from pathlib import Path
 from pipeline import __version__
 from pipeline.core import PipelineError
 from pipeline.core.machine import HUMAN_GATES, TERMINAL
-from pipeline.core.ticket import Ticket, all_tickets, lease_expiry, now
+from pipeline.core.ticket import Ticket, all_tickets, holder_alive, lease_expiry, now
 # `lease_expiry()` is reused as this codebase's one total ISO parser: a
 # hand-edited `waiting.since` must not raise inside `ls`.
 from pipeline.daemon import registry
@@ -128,10 +128,11 @@ def ticket_rows(project: Path, inflight: dict | None = None) -> list[dict]:
             t = Ticket.load(path)
             rec = inflight.get(t.id)
             summary = t.section("Summary").strip().splitlines()
-            leased = t.lease_active()   # NOT `lease.expires`: release_lease()
-                                        # nulls it, an expiry does not, so a
-                                        # dead lease still has one and would
-                                        # read as held
+            # NOT `lease.expires`: release_lease() nulls it, an expiry does
+            # not, so a dead lease still has one and would read as held. A
+            # dead dispatcher's unexpired lease is not held either.
+            leased = (t.lease_active()
+                      and holder_alive((t.lease or {}).get("holder")))
             out.append({
                 "project": str(project), "id": t.id, "stage": t.stage,
                 "class": t.klass, "counters": t.counters, "lease": t.lease,

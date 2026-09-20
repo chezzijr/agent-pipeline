@@ -3058,6 +3058,32 @@ def test_tick_does_not_save_an_inflight_lease_above_the_renewal_threshold():
     shutil.rmtree(d, ignore_errors=True)
 
 
+def test_tick_does_not_renew_a_lease_that_differs_from_the_snapshot():
+    """A lease the agent or a forced resume changed stays visible to `_finish()`."""
+    import os
+    import types
+
+    d = project()
+    path = d / ".project/tickets/TICKET-001.md"
+    t = Ticket.load(path)
+    t.lease = {"holder": f"implementing-{os.getpid()}",
+               "expires": (T.now() - timedelta(minutes=1)).isoformat()}
+    t.save()
+    snap = Ticket.load(path)
+    t.lease = {"holder": f"implementing-{os.getpid()}",
+               "expires": (T.now() - timedelta(minutes=2)).isoformat()}
+    t.save()
+    before = path.read_bytes()
+    child = types.SimpleNamespace(poll=lambda: None)
+    inflight = {t.id: {"proc": child, "stage": "implementing", "meta": snap}}
+
+    supervisor.tick(d, harness("fake"), inflight, max_parallel=1)
+
+    assert path.read_bytes() == before, "a changed lease was renewed over"
+    assert not snap.lease_active(), "the snapshot lease was rewritten"
+    shutil.rmtree(d, ignore_errors=True)
+
+
 def test_tick_does_not_renew_an_inflight_lease_while_stopping():
     """A source-change drain must consume the remaining lease bound unchanged."""
     import os
