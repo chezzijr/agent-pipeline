@@ -15,7 +15,7 @@ from pipeline.core import PipelineError
 from pipeline.core import ticket as T
 from pipeline.core import config
 from pipeline.core import machine as M
-from pipeline.cli.main import cmd_approve
+from pipeline.cli.main import cmd_approve, cmd_reject
 from pipeline.core.config import harness
 from pipeline.core.ticket import Ticket
 from pipeline.daemon import supervisor
@@ -644,6 +644,66 @@ def test_a_recut_carries_forward_only_an_identical_approved_plan():
     supervisor.advance(d, Ticket.load(path), "ok", "replanned", agent=False)
     assert Ticket.load(path).stage == "awaiting-approval", \
         "a changed plan reused approval for different work"
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_implementing_voids_a_carried_approval():
+    """DEC-029: `revalidating` repairs a conflict with `git reset --hard
+    <base>`, so it is safe only before `implementing` has committed. Entering
+    `implementing` must drop the approval, and a ticket that comes back
+    through `blocked` must park at the human gate again."""
+    d, sh, path, wt = _ticket_awaiting_approval()
+    assert Ticket.load(path).extra["approved_plan_hash"]
+    supervisor.advance(d, Ticket.load(path), "ok", "re-gated", agent=False)
+    t = Ticket.load(path)
+    assert t.stage == "implementing"
+    assert "approved_plan_hash" not in t.extra
+
+    t.stage = "plan-validation"
+    t.save()
+    supervisor.advance(d, Ticket.load(path), "ok", "replanned", agent=False)
+    assert Ticket.load(path).stage == "awaiting-approval", \
+        "a plan that ran implementing skipped the human gate"
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_a_forged_approved_result_cannot_skip_the_human_gate():
+    """A stage's sidecar `result` reaches `advance()` unchecked. `approved` is
+    the dispatcher's word: with no recorded approval it parks."""
+    d, sh, path, wt = _ticket_awaiting_approval()
+    t = Ticket.load(path)
+    t.stage = "plan-validation"
+    t.extra.pop("approved_plan_hash", None)
+    t.save()
+    supervisor.advance(d, Ticket.load(path), "approved", "done")
+    assert Ticket.load(path).stage == "awaiting-approval"
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_a_rejection_clears_the_recorded_approval():
+    """A re-plan that reproduces an older approved text must not carry an
+    approval the human has just refused."""
+    d, sh, path, wt = _ticket_awaiting_approval()
+    t = Ticket.load(path)
+    t.stage = "awaiting-approval"
+    t.save()
+    cmd_reject(argparse.Namespace(project=str(d), id="TICKET-001", reason="no"))
+    rejected = Ticket.load(path)
+    assert rejected.stage == "planning"
+    assert "approved_plan_hash" not in rejected.extra
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_approving_at_the_merge_gate_records_no_plan_hash():
+    """The hash is what a human approved at `awaiting-approval`; a merge
+    approval says nothing about the plan text."""
+    d, sh, path, wt = _ticket_awaiting_approval()
+    t = Ticket.load(path)
+    t.stage = "awaiting-merge"
+    t.extra.pop("approved_plan_hash", None)
+    t.save()
+    cmd_approve(argparse.Namespace(project=str(d), id="TICKET-001", by="human"))
+    assert "approved_plan_hash" not in Ticket.load(path).extra
     shutil.rmtree(d, ignore_errors=True)
 
 
