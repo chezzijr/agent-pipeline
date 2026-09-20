@@ -254,6 +254,8 @@ def decision_row(d) -> str:
         state = f"superseded by {d.superseded_by}" if d.superseded_by else "superseded"
     else:
         state = "active"
+    if d.corrections:
+        state += " (corrected)"
     return f"{d.id}  {state:<22}  {d.ticket:<14}  {d.title}"
 
 

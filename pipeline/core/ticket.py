@@ -286,7 +286,7 @@ def result_file(project: Path, tid: str) -> Path:
     return tickets_dir(project) / f"{tid}.result"
 
 
-SIDECAR_KEYS = ("result", "summary", "test_file")
+SIDECAR_KEYS = ("result", "summary", "test_file", "correction")
 
 # The two keys a sidecar may write as a YAML list. This tuple gates the
 # `- item` collector only; the `key: value` store condition below still
@@ -392,9 +392,30 @@ _DEC_TICKET_RE = re.compile(r"^- ticket:[ \t]*(\S+)", re.M)
 _DEC_SUPER_RE = re.compile(r"^- superseded-by:[ \t]*(DEC-[0-9]{1,6})", re.M)
 _DEC_HEADER_RE = re.compile(r"^(#|-\s|<!--)")
 
+# The footer `correct_decision` appends when a stage reports that ONE claim in a
+# record is false. Like the superseded footer it is only ever appended, never a
+# rewrite, and the marker is what `Decision.corrections` searches for. A record
+# stays active: a correction qualifies a claim, a superseding ticket replaces
+# the whole record.
+CORRECTION_MARKER = "<!-- pipeline:correction -->"
+CORRECTION_MAX = 500
+_DEC_CORRECTION_RE = re.compile(
+    re.escape(CORRECTION_MARKER)
+    + r"\n- corrected-by: (TICKET-[0-9]{1,6}) \(([^)\n]*)\): ([^\n]+)")
+_CORRECTION_CLAIM_RE = re.compile(r"(\S+)[ \t]+--(?:[ \t]+(.*))?")
+
 # A listing row is one line, and a record's first body line is prose that
 # can run past a terminal, so truncate once here rather than in each caller.
 TITLE_WIDTH = 100
+
+
+@dataclass(frozen=True)
+class Correction:
+    """One appended correction footer: the ticket that reported it, the day,
+    and the single-line claim."""
+    ticket: str
+    date: str
+    text: str
 
 
 @dataclass(frozen=True)
@@ -420,6 +441,12 @@ class Decision:
             return None
         m = _DEC_SUPER_RE.search(self.text.split(SUPERSEDED_MARKER, 1)[1])
         return m.group(1) if m else None
+
+    @property
+    def corrections(self) -> list[Correction]:
+        """The corrections appended to this record, oldest first. Read here so
+        no caller parses footer text."""
+        return [Correction(*m.groups()) for m in _DEC_CORRECTION_RE.finditer(self.text)]
 
     @property
     def ticket(self) -> str:
@@ -475,6 +502,64 @@ def active_decisions(project: Path) -> list[Decision]:
     A record carrying the superseded footer stays on disk (it is still the
     reason something was once done that way) but drops out of this list."""
     return [d for d in all_decisions(project) if not d.superseded]
+
+
+def parse_correction(raw: object) -> tuple[str, str]:
+    """`DEC-<digits> -- <text>` to `(id, text)`, or PipelineError. The id
+    becomes a filename and the text becomes a line of a shared record, and a
+    stage's sidecar wrote both -- CLAUDE.md invariant 5. The text is one
+    printable line and may not carry an HTML comment, so it can never forge a
+    footer marker."""
+    if not isinstance(raw, str):
+        raise PipelineError(f"want `DEC-<digits> -- <text>`, got {raw!r}")
+    m = _CORRECTION_CLAIM_RE.fullmatch(raw.strip())
+    if not m:
+        raise PipelineError(f"want `DEC-<digits> -- <text>` on one line, got {raw[:120]!r}")
+    did, text = m.group(1), (m.group(2) or "").strip()
+    if not SAFE_DEC_ID.match(did):
+        raise PipelineError(f"{did!r} is not a valid decision id (want DEC-<digits>)")
+    if not text:
+        raise PipelineError(f"{did} has an empty correction text")
+    if not text.isprintable():
+        raise PipelineError(f"the {did} correction text has a control character")
+    if "<!--" in text or "-->" in text:
+        raise PipelineError(f"the {did} correction text contains an HTML comment")
+    if len(text) > CORRECTION_MAX:
+        raise PipelineError(f"the {did} correction text is {len(text)} characters "
+                            f"(limit {CORRECTION_MAX})")
+    return did, text
+
+
+def correct_decision(project: Path, t: "Ticket", raw: object) -> str | None:
+    """Append a correction footer, naming `t`, to the decision record `raw`
+    names, and return its id. The body is never rewritten and the record stays
+    active. A bad id, an absent or symlinked record, or unsafe text is a
+    `finding` on `t` and returns None -- not a crash, and nothing is written.
+
+    Replay-safe: a lease-expiry respawn calls this again for the same ticket,
+    and a footer already carrying that ticket and text is left alone.
+    """
+    try:
+        did, text = parse_correction(raw)
+        if not SAFE_ID.match(t.id):
+            raise PipelineError(f"{t.id!r} is not a valid ticket id")
+        path = decisions_dir(project) / f"{did}.md"
+        if path.is_symlink() or not path.is_file():
+            raise PipelineError(f"{did} does not name an existing decision record")
+        old = path.read_text()
+        if any(c.ticket == t.id and c.text == text
+               for c in Decision(id=did, path=path, text=old).corrections):
+            return did
+        write_atomic(path, old.rstrip("\n")
+                     + f"\n\n{CORRECTION_MARKER}\n- corrected-by: {t.id} "
+                       f"({now().date().isoformat()}): {text}\n")
+    except (PipelineError, OSError, ValueError) as e:
+        t.append(t.stage, "finding",
+                 f"`correction` was not applied: {e}; nothing written",
+                 severity="minor")
+        return None
+    t.append(t.stage, "note", f"appended a correction to {did}: {text}")
+    return did
 
 
 def record_decision(project: Path, t: "Ticket") -> str | None:

@@ -30,7 +30,7 @@ from pipeline.core.machine import (CLEANUP_STAGES, CONTROL_FIELDS,
                                    apply_claims, bound_for, conflict_holder,
                                    dep_holder, dep_unsatisfiable, transition)
 from pipeline.core.ticket import (LEASE_MINUTES, Ticket, all_tickets, as_list,
-                                  drop_result, holder_alive, lease_expiry, now, read_result, record_decision,
+                                  correct_decision, drop_result, holder_alive, lease_expiry, now, read_result, record_decision,
                                   replace_section, section_count, sections,
                                   result_file, stage_view, ticket_path,
                                   tickets_dir, validate_meta)
@@ -1347,6 +1347,12 @@ def _finish(project: Path, rec: dict, emit=noop) -> str:
         return "bad-claim"
     t.test_file, t.files_declared = claimed["test_file"], claimed["files_declared"]
     t.counters["no_result"] = 0
+    # A stage cannot write `.project/decisions/`, so the dispatcher appends the
+    # correction it reported, into the PROJECT's records (DEC-018). It runs
+    # before the sidecar is dropped, so a crash here replays into an
+    # idempotent append rather than losing the correction.
+    if "correction" in res:
+        correct_decision(project, t, res["correction"])
     t.save()
     drop_result(project, tid)
 

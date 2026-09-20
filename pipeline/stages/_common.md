@@ -44,7 +44,17 @@ result: ok          # see your stage's list of allowed values
 summary: one line, what you did or why you stopped
 files_declared: []  # optional; files this ticket will touch
 test_file: null     # optional; triage only; one test or a list
+correction: null    # optional; any stage; see below
 ```
+
+If a decision record you read states something the code contradicts, you
+cannot edit `.project/decisions/`. Add one line to the sidecar instead:
+`correction: DEC-<digits> -- <text>`. Use one line of printable text, at most
+500 characters, with no `<!--`. The dispatcher appends it to that record, names
+your ticket, and never rewrites the body. The record stays active; the
+correction qualifies one claim, it does not supersede the record. Report only
+a claim you checked against the code, and quote the evidence in `## Thread`.
+A malformed or unknown id becomes a `finding` and nothing is written.
 
 Write it as soon as your stage's work is done -- before you append your
 `## Thread` entry. A stage killed at its spending cap

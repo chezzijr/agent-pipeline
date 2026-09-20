@@ -1632,6 +1632,37 @@ def test_decisions_marks_superseded_reads_one_and_searches_bodies():
     shutil.rmtree(d, ignore_errors=True)
 
 
+def test_decisions_marks_a_corrected_record_and_keeps_one_row_per_record():
+    """TICKET-142: a corrected record stays one row, still active or still
+    superseded with its replacement id, and the row says it carries a
+    correction. Fails if the state column ignores the footer."""
+    d = Path(tempfile.mkdtemp())
+    dec = d / ".project" / "decisions"
+    dec.mkdir(parents=True)
+    footer = ("\n<!-- pipeline:correction -->\n"
+              "- corrected-by: TICKET-142 (2026-09-20): there is no such call\n")
+    (dec / "DEC-003.md").write_text(
+        "# DEC-003\n\n- ticket: TICKET-003 (bugfix)\n\nkeep the flush\n\n"
+        "<!-- pipeline:superseded-by -->\n- superseded-by: DEC-011 (moved, 2026-01-02)\n"
+        + footer)
+    (dec / "DEC-011.md").write_text(
+        "# DEC-011\n\n- ticket: TICKET-011 (feature)\n\nthe writer owns eviction\n" + footer)
+    (dec / "DEC-012.md").write_text(
+        "# DEC-012\n\n- ticket: TICKET-012 (feature)\n\nuntouched\n")
+
+    r = cli(d, "decisions")
+    assert r.returncode == 0, r.stderr
+    rows = [ln for ln in r.stdout.splitlines() if ln.startswith("DEC-")]
+    assert [ln.split()[0] for ln in rows] == ["DEC-003", "DEC-011", "DEC-012"], r.stdout
+    by_id = {ln.split()[0]: ln for ln in rows}
+    assert "superseded by DEC-011" in by_id["DEC-003"] and "corrected" in by_id["DEC-003"]
+    assert "TICKET-003" in by_id["DEC-003"] and "keep the flush" in by_id["DEC-003"]
+    assert "active" in by_id["DEC-011"] and "corrected" in by_id["DEC-011"]
+    assert "the writer owns eviction" in by_id["DEC-011"], by_id
+    assert "corrected" not in by_id["DEC-012"], by_id["DEC-012"]
+    shutil.rmtree(d, ignore_errors=True)
+
+
 def test_diagnostics_documentation_explains_rows_and_force_boundary():
     """`pipeline diagnostics` and register's Git-identity refusal must be
     documented where an agent reads setup instructions, not just in code."""

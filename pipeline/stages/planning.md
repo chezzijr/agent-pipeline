@@ -56,6 +56,13 @@ Fill in these sections:
   the plan genuinely needs to contradict a still-active record (no
   `superseded-by:` line), do not silently diverge from it -- open your own
   `## Decisions` section with `supersedes: DEC-<n> -- reason`, below.
+  A record may also end with `<!-- pipeline:correction -->` and
+  `- corrected-by: TICKET-<n> (...): <text>` lines. A correction qualifies one
+  claim in an otherwise active record: the record still binds you, minus the
+  claim the correction says is false. Read the record with its corrections. If
+  you find such a claim yourself and checked it against the code, report it
+  with `correction: DEC-<digits> -- <text>` in your `.result` sidecar instead
+  of superseding the whole record.
   Tier A resolves every `DEC-<n>` you cite against that directory: an id with no
   record there fails the gate, and a superseded one is recorded as history rather
   than as a constraint. A `DEC-<n>` named only in a clause that says it has no

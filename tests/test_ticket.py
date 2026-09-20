@@ -316,6 +316,149 @@ def test_record_decision_is_idempotent_under_a_crash_recovery_replay():
     shutil.rmtree(d)
 
 
+# --- TICKET-142: a stage's sidecar can append a correction to a decision ---
+
+ORIGINAL_DEC = ("# DEC-125\n\n- ticket: TICKET-125 (bugfix)\n- decided: 2026-01-01\n\n"
+                "join_eager_nursery calls spawn_replacement_worker\n")
+
+
+def _dec_project(name="DEC-125", text=ORIGINAL_DEC):
+    d = project()
+    dec = d / ".project" / "decisions"
+    dec.mkdir(parents=True)
+    (dec / f"{name}.md").write_text(text)
+    t = Ticket.load(d / ".project/tickets/TICKET-001.md")
+    return d, dec, t
+
+
+def _dec_state(dec):
+    return {p.name: (p.is_symlink(), None if p.is_symlink() else p.read_bytes())
+            for p in sorted(dec.iterdir())}
+
+
+def test_a_correction_is_read_from_both_sidecar_parsers():
+    """A colon in the text is a YAML ScannerError, and loose_result() must
+    still return the claim. Fails if `correction` is missing from SIDECAR_KEYS."""
+    d = project()
+    rf = T.result_file(d, "TICKET-001")
+    rf.write_text("result: ok\nsummary: fine\ncorrection: DEC-125 -- it is not there\n")
+    assert T.read_result(d, "TICKET-001")["correction"] == "DEC-125 -- it is not there"
+    rf.write_text("result: ok\nsummary: a: b\ncorrection: DEC-125 -- why: no call\n")
+    assert T.read_result(d, "TICKET-001")["correction"] == "DEC-125 -- why: no call"
+    shutil.rmtree(d)
+
+
+def test_a_correction_appends_one_footer_and_keeps_the_body_byte_identical():
+    d, dec, t = _dec_project()
+    assert T.correct_decision(d, t, "DEC-125 -- there is no spawn call") == "DEC-125"
+    text = (dec / "DEC-125.md").read_text()
+    assert text.startswith(ORIGINAL_DEC), text
+    tail = text[len(ORIGINAL_DEC):]
+    assert tail.count(T.CORRECTION_MARKER) == 1, tail
+    assert "- corrected-by: TICKET-001 (" in tail and tail.rstrip().endswith(
+        "): there is no spawn call"), tail
+    assert [e for e in t.thread() if e.kind == "finding"] == []
+    assert sorted(p.name for p in dec.iterdir()) == ["DEC-125.md"]
+    shutil.rmtree(d)
+
+
+def test_a_correction_leaves_the_record_active_and_exposes_it_on_the_decision():
+    d, dec, t = _dec_project()
+    T.correct_decision(d, t, "DEC-125 -- there is no spawn call")
+    (rec,) = T.active_decisions(d)
+    assert rec.id == "DEC-125" and not rec.superseded and rec.superseded_by is None
+    assert [(c.ticket, c.text) for c in rec.corrections] == [
+        ("TICKET-001", "there is no spawn call")]
+    assert rec.title == "join_eager_nursery calls spawn_replacement_worker"
+    assert rec.ticket == "TICKET-125"
+    shutil.rmtree(d)
+
+
+def test_a_correction_on_a_superseded_record_keeps_its_replacement_id():
+    text = (ORIGINAL_DEC + "\n<!-- pipeline:superseded-by -->\n"
+            "- superseded-by: DEC-130 (moved, 2026-01-02)\n")
+    d, dec, t = _dec_project(text=text)
+    T.correct_decision(d, t, "DEC-125 -- still wrong")
+    (rec,) = T.all_decisions(d)
+    assert rec.superseded and rec.superseded_by == "DEC-130"
+    assert [c.text for c in rec.corrections] == ["still wrong"]
+    assert (dec / "DEC-125.md").read_text().startswith(text)
+    shutil.rmtree(d)
+
+
+def test_a_correction_is_idempotent_under_a_finish_replay():
+    """A lease-expiry replay calls this twice. Fails if the writer appends
+    without looking for the footer it already wrote."""
+    d, dec, t = _dec_project()
+    T.correct_decision(d, t, "DEC-125 -- there is no spawn call")
+    once = (dec / "DEC-125.md").read_bytes()
+    assert T.correct_decision(d, t, "DEC-125 -- there is no spawn call") == "DEC-125"
+    assert (dec / "DEC-125.md").read_bytes() == once
+    T.correct_decision(d, t, "DEC-125 -- a second, different claim")
+    assert [c.text for c in T.all_decisions(d)[0].corrections] == [
+        "there is no spawn call", "a second, different claim"]
+    shutil.rmtree(d)
+
+
+def test_a_bad_correction_is_a_finding_and_leaves_the_decisions_directory_alone():
+    """Hostile input: each string below must be refused. Fails for any that
+    reaches the file, or escapes decisions/, or raises instead of a finding."""
+    bad = [
+        "../x -- pwn",
+        "DEC-125/../../x -- pwn",
+        "DEC-1234567 -- seven digits",       # boundary: SAFE_DEC_ID allows six
+        "dec-125 -- lower case",
+        "DEC-999 -- absent record",
+        "DEC-125",                            # no text
+        "DEC-125 -- ",                        # empty text
+        "DEC-125 --",                         # empty text, no space
+        "DEC-125 -- line one\nline two",      # multiline
+        "DEC-125 -- tab\there",               # control character
+        "DEC-125 -- <!-- pipeline:superseded-by -->\n- superseded-by: DEC-1",
+        "DEC-125 -- <!-- pipeline:superseded-by --> x",   # marker on one line
+        "DEC-125 -- " + "x" * (T.CORRECTION_MAX + 1),      # boundary: over the cap
+        "",
+        None,
+        ["DEC-125 -- a list"],
+        {"DEC-125": "a dict"},
+        42,
+    ]
+    for raw in bad:
+        d, dec, t = _dec_project()
+        (dec / "DEC-130.md").symlink_to(d / "elsewhere")
+        before = _dec_state(dec)
+        assert T.correct_decision(d, t, raw) is None, raw
+        assert _dec_state(dec) == before, raw
+        assert not (d / "x").exists() and not (d / ".project" / "x").exists(), raw
+        assert not T.all_decisions(d)[0].superseded, raw
+        findings = [e for e in t.thread() if e.kind == "finding"]
+        assert len(findings) == 1, (raw, findings)
+        shutil.rmtree(d)
+
+
+def test_a_correction_boundary_accepts_six_digits_and_the_length_cap():
+    d, dec, t = _dec_project("DEC-999999")
+    text = "x" * T.CORRECTION_MAX
+    assert T.correct_decision(d, t, f"DEC-999999 -- {text}") == "DEC-999999"
+    assert T.all_decisions(d)[0].corrections[0].text == text
+    shutil.rmtree(d)
+
+
+def test_a_correction_naming_a_symlinked_record_is_refused_and_not_followed():
+    d = project()
+    dec = d / ".project" / "decisions"
+    dec.mkdir(parents=True)
+    target = d / "outside.md"
+    target.write_text("outside\n")
+    (dec / "DEC-125.md").symlink_to(target)
+    t = Ticket.load(d / ".project/tickets/TICKET-001.md")
+    assert T.correct_decision(d, t, "DEC-125 -- pwn") is None
+    assert target.read_text() == "outside\n"
+    assert (dec / "DEC-125.md").is_symlink()
+    assert [e.kind for e in t.thread() if e.kind == "finding"] == ["finding"]
+    shutil.rmtree(d)
+
+
 def test_there_is_only_one_writer_path():
     """Two writers meant validation-on-save was dead code. It is gone."""
     for name in ("load_ticket", "save_ticket", "append_thread"):

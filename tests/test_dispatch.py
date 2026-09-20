@@ -2362,6 +2362,33 @@ def test_a_stage_result_appends_a_correction_to_an_existing_decision():
     shutil.rmtree(d, ignore_errors=True)
 
 
+def test_a_bad_correction_in_a_stage_result_is_a_finding_and_the_verdict_stands():
+    """TICKET-142: a hostile id must not crash `_finish()`, change the
+    decisions directory, or cost the stage its verdict. Fails if the
+    correction path raises, or if the finding is not on the ticket."""
+    d = project(FIXTURE.replace("stage: plan-validation", "stage: review"))
+    path = d / ".project/tickets/TICKET-001.md"
+    dec = d / ".project/decisions"
+    dec.mkdir(parents=True)
+    (dec / "DEC-125.md").write_text("# DEC-125\n\nbody\n")
+    snap = Ticket.load(path)
+    T.result_file(d, "TICKET-001").write_text(
+        "result: ok\nsummary: ✓ reported\ncorrection: ../x -- pwn\n")
+    log = d / ".project/logs/TICKET-001.log"
+    log.parent.mkdir(parents=True, exist_ok=True)
+    rec = {"fh": log.open("w"), "prompt": d / "gone.md", "settings": None,
+           "path": path, "tid": "TICKET-001", "stage": "review",
+           "session": "s1", "log": log, "wt": d, "meta": snap, "before": None}
+
+    assert supervisor._finish(d, rec) == "ok"
+    assert sorted(p.name for p in dec.iterdir()) == ["DEC-125.md"]
+    assert (dec / "DEC-125.md").read_text() == "# DEC-125\n\nbody\n"
+    assert not (d / ".project/x").exists()
+    findings = [e for e in Ticket.load(path).thread() if e.kind == "finding"]
+    assert len(findings) == 1 and "'../x'" in findings[0].text, findings
+    shutil.rmtree(d, ignore_errors=True)
+
+
 def test_a_budget_kill_is_charged_and_retried_exactly_like_a_crash():
     """A stage killed at its `--max-budget-usd` cap escalates on the FIRST
     kill, charged to its own counter, naming the cap it hit -- not a blind
