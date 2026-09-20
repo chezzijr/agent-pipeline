@@ -1214,6 +1214,71 @@ def test_the_gate_runs_and_excludes_every_listed_test():
     shutil.rmtree(d, ignore_errors=True)
 
 
+def test_gate_skips_a_test_the_plan_declares_deleted():
+    """TICKET-138: Tier A must not execute a reproduction the plan deletes.
+
+    A deleted test is not suite pre-existing breakage. The declaration is data,
+    rather than a phrase in `## Plan`, because prose cannot distinguish deleting
+    a file from deleting one assertion inside it.
+    """
+    d = project(FIXTURE.replace(
+        "test_file: test_thing.py::test_broken",
+        "test_file: [test_thing.py::test_broken, test_thing.py::test_kept]").replace(
+        "files_declared: [thing.py]", "files_declared: [thing.py]\ndeletes: [test_thing.py::test_broken]"))
+    (d / ".project" / "pipeline.toml").write_text(
+        'test_one = "touch ran-{name}; echo {name} test_broken; exit 1"\n'
+        'test_suite = "true"\n'
+        'test_suite_without_new = "true"\n')
+    ok, failures = gate(d, "TICKET-001")
+    assert ok, failures
+    assert not (d / "ran-test_broken").exists(), \
+        "the gate ran a test declared deleted by the plan"
+    assert (d / "ran-test_kept").exists(), \
+        "the gate skipped a test that the plan keeps"
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_gate_uses_the_project_exclusion_for_a_deleted_test():
+    d = project(FIXTURE.replace(
+        "test_file: test_thing.py::test_broken",
+        "test_file: [test_thing.py::test_broken, test_thing.py::test_kept]").replace(
+        "files_declared: [thing.py]", "files_declared: [thing.py]\ndeletes: [test_thing.py::test_broken]"))
+    (d / ".project" / "pipeline.toml").write_text(
+        'test_one = "echo {name} test_broken; exit 1"\n'
+        'test_suite = "true"\n'
+        'test_suite_without_new = "echo {test:--deselect } | grep -q -- \'--deselect test_thing.py::test_broken\'"\n')
+    ok, failures = gate(d, "TICKET-001")
+    assert ok, failures
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_gate_leaves_an_unparameterized_suite_command_unchanged_for_a_deleted_test():
+    d = project(FIXTURE.replace("files_declared: [thing.py]",
+                                "files_declared: [thing.py]\ndeletes: [test_thing.py::test_broken]"))
+    (d / ".project" / "pipeline.toml").write_text(
+        'test_one = "echo {name}; exit 1"\n'
+        'test_suite = "true"\n'
+        'test_suite_without_new = "true"\n')
+    ok, failures = gate(d, "TICKET-001")
+    assert ok, failures
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_gate_refuses_a_bare_placeholder_when_one_declared_test_is_deleted():
+    d = project(FIXTURE.replace(
+        "test_file: test_thing.py::test_broken",
+        "test_file: [test_thing.py::test_broken, test_thing.py::test_kept]").replace(
+        "files_declared: [thing.py]", "files_declared: [thing.py]\ndeletes: [test_thing.py::test_broken]"))
+    (d / ".project" / "pipeline.toml").write_text(
+        'test_one = "echo {name}; exit 1"\n'
+        'test_suite = "true"\n'
+        'test_suite_without_new = "true --deselect {test}"\n')
+    ok, failures = gate(d, "TICKET-001")
+    assert not ok
+    assert any("{test:" in f for f in failures), failures
+    shutil.rmtree(d, ignore_errors=True)
+
+
 def test_a_bare_test_placeholder_is_refused_for_a_multi_test_ticket():
     """`pytest --deselect a b` deselects `a` and SELECTS `b`. With two
     tests a bare `{test}` runs the wrong suite, so the gate refuses it and

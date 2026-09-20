@@ -792,7 +792,7 @@ def gate(project: Path, tid: str, workdir: Path | None = None) -> tuple[bool, li
         findings.append("no `test_file` recorded in frontmatter")
     else:
         runnable = []
-        for test in tests:
+        for test in (test for test in tests if test not in t.deletes):
             test_path = wd / test.split("::")[0]
             if not test_path.is_file():
                 findings.append(f"{MISSING_TEST_MARK}{test_path} does not exist")
@@ -922,8 +922,11 @@ def gate(project: Path, tid: str, workdir: Path | None = None) -> tuple[bool, li
             # test failed in the worktree.
             base, _, _ = _base_findings(project, cfg, wd, candidates)
         findings += base
-        if runnable:
-            suite_tests = list(dict.fromkeys([*runnable, *quarantine]))
+        if tests:
+            # every DECLARED test, not just `runnable`: a test this plan
+            # deletes is still the ticket's own node, and the suite run must
+            # exclude it exactly as it excludes the ones it keeps (TICKET-138)
+            suite_tests = list(dict.fromkeys([*tests, *quarantine]))
             names = " ".join(f"`{x}`" for x in suite_tests)
             bare = next((m for m in BARE_PLACEHOLDER_RE.finditer(
                 cfg["test_suite_without_new"])
@@ -931,7 +934,7 @@ def gate(project: Path, tid: str, workdir: Path | None = None) -> tuple[bool, li
             if bare:
                 findings.append(
                     f"`test_suite_without_new` substitutes a bare `{bare.group(0)}` "
-                    f"and this ticket names {len(runnable)} tests -- a flag that "
+                    f"and this ticket names {len(tests)} tests -- a flag that "
                     f"takes one value at a time excludes only the first, and the "
                     f"rest come back as pre-existing breakage. Write "
                     f"`{{{bare.group(1)}:<flag> }}` (pytest: "

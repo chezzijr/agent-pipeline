@@ -323,13 +323,19 @@ CONTROL_FIELDS = {"id", "stage", "class", "branch", "counters", "lease",
 # Which stage is allowed to set which frontmatter field. Without this any
 # stage could rewrite `files_declared` -- a reviewer shrinking the set would
 # silently unblock a ticket that overlaps one already in flight.
-CLAIMS = {"test_file": ("triage",), "files_declared": ("planning", "implementing")}
+CLAIMS = {"test_file": ("triage",), "deletes": ("planning",),
+          "files_declared": ("planning", "implementing")}
 
 
 def apply_claims(meta: dict, stage: str, res: dict) -> None:
     for field, owners in CLAIMS.items():
-        if not res.get(field) or stage not in owners:
+        if stage not in owners or field not in res:
             continue
+        if field == "test_file" and stage == "triage":
+            # A new triage reproduction supersedes a plan's deletion targets.
+            # `deletes` remains planning-owned; this clears stale dispatcher
+            # state rather than accepting a triage claim for that field.
+            meta["deletes"] = []
         if field == "files_declared" and stage == "implementing":
             # implementation may discover more files, never fewer
             meta[field] = sorted(set(meta.get(field) or []) | set(res[field]))

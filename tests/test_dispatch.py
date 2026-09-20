@@ -2453,6 +2453,48 @@ def test_a_tier_b_rejection_charges_the_plan_not_the_structural_counter():
     shutil.rmtree(d, ignore_errors=True)
 
 
+def test_planning_deleted_tests_are_validated_before_adoption():
+    d = project(FIXTURE.replace("stage: plan-validation", "stage: planning"))
+    path = d / ".project/tickets/TICKET-001.md"
+    snap = Ticket.load(path)
+    log = d / ".project" / "logs" / "TICKET-001.log"
+    log.parent.mkdir(parents=True, exist_ok=True)
+    rec = {"fh": log.open("w"), "prompt": d / "gone.md", "settings": None,
+           "path": path, "tid": "TICKET-001", "stage": "planning",
+           "session": "s1", "log": log, "wt": d, "meta": snap, "before": None}
+    T.result_file(d, "TICKET-001").write_text(
+        "result: ok\nsummary: ✓ planned\ndeletes: [other.py::test_x]\n")
+    assert supervisor._finish(d, rec) == "bad-claim"
+    t = Ticket.load(path)
+    assert t.stage == "escalated"
+    assert t.deletes == [], "invalid sidecar data reached persisted frontmatter"
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_triage_replacing_test_file_clears_stale_deleted_tests():
+    """Triage owns `test_file`, so a new reproduction must not retain a
+    planning deletion selector that only belonged to the old reproduction."""
+    d = project(FIXTURE.replace("stage: plan-validation", "stage: triage")
+                .replace("test_file: test_thing.py::test_broken",
+                         "test_file: old.py::test_old")
+                .replace("files_declared: [thing.py]",
+                         "files_declared: [thing.py]\ndeletes: [old.py::test_old]"))
+    path = d / ".project/tickets/TICKET-001.md"
+    snap = Ticket.load(path)
+    log = d / ".project" / "logs" / "TICKET-001.log"
+    log.parent.mkdir(parents=True, exist_ok=True)
+    rec = {"fh": log.open("w"), "prompt": d / "gone.md", "settings": None,
+           "path": path, "tid": "TICKET-001", "stage": "triage",
+           "session": "s1", "log": log, "wt": d, "meta": snap, "before": None}
+    T.result_file(d, "TICKET-001").write_text(
+        "result: ok\nsummary: ✓ retargeted\ntest_file: new.py::test_new\n")
+    assert supervisor._finish(d, rec) == "ok"
+    t = Ticket.load(path)
+    assert t.test_file == "new.py::test_new"
+    assert t.deletes == [], "a retargeted triage retained stale deletions"
+    shutil.rmtree(d, ignore_errors=True)
+
+
 def test_finish_preserves_the_human_summary_while_adopting_agent_sections():
     """A stage may write its assigned prose, but `## Summary` belongs to
     the filer and must survive `_finish()` unchanged."""

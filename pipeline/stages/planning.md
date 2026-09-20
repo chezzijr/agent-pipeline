@@ -132,6 +132,12 @@ Until then, two kinds of finding are expected and are not a reason to fail:
 
 Fix every other finding. Do not return `fail` for these two.
 
+When the plan deletes a reproduction test, report `deletes` in the result as a
+YAML list of exact `test_file` selectors. The gate reads this data;
+it never infers deletion from plan prose. Test edits never qualify. Send
+`deletes: []` when no listed test is deleted: an empty list clears exclusions
+from a rejected plan.
+
 Search for existing helpers and patterns before planning new ones. The best
 plan reuses what is already here.
 

@@ -152,6 +152,13 @@ lines of the code.
 `counters` and `lease` belong to the dispatcher, and a ticket whose control fields look
 edited is escalated rather than trusted.
 
+Planning alone may report a `deletes` list in its result sidecar. Each entry is
+an exact selector already in `test_file`; it is validated and shell-quoted.
+The Tier A gate skips only those reproduction runs. A test edit never qualifies.
+An empty list clears an earlier rejected plan's exclusions. The suite still gets
+every selector through the project's configured placeholder; no placeholder means
+the command stays unchanged.
+
 **Ordering: `depends_on` names the tickets that must reach `done` first.** Write it as
 `depends_on: [TICKET-023]` or pass `pipeline new --depends-on TICKET-023`, and only when
 the later ticket's work genuinely cannot be planned until the earlier one lands — prose

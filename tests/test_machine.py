@@ -132,9 +132,9 @@ def test_planning_can_park_for_a_human_and_come_back():
 
 
 def test_only_the_owning_stage_can_set_a_frontmatter_field():
-    meta = {"files_declared": ["a.py"], "test_file": "t.py::x"}
-    M.apply_claims(meta, "review", {"files_declared": ["z.py"], "test_file": "other"})
-    assert meta == {"files_declared": ["a.py"], "test_file": "t.py::x"}, \
+    meta = {"files_declared": ["a.py"], "test_file": "t.py::x", "deletes": ["t.py::x"]}
+    M.apply_claims(meta, "review", {"files_declared": ["z.py"], "test_file": "other", "deletes": []})
+    assert meta == {"files_declared": ["a.py"], "test_file": "t.py::x", "deletes": ["t.py::x"]}, \
         "a review stage rewrote fields it does not own"
 
     M.apply_claims(meta, "implementing", {"files_declared": ["b.py"]})
@@ -142,6 +142,8 @@ def test_only_the_owning_stage_can_set_a_frontmatter_field():
 
     M.apply_claims(meta, "planning", {"files_declared": ["c.py"]})
     assert meta["files_declared"] == ["c.py"], "planning owns the declared set"
+    M.apply_claims(meta, "planning", {"deletes": []})
+    assert meta["deletes"] == [], "an empty plan claim must clear stale exclusions"
 
 
 def test_overlapping_tickets_do_not_run_together():

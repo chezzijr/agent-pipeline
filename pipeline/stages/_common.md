@@ -45,6 +45,7 @@ summary: one line, what you did or why you stopped
 files_declared: []  # optional; files this ticket will touch
 test_file: null     # optional; triage only; one test or a list
 correction: null    # optional; any stage; see below
+deletes: []         # optional; planning only; exact selectors it deletes
 ```
 
 If a decision record you read states something the code contradicts, you
