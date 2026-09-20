@@ -571,6 +571,38 @@ def project_max_parallel(project: Path) -> int | None:
     return v
 
 
+def project_conflict_ignore(project: Path) -> set[str]:
+    """The exact paths a project exempts from file-overlap ordering:
+    `[conflict] ignore` in `.project/pipeline.toml`, so a ledger every ticket
+    appends to (`PROGRESS.md`) does not queue them one behind another.
+
+    Read through `project_config()`, so the list comes from HEAD of the main
+    checkout and a ticket branch cannot exempt its own files (DEC-037). It
+    never raises, because ordering must survive a bad value -- a fault returns
+    the empty set, the behaviour from before the key existed, which is the
+    DEC-069 model. `notice_once()` keeps one broken project from printing on
+    every tick.
+    """
+    try:
+        cfg = project_config(project)
+    except (PipelineError, ValueError):
+        return set()
+    table = cfg.get("conflict") or {}
+    if not isinstance(table, dict):
+        reason = "[conflict] must be a table"
+    else:
+        ignore = table.get("ignore") or []
+        if not isinstance(ignore, list):
+            reason = "ignore must be a list of paths"
+        elif not all(isinstance(e, str) and e for e in ignore):
+            reason = "every entry must be a non-empty string"
+        else:
+            return set(ignore)
+    notice_once(f"  {project}: ignoring [conflict] ignore ({reason})",
+                str(project), "conflict-ignore")
+    return set()
+
+
 def _toml_value(value) -> str:
     """The small TOML subset needed for command-line config overrides."""
     if isinstance(value, str):

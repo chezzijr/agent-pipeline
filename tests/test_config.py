@@ -12,7 +12,8 @@ from pipeline.core.config import (cap_config, format_test_cmd,
                                   format_tests_cmd, harness, install_skill,
                                   gate_quarantine,
                                    pin_dir, pin_path, project_config,
-                                   project_harness, project_max_parallel,
+                                   project_conflict_ignore, project_harness,
+                                   project_max_parallel,
                                    project_skill, render,
                                    selector_failure, selector_parts,
                                    skill_digest, skill_marks, skill_status,
@@ -275,6 +276,42 @@ def test_project_max_parallel_reads_the_committed_value():
 def test_project_max_parallel_is_none_without_a_key():
     d, _ = git_project()
     assert project_max_parallel(d) is None
+
+
+def _commit_config(d, sh, body):
+    (d / ".project" / "pipeline.toml").write_text('test_one="true"\nbase="main"\n' + body)
+    sh("git add -A && git commit -qm 'conflict config'")
+
+
+def test_project_conflict_ignore_reads_the_committed_list():
+    d, sh = git_project()
+    _commit_config(d, sh, '[conflict]\nignore = ["PROGRESS.md", "docs/gaps.md"]\n')
+
+    assert project_conflict_ignore(d) == {"PROGRESS.md", "docs/gaps.md"}
+
+    (d / ".project" / "pipeline.toml").write_text(
+        'test_one="true"\nbase="main"\n'
+        '[conflict]\nignore = ["PROGRESS.md", "docs/gaps.md", "src/app.py"]\n')
+    assert project_conflict_ignore(d) == {"PROGRESS.md", "docs/gaps.md"}, \
+        "an uncommitted edit must not widen the list (DEC-037)"
+
+
+def test_project_conflict_ignore_is_empty_without_a_key_or_a_config():
+    d, _ = git_project()
+    assert project_conflict_ignore(d) == set()
+    assert project_conflict_ignore(Path(tempfile.mkdtemp())) == set()
+
+
+def test_project_conflict_ignore_ignores_a_bad_value(capsys):
+    for body in ('[conflict]\nignore = "PROGRESS.md"\n',
+                 '[conflict]\nignore = ["PROGRESS.md", 7]\n',
+                 '[conflict]\nignore = ["PROGRESS.md", ""]\n',
+                 'conflict = "yes"\n'):
+        reset_notices()
+        d, sh = git_project()
+        _commit_config(d, sh, body)
+        assert project_conflict_ignore(d) == set(), body
+        assert "ignoring [conflict] ignore" in capsys.readouterr().out, body
 
 
 def test_project_max_parallel_refuses_a_value_below_one():
