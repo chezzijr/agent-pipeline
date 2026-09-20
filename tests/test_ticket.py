@@ -548,13 +548,14 @@ def test_the_stage_view_keeps_every_human_entry():
     t.append("planning", "question", "QUESTION-MARKER: which design?")
     t.append("planning", "answer", "ANSWER-MARKER: the second one")
     t.append("planning", "rejection", "REJECT-MARKER: not that plan")
+    t.append("human", "close", "CLOSE-MARKER: superseded")
     t.append("review", "finding", "BLOCKER-MARKER: it drops entries",
              severity="blocking")
     t.append("review", "finding", "MINOR-MARKER: a nit", severity="minor")
     for i in range(200):
         t.append("implementing", "note", f"filler {i} " + "x" * 400)
     view = T.stage_view(t, "implementing")
-    for marker in ("QUESTION-MARKER", "ANSWER-MARKER", "REJECT-MARKER",
+    for marker in ("QUESTION-MARKER", "ANSWER-MARKER", "REJECT-MARKER", "CLOSE-MARKER",
                    "BLOCKER-MARKER"):
         assert marker in view, f"the view dropped a {marker} entry"
     assert "MINOR-MARKER" not in view, (

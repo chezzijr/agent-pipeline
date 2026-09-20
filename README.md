@@ -120,6 +120,12 @@ warning rather than failing, since the scaffold above it already succeeded.
 about, but warns that `pipeline start` cannot discover it and names both
 `pipeline register <path>` and the project-local `pipeline run` as remedies.
 
+Pass a complete summary when filing a ticket that a dispatcher can claim:
+`pipeline new "title" --summary-file summary.md`. The command reads the full
+file before atomically publishing the ticket, so no stage sees the title as a
+placeholder summary. Use `--summary-file -` for standard input. Without this
+option, title-only creation remains available for interactive filing.
+
 Without installing it, `uv run python -m pipeline …` runs the same CLI.
 
 `run --once` drains the queue and exits -- what you want while you are still
@@ -546,6 +552,13 @@ Then one of three:
 | the stage hit its `--max-budget-usd` cap (`budget_kills`) | raise that stage's `max_usd` in `pipeline/stages/<name>.md`, then `pipeline resume TICKET-017 --stage review --reset budget_kills` |
 | real, but the stage deserves another go with the thread it has now | `pipeline resume TICKET-017 --stage planning --grant plan_validation_attempts` |
 | the ticket itself is wrong | `pipeline reject TICKET-017 "why"` |
+
+`pipeline reject` rejects a plan only at `awaiting-approval`. To cancel an
+abandoned non-terminal ticket, use `pipeline close TICKET-017 --reason "why"`.
+Close records the human reason and moves the ticket to `rejected`. It refuses
+`done` and already `rejected` tickets. A living lease holder blocks close
+unless you add `--force`; forcing releases the lease, but the running stage can
+still escalate later when it detects the control-field change.
 
 `--reset` zeroes a counter; `--grant` hands back one spent attempt (`N` with
 `--grant counter=N`) and cannot return more than was spent. Naming the same

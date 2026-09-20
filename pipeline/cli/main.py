@@ -22,7 +22,7 @@ from pipeline.core.config import (CONFIG_TEMPLATE, HARNESSES_DIR, PKG,
 from pipeline.core.gate import gate
 from pipeline.core.machine import KNOWN_STAGES, TERMINAL, cleared_key
 from pipeline.core.ticket import (SAFE_DEC_ID, SAFE_ID, Ticket, all_decisions,
-                                   decisions_dir, now, tickets_dir)
+                                   decisions_dir, now, tickets_dir, write_atomic)
 from pipeline.core.worktree import exclude_project_dir, worktree
 from pipeline.daemon import registry
 from pipeline.daemon.server import (STALE_HOURS, socket_path, ticket_rows,
@@ -120,6 +120,15 @@ def cmd_init(args) -> None:
 
 def cmd_new(args) -> None:
     project = proj(args)
+    summary = args.title
+    if args.summary_file is not None:
+        try:
+            summary = (sys.stdin.read() if args.summary_file == "-"
+                       else Path(args.summary_file).read_text())
+        except OSError as e:
+            die(f"cannot read summary file {args.summary_file!r}: {e}")
+        if not summary.strip():
+            die("a summary file must contain non-blank text")
     deps = [x.strip() for x in (args.depends_on or "").split(",") if x.strip()]
     for one in deps:
         if not SAFE_ID.match(one):
@@ -130,9 +139,9 @@ def cmd_new(args) -> None:
                  if (m := re.match(r"TICKET-(\d+)", p.stem))), default=0)
     tid = f"TICKET-{n:03d}"
     tpl = TICKET_TEMPLATE.read_text()
-    (d / f"{tid}.md").write_text(
+    write_atomic(d / f"{tid}.md",
         tpl.replace("{{id}}", tid).replace("{{class}}", args.cls)
-           .replace("{{branch}}", f"ticket/{n:03d}").replace("{{title}}", args.title)
+           .replace("{{branch}}", f"ticket/{n:03d}").replace("{{title}}", summary)
            .replace("{{depends_on}}", "[" + ", ".join(deps) + "]"))
     print(d / f"{tid}.md")
     # `new` writes the ticket regardless -- an unregistered project is a
@@ -399,11 +408,11 @@ def cmd_resume(args) -> None:
         stage = last_session.get("stage")
         if not isinstance(stage, str) or stage not in KNOWN_STAGES:
             die(f"{t.id} has no valid `last_session.stage`; pass `--stage <stage>`")
-    holder = (t.lease or {}).get("holder")
+    holder = live_holder(t)
     # A live lease whose holder pid is gone is a killed daemon, not work in
     # progress -- `start()` reads it the same way. Rewriting `stage` under a
     # LIVE one makes `_finish()` escalate the ticket for the human's edit.
-    live = t.lease_active() and holder_alive(holder)
+    live = holder is not None
     if live and not args.force:
         die(f"{t.id}: `{t.stage}` holds a live lease (`{holder}`). "
             f"Resuming now rewrites `stage` under a running stage, and the "
@@ -464,6 +473,37 @@ def cmd_resume(args) -> None:
         else:
             print("notice: this private project's config is pinned -- "
                   "run `pipeline config --sync` to adopt disk edits")
+
+
+def live_holder(t: Ticket) -> str | None:
+    """The one lease rule for human commands that rewrite control fields."""
+    holder = (t.lease or {}).get("holder")
+    return holder if t.lease_active() and holder_alive(holder) else None
+
+
+def cmd_close(args) -> None:
+    project = proj(args)
+    if not args.reason.strip():
+        die("a close needs a reason -- that's the whole point")
+    t = Ticket.find(project, args.id)
+    if t.stage in {"done", "rejected"}:
+        die(f"{t.id} is already `{t.stage}`")
+    frm = t.stage
+    holder = live_holder(t)
+    if holder and not args.force:
+        die(f"{t.id}: `{t.stage}` holds a live lease (`{holder}`). "
+            f"Wait for it, or `pipeline close {t.id} --reason ... --force` "
+            "to close the ticket anyway.")
+    who = os.environ.get("USER", "human")
+    text = f"**closed by {who}**\n\n{args.reason}"
+    if holder:
+        text += f"\n\nForced past a live lease held by `{holder}`."
+    t.stage = "rejected"
+    t.release_lease()
+    t.append("human", "close", text, by=who)
+    t.save()
+    record(project, t, frm, "closed")
+    print(f"{t.id}: -> rejected" + (" (forced past a live lease)" if holder else ""))
 
 
 # `escalated` is terminal but actionable -- a human still has to look at it --
@@ -900,6 +940,8 @@ def main() -> None:
 
     p = sub.add_parser("init"); p.add_argument("dir", nargs="?", default=None); p.add_argument("--private", action="store_true", help="hide .project/ from git in this clone only (.git/info/exclude)"); p.add_argument("--no-register", dest="no_register", action="store_true", help="scaffold only -- skip registering this project with the daemon (for CI or other scaffold-only callers)"); p.set_defaults(fn=cmd_init)
     p = sub.add_parser("new"); p.add_argument("title"); p.add_argument("--class", dest="cls", default="bugfix")
+    p.add_argument("--summary-file", metavar="PATH",
+                   help="read the complete Summary from PATH, or - for standard input, before publishing the ticket")
     p.add_argument("--depends-on", dest="depends_on", default="",
                     help="comma-separated ticket ids that must reach `done` before this one is claimed")
     p.set_defaults(fn=cmd_new)
@@ -910,6 +952,7 @@ def main() -> None:
     p = sub.add_parser("decisions", help="what earlier tickets decided, superseded records included"); p.add_argument("id", nargs="?", help="print this record in full, e.g. DEC-011"); p.add_argument("--grep", metavar="TEXT", help="list only records whose text contains TEXT (case-insensitive)"); p.set_defaults(fn=cmd_decisions)
     p = sub.add_parser("approve"); p.add_argument("id"); p.add_argument("--by"); p.set_defaults(fn=cmd_approve)
     p = sub.add_parser("reject"); p.add_argument("id"); p.add_argument("reason"); p.set_defaults(fn=cmd_reject)
+    p = sub.add_parser("close", help="terminally cancel a non-terminal ticket with a human reason"); p.add_argument("id"); p.add_argument("--reason", required=True); p.add_argument("--force", action="store_true", help="close despite a live lease; the running stage can later escalate the ticket"); p.set_defaults(fn=cmd_close)
     p = sub.add_parser("note"); p.add_argument("id"); p.add_argument("text"); p.set_defaults(fn=cmd_note)
     p = sub.add_parser("answer"); p.add_argument("id"); p.add_argument("text"); p.set_defaults(fn=cmd_answer)
     p = sub.add_parser("resume"); p.add_argument("id"); p.add_argument("--stage", help="stage to resume; defaults to last_session.stage when valid"); p.add_argument("--grant", nargs="*", metavar="COUNTER[=N]", help="hand back N spent attempts (default 1) on a counter; a grant only subtracts"); p.add_argument("--reset", nargs="*"); p.add_argument("--note", metavar="TEXT", help="a note for the resumed stage; recorded in the ticket thread, attributed to you"); p.add_argument("--force", action="store_true", help="resume even while a stage holds a live lease; the running stage keeps going and the dispatcher escalates the ticket when it finishes"); p.set_defaults(fn=cmd_resume)

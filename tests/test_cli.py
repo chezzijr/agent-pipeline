@@ -886,6 +886,91 @@ def test_close_rejects_an_escalated_ticket_with_a_human_reason():
     shutil.rmtree(d)
 
 
+def test_new_reads_the_summary_from_stdin_before_publishing():
+    d = Path(tempfile.mkdtemp())
+    r = subprocess.run([sys.executable, "-m", "pipeline", "--project", str(d),
+                        "new", "placeholder", "--summary-file", "-"], cwd=ROOT,
+                       capture_output=True, text=True, input="Complete summary.\n",
+                       env={**os.environ, "XDG_STATE_HOME": str(_STATE)})
+    assert r.returncode == 0, r.stderr
+    assert Ticket.load(d / ".project/tickets/TICKET-001.md").section("Summary") == "Complete summary."
+    shutil.rmtree(d)
+
+
+def test_new_refuses_an_unreadable_or_blank_summary_before_publishing():
+    for source in ("missing-summary.md", "blank-summary.md"):
+        d = Path(tempfile.mkdtemp())
+        if source.startswith("blank"):
+            (d / source).write_text(" \n")
+        r = cli(d, "new", "t", "--summary-file", str(d / source))
+        assert r.returncode != 0 and "summary" in r.stderr, r.stderr
+        assert not (d / ".project/tickets/TICKET-001.md").exists()
+        shutil.rmtree(d)
+
+
+def test_close_refuses_empty_and_terminal_reasons():
+    for stage in ("new", "done", "rejected"):
+        d = Path(tempfile.mkdtemp())
+        cli(d, "new", "t")
+        path = d / ".project/tickets/TICKET-001.md"
+        t = Ticket.load(path); t.stage = stage; t.save()
+        r = cli(d, "close", "TICKET-001", "--reason", "   " if stage == "new" else "why")
+        assert r.returncode != 0, r
+        after = Ticket.load(path)
+        assert after.stage == stage, after.stage
+        if stage == "new":
+            assert "reason" in r.stderr, r.stderr
+        else:
+            assert f"`{stage}`" in r.stderr, r.stderr
+        shutil.rmtree(d)
+
+
+def test_close_obeys_live_lease_force_and_dead_holder_rules():
+    d = Path(tempfile.mkdtemp())
+    cli(d, "new", "t")
+    path = d / ".project/tickets/TICKET-001.md"
+    holder = f"planning-{os.getpid()}"
+    t = Ticket.load(path); t.take_lease(holder); t.save()
+    refused = cli(d, "close", "TICKET-001", "--reason", "superseded")
+    assert refused.returncode != 0 and holder in refused.stderr, refused.stderr
+    forced = cli(d, "close", "TICKET-001", "--reason", "superseded", "--force")
+    after = Ticket.load(path)
+    assert forced.returncode == 0, forced.stderr
+    assert after.lease == {"holder": None, "expires": None}
+    assert after.thread()[-1].kind == "close" and holder in after.thread()[-1].text
+    dead = subprocess.Popen([sys.executable, "-c", "pass"]); dead.wait()
+    cli(d, "new", "other")
+    second = d / ".project/tickets/TICKET-002.md"
+    t = Ticket.load(second); t.take_lease(f"planning-{dead.pid}"); t.save()
+    free = cli(d, "close", "TICKET-002", "--reason", "superseded")
+    assert free.returncode == 0, free.stderr
+    shutil.rmtree(d)
+
+
+def test_close_records_transition_and_documentation_names_safe_workflows():
+    d, state = Path(tempfile.mkdtemp()), Path(tempfile.mkdtemp())
+    try:
+        cli(d, "new", "t", env={"XDG_STATE_HOME": str(state)})
+        r = cli(d, "close", "TICKET-001", "--reason", "superseded",
+                env={"XDG_STATE_HOME": str(state)})
+        assert r.returncode == 0, r.stderr
+        new_help = cli(d, "new", "--help")
+        close_help = cli(d, "close", "--help")
+        assert "--summary-file" in new_help.stdout, new_help.stdout
+        assert "--reason" in close_help.stdout and "--force" in close_help.stdout, close_help.stdout
+        row = sqlite3.connect(state / "pipeline/events.db").execute(
+            "SELECT stage, data FROM events WHERE ticket = ? ORDER BY id DESC LIMIT 1",
+            ("TICKET-001",)).fetchone()
+        assert row[0] == "new" and json.loads(row[1])["to"] == "rejected", row
+        for path in (Path(ROOT) / "README.md",
+                     Path(ROOT) / "pipeline/templates/skills/file-ticket/SKILL.md"):
+            text = path.read_text()
+            for term in ("--summary-file", "pipeline close", "--reason"):
+                assert term in text, f"{path}: missing {term}"
+    finally:
+        shutil.rmtree(d, ignore_errors=True); shutil.rmtree(state, ignore_errors=True)
+
+
 def test_logs_pretty_prints_a_stream_json_log():
     """`pipeline logs` is the dogfood view and the fallback when the TUI breaks."""
     d = Path(tempfile.mkdtemp())

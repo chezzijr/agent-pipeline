@@ -93,14 +93,17 @@ to say so now:
 
 ```sh
 cd <the repo root>
-pipeline new "cache leaks on evict" --class bugfix
+pipeline new "cache leaks on evict" --class bugfix --summary-file summary.md
 ```
 
-That prints the path. If the repo is not registered with the daemon, it also
-prints a warning that `pipeline start` cannot discover it -- the ticket is
-still filed; see *Not registered* below for the fix. Then rewrite `## Summary` — the template puts the bare title
-there, which is not enough for an agent starting cold with no other context.
-Name every expected change file in `## Summary`. quick-review judges cheap-route scope from ticket prose, not `files_declared`.
+Build `summary.md` before filing. `pipeline new` reads it completely and
+publishes the completed ticket atomically. Use `--summary-file -` for standard
+input. Do not rewrite `## Summary` after filing: a dispatcher can claim the
+ticket immediately. If the repo is not registered with the daemon, the command
+also prints a warning that `pipeline start` cannot discover it -- the ticket is
+still filed; see *Not registered* below for the fix. Name every expected change file
+in `## Summary`. quick-review judges cheap-route scope from ticket prose,
+not `files_declared`.
 
 A good summary is three short paragraphs:
 
@@ -265,6 +268,11 @@ can fail on, so triage returns `result: rejected` and the ticket dies there.
   a valid recorded stage requires `--stage`. A successful private-project resume names
   its pinned config. A changed or missing disk config warns without blocking the resume.
   Run `pipeline config --sync` before respawn to adopt disk edits.
+- **Do not close a ticket on the user's behalf.** For a non-terminal ticket
+  the user has explicitly abandoned, hand them `pipeline close TICKET-NNN
+  --reason "why"`. It records their reason and moves the ticket to `rejected`.
+  It refuses `done` and already rejected tickets. A living lease requires
+  `--force`; the running stage can still escalate after a forced close.
 - **Do not edit a ticket that is not in `new`.** A stage may hold its lease; use
   `pipeline answer <id> "..."` or `pipeline reject <id> "why"`, which append to the
   thread properly. To edit a running ticket by hand, interrupt the stage first

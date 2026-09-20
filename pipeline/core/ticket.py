@@ -536,7 +536,7 @@ def record_decision(project: Path, t: "Ticket") -> str | None:
 # The vocabulary a stage may write. Reading stays lenient; writing does not,
 # because an invented kind is a typo nothing would ever notice.
 KINDS = frozenset({"note", "transition", "gate", "question", "answer", "finding",
-                   "escalation", "approval", "rejection", "session", "decision"})
+                   "escalation", "approval", "rejection", "close", "session", "decision"})
 
 # What a stage is asked to read. The thread is the only part of a ticket
 # that grows without bound -- 46168 of TICKET-016's 56294 bytes (82%)
@@ -545,7 +545,7 @@ KINDS = frozenset({"note", "transition", "gate", "question", "answer", "finding"
 # human's words, or the reason a ticket previously stopped, and a stage
 # that acts without them acts against a decision somebody already made.
 VIEW_KEEP_KINDS = frozenset({"question", "answer", "rejection",
-                             "approval", "escalation", "decision"})
+                             "approval", "close", "escalation", "decision"})
 VIEW_RECENT = 8      # trailing entries of any kind, always kept
 VIEW_CLIP = 2000     # chars per entry that is kept only for recency
 
