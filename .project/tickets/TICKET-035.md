@@ -1,6 +1,6 @@
 ---
 id: TICKET-035
-stage: escalated
+stage: rejected
 class: feature
 branch: ticket/035
 test_file: tests/test_stages.py::test_a_project_override_shadows_the_packaged_stage
@@ -568,3 +568,9 @@ is insufficient.
 Its reproduction, `tests/test_stages.py::test_a_project_override_shadows_the_packaged_stage`,
 asserted the rejected API and was discarded; TICKET-038 committed its own.
 Superseded by: TICKET-038, TICKET-037, TICKET-044.
+
+### 2026-09-20 04:26:08Z · human · close · by=chezzijr
+
+**closed by chezzijr**
+
+Already implemented. project_stage_config() reads a project's [stages.<stage>] table and stage_config() overlays it on the packaged frontmatter (pipeline/core/config.py:41,64); this repo uses both, via [stages.planning] max_usd = 10 and .project/stages/planning.extra.md. Nothing in this ticket is still missing.

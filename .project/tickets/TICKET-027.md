@@ -1,6 +1,6 @@
 ---
 id: TICKET-027
-stage: escalated
+stage: rejected
 class: refactor
 branch: ticket/027
 test_file: tests/test_stages.py::test_plan_validation_is_not_an_opus_stage
@@ -1553,3 +1553,9 @@ Not evidence against sonnet elsewhere: this tests one stage on one adversarial p
 n=1 per model. `triage` and `implementing` already run sonnet and have shipped 15
 tickets. If this is revisited, plant the flaw and compare -- agreement on a plan both
 models accept proves nothing.
+
+### 2026-09-20 04:26:08Z · human · close · by=chezzijr
+
+**closed by chezzijr**
+
+Stale: the ticket argues plan-validation's opus cost from an August session ($37.90 over 18 runs). Under the claude-code harness on 2026-09-20 a run cost $1.29 of its $3 cap, and the stage has changed since the plan was written. Tonight it caught two real design hazards (TICKET-143's one-call wiring, TICKET-144's unapproved route into a git reset --hard). File a fresh ticket with current numbers if the cost still warrants a cheaper model.
