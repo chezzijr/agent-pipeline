@@ -17,7 +17,7 @@ from pathlib import Path
 
 from pipeline.core import PipelineError, notice_once
 from pipeline.core.machine import USD_SCALED, cap_for
-from pipeline.core.ticket import split_frontmatter, write_atomic
+from pipeline.core.ticket import SAFE_TEST, split_frontmatter, write_atomic
 from pipeline.core.worktree import git_ignored, head_file, run_cmd
 # pipeline/daemon/__init__.py is a docstring only, and registry imports only
 # pipeline.core and pipeline.core.ticket, neither of which imports
@@ -171,6 +171,25 @@ def project_config(project: Path) -> dict:
             raise PipelineError(f"no {cfg} -- run `pipeline init {project}` first")
         text = cfg.read_text()
     return tomllib.loads(text)
+
+
+def gate_quarantine(project: Path) -> list[str]:
+    """Validated suite-only test selectors from `[gate].quarantine`."""
+    gate = project_config(project).get("gate", {})
+    if not isinstance(gate, dict):
+        raise PipelineError(f"{project}: [gate] must be a table")
+    quarantine = gate.get("quarantine", [])
+    if not isinstance(quarantine, list):
+        raise PipelineError(f"{project}: [gate].quarantine must be a list")
+    for selector in quarantine:
+        if not isinstance(selector, str) or not SAFE_TEST.match(selector):
+            raise PipelineError(
+                f"{project}: [gate].quarantine entry {selector!r} is not a safe test selector")
+        path = Path(selector.split("::")[0])
+        if path.is_absolute() or ".." in path.parts:
+            raise PipelineError(
+                f"{project}: [gate].quarantine entry {selector!r} is not a safe test selector")
+    return quarantine
 
 
 def config_source(project: Path) -> str:

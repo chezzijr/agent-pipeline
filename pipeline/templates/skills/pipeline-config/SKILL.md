@@ -153,6 +153,21 @@ Claude concepts, and `max_usd` warns because Codex cannot enforce a dollar cap.
 this file needs. The rest are optional. The common optional knobs are described
 below; the file's own comments carry the remainder.
 
+### `[gate] quarantine` -- keep a flaky test out of the suite run
+
+```toml
+[gate]
+quarantine = ["tests/test_x.py::test_racy"]
+```
+
+Each entry is one safe test selector. The gate adds it to the `{test}` list of
+`test_suite_without_new`, in the ticket worktree and in its base run, and
+nowhere else -- never `test_one`, never a ticket's `test_file`. It refuses a
+ticket whose `test_file` is quarantined, and it lists every active entry in its
+thread entry. Like the rest of the file it is read from git HEAD or the pinned
+copy, so an uncommitted edit is inert. The runner command must exclude each
+`{test}` value (`{test:--deselect }`), or quarantine excludes nothing.
+
 ### `[stages.<name>] max_usd` -- the per-stage dollar cap
 
 Every stage spawns under a dollar cap. A stage killed at it escalates

@@ -606,9 +606,20 @@ A Tier A failure at `plan-validation` whose findings include a
 `LOAD-FLAKY: ` finding -- `test_file` exited 0 in the ticket's worktree and
 on base, so it reproduces the bug only under load -- charges nothing either.
 `gate_result()` returns `load-flaky` and the ticket escalates on the first
-one, for the same reason: only `triage` may write `test_file`, so no re-plan
-can repoint it, and the finding says base PASSES too, so a human re-runs
-triage instead of reading it as a bad plan.
+one, for the same reason: no re-plan can repoint `test_file`, and the finding
+says base PASSES too, so it is not a bad plan. Two recoveries exist, both the
+human's. If the branch already carries the fix, run `pipeline resume TICKET-017
+--stage revalidating`: `revalidating` rebases, re-runs Tier A, and accepts a
+test that exits 0 in the worktree and on base. If the test never failed, repoint
+it with `pipeline resume TICKET-017 triage`.
+
+A flaky test from an unrelated ticket can turn every ticket's suite red.
+`[gate] quarantine = ["tests/test_x.py::test_racy"]` in `.project/pipeline.toml`
+excludes the named selectors from the SUITE run only (`test_suite_without_new`,
+in the worktree and in its base run). It never touches a ticket's own
+`test_file`: the gate refuses a ticket whose `test_file` is quarantined. Each
+active entry appears as an `ok:` line in the gate's thread entry. Like the rest
+of the file it is read from git HEAD, or the pinned copy under `init --private`.
 
 A Tier A failure at `plan-validation` whose findings include an
 `INVALID-TEST: ` finding charges nothing either. `gate_result()` returns

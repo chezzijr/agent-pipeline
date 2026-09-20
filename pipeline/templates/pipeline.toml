@@ -48,6 +48,15 @@ test_suite_without_new  = "pytest {test:--deselect }"
 # The branch tickets are cut from, and the one Tier A re-runs {test} against.
 base                    = "main"
 
+# Quarantine flaky tests out of the SUITE run. Each entry is one test selector,
+# added to `test_suite_without_new`'s `{test}` list in the ticket worktree and in
+# its base confirmation run -- never to a ticket's own `test_file`, and never to
+# `test_one`. The gate refuses a ticket whose `test_file` is quarantined, and it
+# names every active entry in its thread entry so none rots unnoticed. Like the
+# rest of this file it is read from git HEAD (or the pinned copy).
+# [gate]
+# quarantine = ["tests/test_x.py::test_racy"]
+
 # Lowers this project's share of the daemon's -j; it never raises it. -j is a
 # machine-wide budget shared across every registered project, and this key
 # lowers this project alone. A project with no key takes its share. A value

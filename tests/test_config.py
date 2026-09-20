@@ -10,6 +10,7 @@ from pathlib import Path
 from pipeline.core import PipelineError, reset_notices
 from pipeline.core.config import (cap_config, format_test_cmd,
                                   format_tests_cmd, harness, install_skill,
+                                  gate_quarantine,
                                    pin_dir, pin_path, project_config,
                                    project_harness, project_max_parallel,
                                    project_skill, render,
@@ -333,6 +334,32 @@ def test_format_tests_cmd_substitutes_one_test_or_many():
     assert format_tests_cmd("""awk '{print $1}' {name}""", [a]) == """awk '{print $1}' t"""
     assert format_test_cmd("pytest -x {test}", a) == "pytest -x a.py::t"
     assert format_test_cmd("pytest {test}", "") == "pytest ''"
+
+
+def test_gate_quarantine_validates_named_nodes():
+    """TICKET-145: `[gate].quarantine` accepts only safe selector lists."""
+    d = Path(tempfile.mkdtemp())
+    (d / ".project").mkdir()
+    cfg = d / ".project" / "pipeline.toml"
+    cfg.write_text('test_one="true"\ntest_suite="true"\n'
+                   'test_suite_without_new="true"\n')
+    assert gate_quarantine(d) == []
+    for value, want in (
+        ('[gate]\nquarantine = "tests/test_x.py::test_racy"\n', "quarantine"),
+        ('[gate]\nquarantine = ["tests/test_x.py::test_racy", 1]\n', "1"),
+        ('[gate]\nquarantine = ["../test_x.py::test_racy"]\n', "../test_x.py"),
+    ):
+        cfg.write_text('test_one="true"\ntest_suite="true"\n'
+                       'test_suite_without_new="true"\n' + value)
+        try:
+            gate_quarantine(d)
+            assert False, value
+        except PipelineError as e:
+            assert want in str(e), str(e)
+    cfg.write_text('test_one="true"\ntest_suite="true"\n'
+                   'test_suite_without_new="true"\n[gate]\n'
+                   'quarantine = ["tests/test_x.py::test_racy", "tests/y.py::test_slow"]\n')
+    assert gate_quarantine(d) == ["tests/test_x.py::test_racy", "tests/y.py::test_slow"]
 
 
 def _probe_project(test_one="false", test_suite="true"):

@@ -1108,6 +1108,36 @@ def test_gate_quarantines_named_nodes_from_the_suite_only():
         'quarantine = ["tests/test_racy.py::test_racy"]\n')
     ok, failures = gate(d, "TICKET-001")
     assert ok, failures
+    thread = (d / ".project/tickets/TICKET-001.md").read_text()
+    assert "ok: suite quarantine `tests/test_racy.py::test_racy`" in thread, thread
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_gate_names_revalidating_recovery_and_accepts_it():
+    """TICKET-145: only a human revalidation accepts a double-pass test."""
+    d, wt = _git_ticket_project("fixed\n", "fixed\n")
+    ok, failures = gate(d, "TICKET-001", workdir=wt)
+    assert not ok, failures
+    assert any("LOAD-FLAKY:" in f and "pipeline resume TICKET-001 --stage revalidating" in f
+               for f in failures), failures
+    ticket = T.Ticket.load(T.ticket_path(d, "TICKET-001"))
+    ticket.stage = "revalidating"
+    ticket.save()
+    ok, failures = gate(d, "TICKET-001", workdir=wt)
+    assert ok, failures
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_gate_refuses_quarantining_its_own_test():
+    """A quarantine cannot hide the ticket node the gate must reproduce."""
+    d = project()
+    (d / ".project" / "pipeline.toml").write_text(
+        'test_one = "echo test_broken; exit 1"\n'
+        'test_suite = "true"\ntest_suite_without_new = "true"\n'
+        '[gate]\nquarantine = ["test_thing.py::test_broken"]\n')
+    ok, failures = gate(d, "TICKET-001")
+    assert not ok, failures
+    assert any("quarantine" in f and "test_file" in f for f in failures), failures
     shutil.rmtree(d, ignore_errors=True)
 
 

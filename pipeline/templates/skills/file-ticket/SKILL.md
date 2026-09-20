@@ -268,6 +268,10 @@ can fail on, so triage returns `result: rejected` and the ticket dies there.
   a valid recorded stage requires `--stage`. A successful private-project resume names
   its pinned config. A changed or missing disk config warns without blocking the resume.
   Run `pipeline config --sync` before respawn to adopt disk edits.
+  A `LOAD-FLAKY:` escalation means `test_file` exited 0 in the worktree and on
+  base. If the branch already carries the fix, the user runs `pipeline resume
+  TICKET-NNN --stage revalidating`, which rebases, re-gates and accepts the
+  double pass. Only the human may run it; the filing session must not.
 - **Do not close a ticket on the user's behalf.** For a non-terminal ticket
   the user has explicitly abandoned, hand them `pipeline close TICKET-NNN
   --reason "why"`. It records their reason and moves the ticket to `rejected`.

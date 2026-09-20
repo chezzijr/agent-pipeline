@@ -8,7 +8,7 @@ from pathlib import Path
 
 from pipeline.core.config import (NO_TESTS_RE, format_test_cmd,
                                   format_tests_cmd, project_config,
-                                  selector_parts)
+                                  selector_parts, gate_quarantine)
 from pipeline.core.ticket import (FENCE_RE, Ticket, _fenced, active_decisions,
                                   decisions_dir, ticket_path)
 from pipeline.core.worktree import base_checkout, base_ref, run_cmd
@@ -745,6 +745,11 @@ def gate(project: Path, tid: str, workdir: Path | None = None) -> tuple[bool, li
     if bad:
         return False, [f"unusable frontmatter: {b}" for b in bad]
 
+    try:
+        quarantine = gate_quarantine(project)
+    except Exception as e:
+        return False, [str(e)]
+
     secs = t.sections()
     for name in REQUIRED_SECTIONS:
         if not secs.get(name):
@@ -776,6 +781,13 @@ def gate(project: Path, tid: str, workdir: Path | None = None) -> tuple[bool, li
             f"that is the same on every run. Got: {expect!r}")
 
     tests = t.tests
+    overlap = sorted(set(tests) & set(quarantine))
+    for test in overlap:
+        findings.append(
+            f"[gate].quarantine entry `{test}` overlaps this ticket's `test_file`; "
+            "a suite-only quarantine cannot hide the reproduction")
+    for test in quarantine:
+        findings.append(f"ok: suite quarantine `{test}` applies only to `test_suite_without_new`")
     if not tests:
         findings.append("no `test_file` recorded in frontmatter")
     else:
@@ -829,6 +841,16 @@ def gate(project: Path, tid: str, workdir: Path | None = None) -> tuple[bool, li
                    or any(expect in on_base.get(t, "") for t, _ in passing))
         for test, out in passing:
             if test in zero_on_base:
+                if t.stage == "revalidating":
+                    # base's own "proves nothing" verdict is the same fact
+                    # the accepted double-pass already records
+                    base = [b for b in base
+                            if not b.startswith(f"`{test}` exited 0 on base")]
+                    findings.append(
+                        f"ok: `{test}` exited 0 in the ticket worktree and on base "
+                        f"`{base_ref(cfg)}`; human recovery at `revalidating` accepts "
+                        "the already-fixed branch")
+                    continue
                 # the mark must lead, because the allowlists are `startswith`
                 # (DEC-065, DEC-089)
                 findings.append(
@@ -838,9 +860,8 @@ def gate(project: Path, tid: str, workdir: Path | None = None) -> tuple[bool, li
                     f"makes the two identical here. It exited 0 on base "
                     f"`{base_ref(cfg)}` too, where this branch's fix is absent, "
                     f"so it PASSES there as well and no re-plan can make it fail. "
-                    f"Only `triage` may write `test_file` (`CLAIMS`): repoint it "
-                    f"at a test that fails on an idle box, then `pipeline resume "
-                    f"{t.id} triage`"
+                    f"A human can recover an already-fixed branch with `pipeline resume "
+                    f"{t.id} --stage revalidating`; agents must not resume tickets."
                     f"\n```on base\n{zero_on_base[test][-1200:]}\n```"
                     f"\n```in the ticket's worktree\n{out[-1200:]}\n```")
             elif test not in on_base:
@@ -902,10 +923,11 @@ def gate(project: Path, tid: str, workdir: Path | None = None) -> tuple[bool, li
             base, _, _ = _base_findings(project, cfg, wd, candidates)
         findings += base
         if runnable:
-            names = " ".join(f"`{x}`" for x in runnable)
+            suite_tests = list(dict.fromkeys([*runnable, *quarantine]))
+            names = " ".join(f"`{x}`" for x in suite_tests)
             bare = next((m for m in BARE_PLACEHOLDER_RE.finditer(
                 cfg["test_suite_without_new"])
-                if len({selector_parts(x)[m.group(1)] for x in runnable}) > 1), None)
+                if len({selector_parts(x)[m.group(1)] for x in suite_tests}) > 1), None)
             if bare:
                 findings.append(
                     f"`test_suite_without_new` substitutes a bare `{bare.group(0)}` "
@@ -917,10 +939,10 @@ def gate(project: Path, tid: str, workdir: Path | None = None) -> tuple[bool, li
                     f"or `{{{bare.group(1)}:}}` if the runner takes them all "
                     f"after one flag")
             else:
-                suite_cmd = format_tests_cmd(cfg["test_suite_without_new"], runnable)
+                suite_cmd = format_tests_cmd(cfg["test_suite_without_new"], suite_tests)
                 code, out = _confirmed_suite(suite_cmd, wd)
                 if code != 0 and suite_ran(code, out):
-                    base_out, why = _base_suite(project, cfg, wd, runnable)
+                    base_out, why = _base_suite(project, cfg, wd, suite_tests)
                     if base_out is not None:
                         findings.append(
                             f"{ENVIRONMENT_MARK}suite excluding {names} is RED -- "
