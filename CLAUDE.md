@@ -194,6 +194,18 @@ still worth it: it prints one line per case, and the failure names the case.
   parses it as a `datetime`, not a `str`. `lease_expiry()` is total and
   `validate_meta()` escalates what it cannot read -- `lease_active()` runs in
   `ls`, before anything has validated anything.
+- **A lease is renewed while its child lives, but not on every tick.** A stage
+  outliving `LEASE_MINUTES` used to show an expired lease while working, and
+  `drain_expired()` TERMINATED it on any source-change drain -- so a merged
+  dispatcher change killed every stage older than 30 minutes. `tick()` now
+  renews an inflight ticket's lease through `Ticket.renew_lease()`, and only
+  once less than half the lease remains: each renewal rewrites the ticket file
+  the agent is also writing, and a write every 10s races its `## Thread`
+  append. Renewal is skipped while `stopping()`, so DEC-123's bounded drain
+  still ends. Nothing renews a dead holder's lease, so `lease_expiries`
+  recovery is untouched, and `ticket_rows()` requires `lease_active()` AND
+  `holder_alive()` before it reports `leased` -- `ls` showing `LEASED` for a
+  dead stage misled the operator twice (TICKET-141).
 - **Only one merge runs at a time.** Two tickets merging in one tick both
   `git merge base`, and the first fast-forward moves base under the second.
   `start()` waits, exactly like `files_conflict` does. `start()` also holds a
@@ -210,6 +222,44 @@ still worth it: it prints one line per case, and the failure names the case.
   dependency, {on, file} for an overlap. The field is the human's: it is in
   `CONTROL_FIELDS` and in no `CLAIMS` entry, so a stage that writes it
   escalates the ticket.
+  A project exempts a path from the FILE half with `[conflict] ignore` in
+  `.project/pipeline.toml`, read by `project_conflict_ignore()`. It exists
+  because a repo where every ticket appends to one ledger (`PROGRESS.md`) runs
+  one ticket at a time -- 71.7 hours of waiting against 12 hours of work in the
+  project it was found in. Entries are exact paths, never globs; a shared code
+  file still orders two tickets; a bad value is printed once and ignored. Both
+  `conflict_holder()` calls in `start()` take the set -- the inflight one and
+  the `parked_meta()` one -- or a `merging` ticket still waits on a parked
+  ledger overlap (TICKET-143).
+- **A human approval survives a recut, and only a recut.** `cmd_approve`
+  records `approved_plan_hash`, a digest of `PLAN_SECTIONS` (`## Plan`,
+  `## Acceptance criteria`, `## Rollback`); `advance()` recomputes the verdict
+  through `approval_carries()` and rewrites `ok` to `approved`, so a sidecar
+  word can never buy an approval. The hash is dropped on EVERY route into
+  `implementing` -- `advance()`'s own, and `start()`'s, which is what
+  `pipeline resume --stage implementing` takes. That second pop is the whole
+  safety argument: `revalidating` may `git reset --hard`, so a branch carrying
+  implementation commits must never reach it on a carried approval (DEC-029,
+  TICKET-144). `approved_plan_hash` is in `CONTROL_FIELDS` and validated by
+  `validate_meta()` as a sha256 hex digest.
+- **A stage corrects a decision record through the dispatcher, never by hand.**
+  `.project/decisions/` is outside every stage's writable paths, so a stage
+  that finds a false claim writes `correction: DEC-<digits> -- <text>` in its
+  sidecar and `_finish()` appends it through `correct_decision()`. Append-only
+  and idempotent on replay: the body is never rewritten, the record stays
+  ACTIVE, and the correction qualifies one claim where `supersedes:` replaces
+  the whole record. `_finish()` gates on the VALUE, not the key -- `_common.md`
+  ships `correction: null` in the sidecar template, and gating on the key put a
+  false finding in every ticket's thread (TICKET-142). A bad id is a `finding`,
+  never a crash.
+- **The gate's two dead ends both have a way out now.** `[gate] quarantine` in
+  `.project/pipeline.toml` excludes named nodes from the SUITE run only, never
+  from the ticket's own `test_file`, and the gate names every active entry in
+  its thread entry so a quarantine cannot rot unnoticed. And a `LOAD-FLAKY`
+  verdict (the test exits 0 in the worktree AND on base) names
+  `pipeline resume <id> --stage revalidating`, which accepts that double pass
+  -- the recovery for a ticket whose fix landed while it waited. At
+  `plan-validation` the same double pass still escalates (TICKET-145).
 - **`merging` rebases before it merges, and the rebase may not fail the
   child.** `merge_cmd()` runs `git rebase <base> || git rebase --abort` and
   then the `git merge --no-edit <base>` that was always there. The rebase

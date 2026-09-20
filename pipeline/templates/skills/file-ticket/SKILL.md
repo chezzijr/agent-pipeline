@@ -229,7 +229,10 @@ small enough for the cheap route (`triage -> implementing -> quick-review -> ver
 -> merging`), which has no plan-approval gate; `quick-review` returns it to `planning`, and
 so to the approval gate, if the diff or the test does not hold up; the dispatcher undoes
 the cheap route's commit on the way, so the ticket re-plans against the failing test
-`triage` committed. Either route stops
+`triage` committed. A ticket whose branch is recut after a rebase conflict comes
+back through `planning`, but it asks for approval again only if `## Plan`,
+`## Acceptance criteria` or `## Rollback` changed -- an identical plan carries
+the approval already given. Either route stops
 again at `awaiting-merge`, a second human gate, if its diff touches anything `CLAUDE.md`
 fences off from unattended merge. The class table below does not change: there is no
 `chore` class, and a human cannot request the cheap route. That gate is the point, so

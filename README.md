@@ -139,6 +139,15 @@ does not re-litigate a choice somebody already made.
 
 `pipeline decisions` reads that set without your knowing an id first: one line per record with its id, whether it is active or superseded, the ticket it came from and its first body line. A superseded record stays in the listing, marked with the id that replaced it, because it is still the reason something was once done that way. `pipeline decisions DEC-011` prints one record in full, and `pipeline decisions --grep flush` lists the records whose text matches.
 
+A record can also be wrong in one claim rather than out of date as a whole --
+it describes code that no longer exists, or never did. No stage can write
+`.project/decisions/`, so a stage that finds such a claim reports
+`correction: DEC-<digits> -- <text>` in its result sidecar and the dispatcher
+appends it to that record, naming the ticket. The record stays active and its
+body is never rewritten: the correction qualifies one claim, where
+`supersedes:` replaces the whole record. A malformed or unknown id becomes a
+thread finding and nothing is written.
+
 That is wrong for a repo where you are the only one running the pipeline.
 `pipeline init --private` writes `.project/` into `.git/info/exclude`, which is
 **per-clone and never committed** -- no line about a tool your teammates do not
@@ -263,6 +272,14 @@ Two supervisors on one project would double-spawn, so each holds an
 itself holds one on `daemon.sock.lock`. The kernel releases both on crash. A
 daemon restart also treats a lease whose holder pid is gone as expired, instead
 of parking the ticket for the full 30 minutes.
+
+A lease is 30 minutes, and a stage can run longer than that, so each tick
+renews the lease of every inflight ticket whose child is still alive -- but
+only once less than half of it remains, because every renewal rewrites the
+ticket file the agent is also writing. Renewal stops while the dispatcher is
+draining, so a source-change drain still ends at the lease. Nothing renews a
+lease whose process is gone, so crash recovery is unchanged, and `ls` reports
+such a lease as free rather than `LEASED`.
 
 The socket is `0600` in a `0700` directory and the event database is `0600`, but
 the boundary is the uid and nothing more: anything running as you can `ls`,
@@ -436,7 +453,14 @@ identically, so re-planning is the only thing that can fix it. A rebase
 conflict aborts the rebase, recuts the branch from base against its own
 counter (`rebase_conflicts`), and hands the ticket back to `triage`, which
 rewrites its test on current base; nothing is auto-resolved, and a second
-conflict escalates. A re-gate that passes credits the failures before it
+conflict escalates. Your approval survives that round trip when the plan
+does: `approve` records a digest of `## Plan`, `## Acceptance criteria` and
+`## Rollback`, and a plan that comes back byte-identical goes straight to
+`revalidating` instead of asking you to approve text you already read. Any
+edit to those three sections parks it at `awaiting-approval` again, and so
+does `reject`, or any route into `implementing` -- once a branch carries
+implementation commits, the recut's `git reset --hard` needs a human
+(DEC-029). A re-gate that passes credits the failures before it
 (`stale_regate_cleared`), so the bound counts consecutive failures: a red gate
 that the next re-gate does not reproduce -- a flaky suite, a machine under
 load -- costs a re-plan and not the ticket. Two failures with no pass between
