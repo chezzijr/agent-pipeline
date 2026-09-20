@@ -478,7 +478,12 @@ def cmd_resume(args) -> None:
 def live_holder(t: Ticket) -> str | None:
     """The one lease rule for human commands that rewrite control fields."""
     holder = (t.lease or {}).get("holder")
-    return holder if t.lease_active() and holder_alive(holder) else None
+    if t.lease_active() and holder_alive(holder):
+        # Missing holder metadata is not evidence that no stage is running.
+        # `holder_alive(None)` intentionally fails safe, and the command still
+        # needs a non-empty value to require `--force` and explain the lease.
+        return str(holder)
+    return None
 
 
 def cmd_close(args) -> None:
