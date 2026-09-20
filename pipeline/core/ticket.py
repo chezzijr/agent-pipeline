@@ -5,6 +5,7 @@ markdown in git. `Ticket` is a typed view over it, not a schema it must obey:
 every key the model does not know is round-tripped in `extra`, and a thread
 header that does not parse comes back as a freeform note rather than an error.
 """
+import hashlib
 import os
 import re
 from dataclasses import dataclass, field
@@ -29,6 +30,10 @@ SAFE_ID = re.compile(r"^TICKET-\d{1,6}$")
 SAFE_BRANCH = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,80}$")
 SAFE_TEST = re.compile(r"^[A-Za-z0-9._/-]{1,200}(::[A-Za-z0-9_\[\].-]{1,100})*$")
 SAFE_FILE = re.compile(r"^[A-Za-z0-9._/-]{1,200}$")
+SAFE_HASH = re.compile(r"^[0-9a-f]{64}$")
+
+# what the approval gate asks about: the plan, its criteria, its undo path
+PLAN_SECTIONS = ("Plan", "Acceptance criteria", "Rollback")
 
 
 def _pid_of(holder) -> int | None:
@@ -119,6 +124,8 @@ def validate_meta(meta: dict) -> list[str]:
     for dep in as_list(meta.get("depends_on")):
         if not SAFE_ID.match(str(dep)):
             bad.append(f"depends_on entry {dep!r} is not TICKET-<digits>")
+    if "approved_plan_hash" in meta and not SAFE_HASH.match(str(meta["approved_plan_hash"])):
+        bad.append(f"approved_plan_hash {meta['approved_plan_hash']!r} is not a sha256 hex digest")
     # The lease decides whether a second agent is spawned onto a live stage, so
     # a shape nobody can read is as unusable as a hostile branch name. It was
     # the one field this function never looked at (CLAUDE.md invariant 5 named
@@ -203,6 +210,17 @@ def sections(body: str) -> dict[str, str]:
     if name is not None:
         out[name] = "\n".join(buf).strip()
     return out
+
+
+def plan_digest(body: str) -> str:
+    """SHA-256 of the sections an approval gate shows (`PLAN_SECTIONS`).
+
+    Fence-aware through `sections()`, so a `## Plan` heading quoted inside a
+    fenced block in the thread cannot move it.
+    """
+    found = sections(body)
+    text = "\n".join(f"## {n}\n" + found.get(n, "") for n in PLAN_SECTIONS)
+    return hashlib.sha256(text.encode()).hexdigest()
 
 
 def section_count(body: str, name: str) -> int:
@@ -827,6 +845,9 @@ class Ticket:
 
     def section(self, name: str) -> str:
         return self.sections().get(name, "")
+
+    def replace_section(self, name: str, content: str) -> None:
+        self.body = replace_section(self.body, name, content)
 
     def append(self, stage: str, kind: str, text: str, **attrs) -> None:
         if kind not in KINDS:

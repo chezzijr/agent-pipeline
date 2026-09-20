@@ -21,8 +21,9 @@ from pipeline.core.config import (CONFIG_TEMPLATE, HARNESSES_DIR, PKG,
                                   suite_failure, sync_pins)
 from pipeline.core.gate import gate
 from pipeline.core.machine import KNOWN_STAGES, TERMINAL, cleared_key
-from pipeline.core.ticket import (SAFE_DEC_ID, SAFE_ID, Ticket, all_decisions,
-                                   decisions_dir, now, tickets_dir, write_atomic)
+from pipeline.core.ticket import (PLAN_SECTIONS, SAFE_DEC_ID, SAFE_ID, Ticket,
+                                   all_decisions, decisions_dir, now, tickets_dir,
+                                   write_atomic)
 from pipeline.core.worktree import exclude_project_dir, worktree
 from pipeline.daemon import registry
 from pipeline.daemon.server import (STALE_HOURS, socket_path, ticket_rows,
@@ -218,10 +219,6 @@ def cmd_config(args) -> None:
     cfg = project_config(project)
     for k in ("test_one", "test_suite", "test_suite_without_new", "base"):
         print(f"{k} = {cfg.get(k)!r}")
-
-
-# what the approval gate asks about: the plan, its criteria, its undo path
-PLAN_SECTIONS = ("Plan", "Acceptance criteria", "Rollback")
 
 
 def plan_text(t: Ticket) -> str:

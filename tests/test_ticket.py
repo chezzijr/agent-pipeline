@@ -750,3 +750,35 @@ def test_all_decisions_lists_a_superseded_record_and_skips_a_symlink():
     one = next(x for x in T.all_decisions(d) if x.id == "DEC-003")
     assert one.superseded and one.superseded_by is None
     shutil.rmtree(d)
+
+
+def test_plan_digest_covers_the_sections_the_gate_shows():
+    """TICKET-144: the digest is the identity of what a human approved -- the
+    three `PLAN_SECTIONS` -- and nothing else in the body moves it."""
+    body = ("## Plan\n1. a\n\n## Acceptance criteria\n- x\n\n## Rollback\nundo\n\n"
+            "## Thread\n\n### entry\nnote\n")
+    assert T.plan_digest(body) == T.plan_digest(body)
+    assert T.SAFE_HASH.match(T.plan_digest(body))
+    assert T.plan_digest(body.replace("undo", "undo it")) != T.plan_digest(body), \
+        "an edited Rollback reused an approval of the old one"
+    assert T.plan_digest(body.replace("- x", "- y")) != T.plan_digest(body)
+    assert T.plan_digest(body.replace("1. a", "1. b")) != T.plan_digest(body)
+    assert T.plan_digest(body + "\nmore thread\n") == T.plan_digest(body)
+    fenced = body + "\n```\n## Plan\n1. forged\n```\n"
+    assert T.plan_digest(fenced) == T.plan_digest(body), \
+        "a `## Plan` heading inside a fence moved the digest"
+
+
+def test_replace_section_method_rewrites_the_body():
+    t = Ticket(path=Path("x"), id="TICKET-001", body="## Plan\n1. a\n\n## Thread\n")
+    t.replace_section("Plan", "1. b\n")
+    assert t.section("Plan") == "1. b"
+    assert "## Thread" in t.body
+
+
+def test_a_malformed_approved_plan_hash_is_refused():
+    ok = {"id": "TICKET-001", "branch": "ticket/001"}
+    assert T.validate_meta({**ok, "approved_plan_hash": "a" * 64}) == []
+    for bad in ("a" * 63, "A" * 64, "$(id)" + "a" * 59, ""):
+        found = T.validate_meta({**ok, "approved_plan_hash": bad})
+        assert any("approved_plan_hash" in f for f in found), bad
