@@ -3027,10 +3027,56 @@ def test_tick_renews_an_inflight_lease_before_a_source_change_drain():
 
     supervisor.tick(d, harness("fake"), inflight, max_parallel=1)
 
-    assert Ticket.load(path).lease_active(), "a live child kept its expired spawn lease"
+    renewed = Ticket.load(path)
+    assert renewed.lease_active(), "a live child kept its expired spawn lease"
+    assert renewed.lease == inflight[t.id]["meta"].lease, "disk and snapshot leases diverged"
     supervisor.drain_expired(inflight)
     assert killed == [], "the drain terminated a child after its lease renewal"
     assert t.id in inflight
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_tick_does_not_save_an_inflight_lease_above_the_renewal_threshold():
+    """A healthy lease above half-life must not rewrite ticket or mirror files."""
+    import os
+    import types
+
+    d = project()
+    path = d / ".project/tickets/TICKET-001.md"
+    t = Ticket.load(path)
+    t.lease = {"holder": f"implementing-{os.getpid()}",
+               "expires": (T.now() + timedelta(minutes=16)).isoformat()}
+    t.save()
+    before, mtime = path.read_bytes(), path.stat().st_mtime_ns
+    child = types.SimpleNamespace(poll=lambda: None)
+    inflight = {t.id: {"proc": child, "stage": "implementing", "meta": t}}
+
+    supervisor.tick(d, harness("fake"), inflight, max_parallel=1)
+
+    assert path.read_bytes() == before, "a lease above half-life rewrote the ticket"
+    assert path.stat().st_mtime_ns == mtime, "a lease above half-life changed mtime"
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_tick_does_not_renew_an_inflight_lease_while_stopping():
+    """A source-change drain must consume the remaining lease bound unchanged."""
+    import os
+    import types
+
+    d = project()
+    path = d / ".project/tickets/TICKET-001.md"
+    t = Ticket.load(path)
+    t.lease = {"holder": f"implementing-{os.getpid()}",
+               "expires": (T.now() - timedelta(minutes=1)).isoformat()}
+    t.save()
+    before = path.read_bytes()
+    child = types.SimpleNamespace(poll=lambda: None)
+    inflight = {t.id: {"proc": child, "stage": "implementing", "meta": t}}
+
+    supervisor.tick(d, harness("fake"), inflight, max_parallel=1, stopping=lambda: True)
+
+    assert path.read_bytes() == before, "a stopping tick renewed the lease"
+    assert not inflight[t.id]["meta"].lease_active(), "a stopping tick extended the drain"
     shutil.rmtree(d, ignore_errors=True)
 
 
