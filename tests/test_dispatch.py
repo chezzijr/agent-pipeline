@@ -613,6 +613,40 @@ def test_a_rebase_conflict_recuts_the_branch_and_returns_to_triage():
     shutil.rmtree(d, ignore_errors=True)
 
 
+def test_a_recut_carries_forward_only_an_identical_approved_plan():
+    """TICKET-144: a recut discards the reviewed branch, but not an approval
+    of the same plan. The renewed plan must revalidate without asking the
+    human again; changed text must return to the approval gate."""
+    d, sh, path, wt = _ticket_awaiting_approval()
+    (wt / "f.py").write_text("branch side\n")
+    _commit(wt, "'ticket commit'")
+    (d / "f.py").write_text("base side\n")
+    sh("git add f.py && git commit -qm 'base moved'")
+
+    did, rec = supervisor.start(d, path, harness("fake"), {})
+    assert did and rec and rec["kind"] == "regate"
+    rec["proc"].wait()
+    supervisor.finish(d, rec)
+
+    recut = Ticket.load(path)
+    assert recut.stage == "triage"
+    recut.stage = "plan-validation"
+    recut.save()
+    supervisor.advance(d, Ticket.load(path), "ok", "replanned", agent=False)
+    carried = Ticket.load(path)
+    assert carried.stage == "revalidating", \
+        "an unchanged approved plan asked for another human approval"
+    assert carried.extra["approved_by"] == "human"
+
+    carried.stage = "plan-validation"
+    carried.replace_section("Plan", "1. change thing.py differently\n")
+    carried.save()
+    supervisor.advance(d, Ticket.load(path), "ok", "replanned", agent=False)
+    assert Ticket.load(path).stage == "awaiting-approval", \
+        "a changed plan reused approval for different work"
+    shutil.rmtree(d, ignore_errors=True)
+
+
 def test_a_bound_escalation_emits_an_escalated_event():
     """`escalate()` emits for the paths it owns -- a crash, a tamper, an
     unusable ticket. The OTHER route into `escalated` is `transition()`
