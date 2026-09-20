@@ -173,6 +173,15 @@ def test_conflict_holder_ignores_a_shared_ledger_file():
     assert M.conflict_holder(mine, inflight, ignored={"PROGRESS.md"}) is None
 
 
+def test_conflict_holder_still_orders_a_code_file_beside_an_ignored_ledger():
+    mine = {"files_declared": ["PROGRESS.md", "thing.py"]}
+    inflight = [{"id": "TICKET-004", "files_declared": ["PROGRESS.md", "thing.py"]}]
+
+    assert M.conflict_holder(mine, inflight, ignored={"PROGRESS.md"}) == ("TICKET-004", "thing.py")
+    assert M.conflict_holder(mine, inflight) == ("TICKET-004", "PROGRESS.md")
+    assert M.files_conflict(mine, inflight, ignored={"PROGRESS.md", "thing.py"}) is False
+
+
 def test_dep_holder_names_the_first_dependency_short_of_done():
     deps = {"TICKET-003": ["TICKET-002", "TICKET-001"]}
     stages = {"TICKET-001": "implementing", "TICKET-002": "done", "TICKET-003": "new"}

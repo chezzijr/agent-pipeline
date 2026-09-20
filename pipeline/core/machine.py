@@ -328,11 +328,16 @@ def apply_claims(meta: dict, stage: str, res: dict) -> None:
             meta[field] = res[field]
 
 
-def conflict_holder(meta: dict, inflight_meta: list[dict]) -> tuple[str, str] | None:
+def conflict_holder(meta: dict, inflight_meta: list[dict],
+                    ignored: set[str] = frozenset()) -> tuple[str, str] | None:
     """The first inflight ticket that overlaps `meta`'s `files_declared`, and
     one file it holds -- `sorted(...)[0]` so one holder always names the same
-    file. `None` when nothing overlaps."""
-    mine = set(meta.get("files_declared") or [])
+    file. `None` when nothing overlaps.
+
+    `ignored` holds the exact paths a project exempts through `[conflict]
+    ignore`; an exempt path never orders two tickets, and any other shared
+    path still does."""
+    mine = set(meta.get("files_declared") or []) - set(ignored)
     for o in inflight_meta:
         overlap = mine & set(o.get("files_declared") or [])
         if overlap:
@@ -340,13 +345,14 @@ def conflict_holder(meta: dict, inflight_meta: list[dict]) -> tuple[str, str] | 
     return None
 
 
-def files_conflict(meta: dict, inflight_meta: list[dict]) -> bool:
+def files_conflict(meta: dict, inflight_meta: list[dict],
+                   ignored: set[str] = frozenset()) -> bool:
     """Two tickets touching the same file are ordered, not run together --
     otherwise their branches merge into a conflict nobody asked for.
 
     The bool is the ordering decision; `conflict_holder()`'s tuple is what
     `ls` reports."""
-    return conflict_holder(meta, inflight_meta) is not None
+    return conflict_holder(meta, inflight_meta, ignored) is not None
 
 
 def dep_holder(tid: str, deps: dict[str, list[str]], stages: dict[str, str]) -> tuple[str, str] | None:
