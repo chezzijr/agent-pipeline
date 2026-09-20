@@ -1090,6 +1090,27 @@ def test_a_load_flaky_test_does_not_charge_a_plan_validation_attempt():
     shutil.rmtree(d, ignore_errors=True)
 
 
+def test_gate_quarantines_named_nodes_from_the_suite_only():
+    """TICKET-145: a project quarantine must join the suite exclusion list.
+
+    The ticket's own test still runs through `test_one`; only the whole-suite
+    command receives the configured racy node. Without that node this command
+    reports a real red suite, so the assertion fails for the missing feature.
+    """
+    d = project()
+    (d / ".project" / "pipeline.toml").write_text(
+        'test_one = "echo test_broken; exit 1"\n'
+        'test_suite = "true"\n'
+        'test_suite_without_new = "echo {test:--deselect } | '
+        "grep -Fq -- '--deselect tests/test_racy.py::test_racy' || "
+        '{ echo 1 failed; exit 1; }"\n'
+        '[gate]\n'
+        'quarantine = ["tests/test_racy.py::test_racy"]\n')
+    ok, failures = gate(d, "TICKET-001")
+    assert ok, failures
+    shutil.rmtree(d, ignore_errors=True)
+
+
 def test_gate_names_both_causes_when_the_test_exits_zero_on_base():
     """The base run carries the branch run's exit-0 ambiguity: `test_one`
     exits 0 on base without printing the node, which is a pass there or a
