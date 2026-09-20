@@ -18,8 +18,8 @@ from pipeline.core import PipelineError, notice_once
 from pipeline.core.config import (cap_config, compose_prompt,
                                   format_tests_cmd, harness, is_readonly,
                                   mcp_config, mcp_servers, project_config,
-                                  project_harness, project_max_parallel,
-                                  readonly_allow, render, stage_cap,
+                                  project_conflict_ignore, project_harness,
+                                  project_max_parallel, readonly_allow, render, stage_cap,
                                   stage_config, stage_settings,
                                   validate_stage_overrides)
 from pipeline.core.fence import fenced_touches
@@ -865,10 +865,11 @@ def start(project: Path, path: Path, hcfg: dict, inflight: dict,
         advance(project, t, "new", "dispatcher pickup", emit, agent=False)
         return True, None
 
+    ignored = project_conflict_ignore(project)
     held = conflict_holder(t.frontmatter(),
-                           [r["meta"].frontmatter() for r in inflight.values()])
+                           [r["meta"].frontmatter() for r in inflight.values()], ignored)
     if held is None and stage == "merging":
-        held = conflict_holder(t.frontmatter(), parked_meta(project, tid))
+        held = conflict_holder(t.frontmatter(), parked_meta(project, tid), ignored)
     note_wait(t, {"on": held[0], "file": held[1]} if held else None)
     if held is not None:
         return False, None  # wait, do not fail -- cheap ordering without a scheduler

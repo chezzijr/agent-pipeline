@@ -1758,6 +1758,119 @@ def test_a_merge_is_not_held_by_a_parked_ticket_that_shares_no_file():
     shutil.rmtree(d, ignore_errors=True)
 
 
+LEDGER_IGNORE = '\n[conflict]\nignore = ["PROGRESS.md"]\n'
+
+
+def _ledger_ticket(tid, stage, files):
+    return (FIXTURE.replace("id: TICKET-001", f"id: {tid}")
+                   .replace("branch: ticket/001", f"branch: ticket/{tid[-3:]}")
+                   .replace("stage: plan-validation", f"stage: {stage}")
+                   .replace("files_declared: [thing.py]", f"files_declared: [{', '.join(files)}]"))
+
+
+def _inflight_holder(d, files):
+    """A stand-in for an inflight TICKET-002, built as tests/test_daemon.py does."""
+    t2 = Ticket.find(d, "TICKET-001")
+    t2.id = "TICKET-002"
+    t2.frontmatter()["files_declared"] = files
+    return {"TICKET-002": {"meta": t2}}
+
+
+def test_conflict_ignore_lets_two_ledger_only_tickets_run_together():
+    d, sh = git_project()
+    with open(d / ".project/pipeline.toml", "a") as f:
+        f.write(LEDGER_IGNORE)
+    (d / ".project/tickets/TICKET-001.md").write_text(
+        _ledger_ticket("TICKET-001", "merging", ["PROGRESS.md"]))
+    inflight = _inflight_holder(d, ["PROGRESS.md"])
+    wt = supervisor.ensure_worktree(
+        d, {"id": "TICKET-001", "branch": "ticket/001"}, {"base": "main"})
+    (wt / "thing.py").write_text("the fix\n")
+    _commit(wt, "'TICKET-001: the fix'")
+
+    did, rec = supervisor.start(d, d / ".project/tickets/TICKET-001.md",
+                                harness("fake"), inflight)
+
+    assert did and rec and rec["kind"] == "merge", (
+        f"a ledger-only overlap must not hold a ticket, got (did, rec) = {(did, rec)!r}")
+    rec["proc"].wait()
+    supervisor.finish(d, rec)
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_conflict_ignore_still_holds_a_ticket_on_a_declared_code_file():
+    d = project()
+    with open(d / ".project/pipeline.toml", "a") as f:
+        f.write(LEDGER_IGNORE)
+    (d / ".project/tickets/TICKET-001.md").write_text(
+        _ledger_ticket("TICKET-001", "verifying", ["PROGRESS.md", "thing.py"]))
+    inflight = _inflight_holder(d, ["PROGRESS.md", "thing.py"])
+
+    did, rec = supervisor.start(d, d / ".project/tickets/TICKET-001.md",
+                                harness("fake"), inflight)
+
+    assert (did, rec) == (False, None)
+    waiting = Ticket.find(d, "TICKET-001").extra["waiting"]
+    assert waiting["on"] == "TICKET-002" and waiting["file"] == "thing.py", waiting
+
+
+def test_conflict_ignore_frees_a_merge_from_a_parked_ledger_overlap():
+    """Fails when only the `inflight` call in `start()` receives the ignore
+    set: the `parked_meta()` call would still return the ledger."""
+    d, sh = git_project()
+    with open(d / ".project/pipeline.toml", "a") as f:
+        f.write(LEDGER_IGNORE)
+    (d / ".project/tickets/TICKET-001.md").write_text(
+        _ledger_ticket("TICKET-001", "awaiting-approval", ["PROGRESS.md"]))
+    (d / ".project/tickets/TICKET-002.md").write_text(
+        _ledger_ticket("TICKET-002", "merging", ["PROGRESS.md"]))
+    wt = supervisor.ensure_worktree(
+        d, {"id": "TICKET-002", "branch": "ticket/002"}, {"base": "main"})
+    (wt / "thing.py").write_text("the fix\n")
+    _commit(wt, "'TICKET-002: the fix'")
+
+    did, rec = supervisor.start(d, d / ".project/tickets/TICKET-002.md", harness("fake"), {})
+
+    assert did and rec and rec["kind"] == "merge", (
+        f"a parked ledger-only overlap must not hold a merge, got (did, rec) = {(did, rec)!r}")
+    rec["proc"].wait()
+    supervisor.finish(d, rec)
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_a_parked_code_file_overlap_still_holds_a_merge_under_an_ignore_list():
+    d = project()
+    with open(d / ".project/pipeline.toml", "a") as f:
+        f.write(LEDGER_IGNORE)
+    (d / ".project/tickets/TICKET-001.md").write_text(
+        _ledger_ticket("TICKET-001", "awaiting-approval", ["PROGRESS.md", "thing.py"]))
+    (d / ".project/tickets/TICKET-002.md").write_text(
+        _ledger_ticket("TICKET-002", "merging", ["PROGRESS.md", "thing.py"]))
+
+    did, rec = supervisor.start(d, d / ".project/tickets/TICKET-002.md", harness("fake"), {})
+
+    assert (did, rec) == (False, None)
+    waiting = Ticket.find(d, "TICKET-002").extra["waiting"]
+    assert waiting["on"] == "TICKET-001" and waiting["file"] == "thing.py", waiting
+
+
+def test_a_bad_conflict_ignore_preserves_file_ordering():
+    from pipeline.core import reset_notices
+    reset_notices()
+    d = project()
+    with open(d / ".project/pipeline.toml", "a") as f:
+        f.write('\n[conflict]\nignore = "PROGRESS.md"\n')
+    (d / ".project/tickets/TICKET-001.md").write_text(
+        _ledger_ticket("TICKET-001", "verifying", ["PROGRESS.md"]))
+    inflight = _inflight_holder(d, ["PROGRESS.md"])
+
+    did, rec = supervisor.start(d, d / ".project/tickets/TICKET-001.md",
+                                harness("fake"), inflight)
+
+    assert (did, rec) == (False, None), "a bad ignore value must not weaken ordering"
+    assert Ticket.find(d, "TICKET-001").extra["waiting"]["file"] == "PROGRESS.md"
+
+
 def test_the_unwind_refuses_a_sha_that_is_not_on_the_branch():
     """`unwind_cmd()` resets a branch to a recorded tip -- but only if that tip
     is really on the branch. A stale or hand-edited sha must refuse rather than
