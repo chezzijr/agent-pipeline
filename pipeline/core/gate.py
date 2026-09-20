@@ -1147,6 +1147,19 @@ def gate(project: Path, tid: str, workdir: Path | None = None) -> tuple[bool, li
             continue
         findings.append(f"acceptance criterion names no test: {c} -- {CRIT_RULE}")
 
+    # `t` was read before the project's test commands ran, and those take
+    # minutes. Two writers touch the ticket in that window: the planning agent,
+    # whose prompt tells it to run this gate and fix what it prints, and the
+    # dispatcher, which renews the lease of a live child. Saving the stale copy
+    # reverted both -- eight planner edits to `## Plan` silently lost, and a
+    # stale `lease` that `_finish()` then read as tampering, escalating a
+    # planning run that had already cost $7.31. Re-read here and append to what
+    # is on disk now. The findings above still describe the tree as this run
+    # saw it; that is the verdict, and it is not re-derived from the new text.
+    try:
+        t = Ticket.load(path)
+    except Exception:
+        pass    # unparseable mid-write: keep the copy in hand and still report
     seen: dict[str, str] = {}
     prior: dict[str, int] = {}
     for e in t.thread():

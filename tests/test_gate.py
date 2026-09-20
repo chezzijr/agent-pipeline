@@ -1,11 +1,12 @@
 """Tier A gate: the checks that must not be talkable-out-of."""
 import re
 import shutil
+import sys
 import subprocess
 import tempfile
 from pathlib import Path
 
-from helpers import FIXTURE, project
+from helpers import FIXTURE, ROOT, project
 from pipeline.core import ticket as T
 from pipeline.core.config import project_config
 from pipeline.core.gate import _base_findings, _dedupe, gate, plan_steps
@@ -1724,4 +1725,43 @@ def test_a_suite_red_only_in_the_worktree_still_charges_the_plan():
     assert res == "bad-plan"
     _, counters = transition("plan-validation", res, {})
     assert counters["plan_validation_attempts"] == 1
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_gate_does_not_revert_a_write_made_while_it_ran():
+    """The gate reads the ticket, runs the project's tests for minutes, then
+    appends its verdict. Saving the copy it read first reverted every write
+    made in that window: the planning agent's `## Plan` amendments (its prompt
+    tells it to run this gate and fix what it prints) and the dispatcher's
+    lease renewal, whose stale value `_finish()` then read as tampering.
+
+    `test_one` here stands in for that window -- it edits the ticket the way a
+    planner does, and re-leases it the way a renewal does, while the gate runs.
+    """
+    d = project()
+    path = d / ".project/tickets/TICKET-001.md"
+    t = T.Ticket.load(path)
+    t.take_lease("planning-1111")
+    t.save()
+    stale = t.lease["expires"]
+    writer = d / "writer.py"
+    writer.write_text(
+        "import sys\n"
+        "sys.path.insert(0, %r)\n"
+        "from pathlib import Path\n"
+        "from pipeline.core.ticket import Ticket\n"
+        "t = Ticket.load(Path(%r))\n"
+        "t.body = t.body.replace('1. fix thing.py', '1. fix thing.py\\n2. AMENDED')\n"
+        "t.take_lease('planning-1111')\n"
+        "t.save()\n"
+        "print('test_broken')\n"
+        "sys.exit(1)\n" % (str(ROOT), str(path)))
+    (d / ".project" / "pipeline.toml").write_text(
+        'test_one = "%s %s"\n' % (sys.executable, writer)
+        + 'test_suite = "true"\n'
+          'test_suite_without_new = "true"\n')
+    gate(d, "TICKET-001")
+    after = T.Ticket.load(path)
+    assert "2. AMENDED" in after.body, "the gate reverted a write made while it ran"
+    assert after.lease["expires"] != stale, "the gate wrote back a stale lease"
     shutil.rmtree(d, ignore_errors=True)

@@ -292,6 +292,17 @@ still worth it: it prints one line per case, and the failure names the case.
   reads its own prompt as fabricated (TICKET-067). Without the mark, a write
   there leaves the worktree dirty, and `merging`'s rebase fails with
   `error: cannot rebase: You have unstaged changes.`
+- **`gate()` re-reads the ticket before it appends its verdict.** It loads the
+  ticket, runs the project's test commands for minutes, then appends. Saving
+  the copy it read first reverted every write made in that window, and two
+  writers are in it: the planning agent, whose prompt tells it to run
+  `pipeline gate` and fix what it prints (eight `## Plan` amendments were lost
+  on one chezzilang ticket), and the dispatcher's lease renewal, whose stale
+  value `_finish()` then read as `frontmatter changed while planning held the
+  ticket` -- five escalations in one day, each throwing away a planning run
+  that had cost $7.31. The re-read is the whole fix; the findings above it
+  still describe the tree as that run saw it and are never re-derived. Any
+  other slow load-then-save path needs the same treatment.
 - **`gate()` quotes each distinct output once and references the rest.** A
   re-gate re-runs the same test against the same code, so its fence is
   byte-identical to one the thread already holds, and `_dedupe()` replaces
