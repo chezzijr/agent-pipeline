@@ -273,6 +273,6 @@ git add .project/stages/implementing.extra.md   # read from HEAD, like the confi
 
 The other `[stages.<name>]` keys (`model`, `effort`, `write`, `tools`,
 `hooks`, `permission_mode`, `skills`), `[mcp.<name>]`,
-`[readonly] allow` and `max_parallel` are documented in the comments of
+`[readonly] allow`, `[conflict] ignore` and `max_parallel` are documented in the comments of
 `.project/pipeline.toml` itself. Read them there rather than inventing
 keys -- an unknown key is silently ignored.

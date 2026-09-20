@@ -63,6 +63,15 @@ base                    = "main"
 # below 1 is reported and ignored.
 # max_parallel = 1
 
+# Paths that must not order two tickets. Every ticket appends to a shared
+# ledger such as PROGRESS.md or docs/gaps.md, and by default two tickets that
+# declare the same file queue one behind the other. Two tickets whose ONLY
+# shared file is listed here run in parallel instead. Entries are exact paths,
+# not globs or directories. Any other shared file still orders them. A bad
+# value is reported and ignored. Read from git HEAD like the rest of the file.
+# [conflict]
+# ignore = ["PROGRESS.md", "docs/gaps.md"]
+
 # One command run in every worktree the dispatcher creates, after
 # `git worktree add` and before the first stage, and in the throwaway
 # checkout of `base` the gate re-runs a ticket's test in.

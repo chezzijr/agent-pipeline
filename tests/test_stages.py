@@ -467,7 +467,7 @@ def test_the_config_skill_names_every_knob_the_code_reads():
     skill = C.SKILLS_DIR / "pipeline-config" / "SKILL.md"
     text = skill.read_text()
     for knob in ("harness", "max_usd", "scale_usd", "worktree_setup", "worktree_teardown",
-                  "extra.md", "pinned"):
+                  "extra.md", "pinned", "conflict"):
         assert knob in text, f"{skill} does not mention {knob!r}"
 
 

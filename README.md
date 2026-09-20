@@ -393,6 +393,20 @@ branch cannot raise its own cap. Two dispatchers on the same host -- a
 `pipeline start` beside a `pipeline run` -- each get their own `-j`; the
 budget is not host-wide.
 
+Two tickets that declare the same file wait for each other. When every ticket
+appends to a shared ledger, that serialises the whole queue, so a project can
+name the files that must not order two tickets:
+
+```toml
+[conflict]
+ignore = ["PROGRESS.md", "docs/gaps.md"]
+```
+
+Paths are exact: no globs, and `docs/` does not cover `docs/gaps.md`. A shared
+code file still orders two tickets, so only the listed paths lose their say.
+The key is read from HEAD like the rest of the file, and a bad value is
+reported and ignored.
+
 Each ticket gets its own git worktree under `.worktrees/<ID>`, created from
 `base` and removed when the ticket reaches a terminal stage. Two tickets cannot
 share one checkout, which is why worktrees and parallelism arrive together.
