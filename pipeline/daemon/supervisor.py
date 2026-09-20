@@ -32,7 +32,7 @@ from pipeline.core.machine import (CLEANUP_STAGES, CONTROL_FIELDS,
 from pipeline.core.ticket import (LEASE_MINUTES, Ticket, all_tickets, as_list,
                                   correct_decision, drop_result, holder_alive, lease_expiry, now, read_result, record_decision,
                                   replace_section, section_count, sections,
-                                  result_file, stage_view, ticket_path,
+                                  plan_digest, result_file, stage_view, ticket_path,
                                   tickets_dir, validate_meta)
 from pipeline.core.worktree import (base_ref, dirty_snapshot, drop_worktree,
                                     ensure_worktree, git_ignored, project_env,
@@ -78,6 +78,14 @@ def has_marker(note: str) -> bool:
     return str(note or "").lstrip().startswith(MARKER)
 
 
+def approval_carries(t: Ticket) -> bool:
+    """Is `## Plan`, `## Acceptance criteria` and `## Rollback` byte-identical
+    to what a human approved? `approved_plan_hash` is written by `pipeline
+    approve` alone and dropped on entering `implementing`."""
+    h = str(t.extra.get("approved_plan_hash") or "")
+    return bool(h) and h == plan_digest(t.body)
+
+
 def advance(project: Path, t: Ticket, result: str, note: str, emit=noop,
             agent: bool = True) -> None:
     # `agent` says this note is an agent's `.result` summary. The
@@ -92,6 +100,9 @@ def advance(project: Path, t: Ticket, result: str, note: str, emit=noop,
     # below still sees exactly one changed key.
     t.counters = {**t.counters, "plan_steps": plan_steps(t.section("Plan")),
                   "plan_files": len(t.files_declared)}
+    if stage == "plan-validation" and result in ("ok", "approved"):
+        # the verdict is recomputed here; a sidecar word never buys an approval
+        result = "approved" if approval_carries(t) else "ok"
     nxt, counters = transition(stage, result, t.counters, t.klass)
     marker = has_marker(note) if agent else None   # BEFORE t.append copies the note
     ev = {} if marker is None else {"marker": marker}
@@ -119,6 +130,10 @@ def advance(project: Path, t: Ticket, result: str, note: str, emit=noop,
         t.append(stage, "decision", f"decision recorded as `{did}`" if did else
                  "no `## Decisions` section -- nothing recorded for "
                  "future planning agents to find")
+    if nxt == "implementing":
+        # DEC-029: a branch holding implementation commits must never reach
+        # `revalidating`'s `git reset --hard` without a human
+        t.extra.pop("approved_plan_hash", None)
     t.counters = counters
     t.stage = nxt
     t.release_lease()

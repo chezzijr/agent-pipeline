@@ -22,8 +22,8 @@ from pipeline.core.config import (CONFIG_TEMPLATE, HARNESSES_DIR, PKG,
 from pipeline.core.gate import gate
 from pipeline.core.machine import KNOWN_STAGES, TERMINAL, cleared_key
 from pipeline.core.ticket import (PLAN_SECTIONS, SAFE_DEC_ID, SAFE_ID, Ticket,
-                                   all_decisions, decisions_dir, now, tickets_dir,
-                                   write_atomic)
+                                   all_decisions, decisions_dir, now, plan_digest,
+                                   tickets_dir, write_atomic)
 from pipeline.core.worktree import exclude_project_dir, worktree
 from pipeline.daemon import registry
 from pipeline.daemon.server import (STALE_HOURS, socket_path, ticket_rows,
@@ -323,6 +323,9 @@ def cmd_approve(args) -> None:
     t.stage = GATE_NEXT[gate]
     t.extra["approved_by"] = args.by or os.environ.get("USER", "unknown")
     t.extra["approved_at"] = now().isoformat()
+    if gate == "awaiting-approval":
+        # what the human saw; a merge approval says nothing about the plan
+        t.extra["approved_plan_hash"] = plan_digest(t.body)
     t.append("human", "approval", f"**approved by {t.extra['approved_by']}**",
              by=t.extra["approved_by"])
     t.save()
@@ -350,6 +353,7 @@ def cmd_reject(args) -> None:
             f"or close the ticket.")
     t.counters["plan_rejections"] = t.counters.get("plan_rejections", 0) + 1
     t.stage = "planning"
+    t.extra.pop("approved_plan_hash", None)
     t.append("human", "rejection", args.reason)
     t.save()
     record(project, t, "awaiting-approval", "rejected")
