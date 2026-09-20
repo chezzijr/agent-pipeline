@@ -551,7 +551,7 @@ Then one of three:
 | a flake -- crashed harness, expired lease, no sidecar | `pipeline resume TICKET-017 --stage plan-validation --reset no_result` |
 | the stage hit its `--max-budget-usd` cap (`budget_kills`) | raise that stage's `max_usd` in `pipeline/stages/<name>.md`, then `pipeline resume TICKET-017 --stage review --reset budget_kills` |
 | real, but the stage deserves another go with the thread it has now | `pipeline resume TICKET-017 --stage planning --grant plan_validation_attempts` |
-| the ticket itself is wrong | `pipeline reject TICKET-017 "why"` |
+| the ticket itself is wrong | `pipeline close TICKET-017 --reason "why"` |
 
 `pipeline reject` rejects a plan only at `awaiting-approval`. To cancel an
 abandoned non-terminal ticket, use `pipeline close TICKET-017 --reason "why"`.
