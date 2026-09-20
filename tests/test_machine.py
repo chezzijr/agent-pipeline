@@ -165,6 +165,14 @@ def test_conflict_holder_names_the_first_holder_and_its_file():
     assert not M.files_conflict(mine, []), "nothing in flight cannot conflict"
 
 
+def test_conflict_holder_ignores_a_shared_ledger_file():
+    """An opt-in ledger ignore must not serialize otherwise independent tickets."""
+    mine = {"files_declared": ["PROGRESS.md"]}
+    inflight = [{"id": "TICKET-004", "files_declared": ["PROGRESS.md"]}]
+
+    assert M.conflict_holder(mine, inflight, ignored={"PROGRESS.md"}) is None
+
+
 def test_dep_holder_names_the_first_dependency_short_of_done():
     deps = {"TICKET-003": ["TICKET-002", "TICKET-001"]}
     stages = {"TICKET-001": "implementing", "TICKET-002": "done", "TICKET-003": "new"}
