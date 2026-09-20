@@ -219,6 +219,18 @@ def test_control_fields_are_the_dispatchers_alone():
         assert field not in M.CONTROL_FIELDS, f"{field} is claimed via the sidecar"
     assert "depends_on" in M.CONTROL_FIELDS, "a stage that edits the ordering must escalate, not be reverted"
     assert "depends_on" not in M.CLAIMS, "the human who files the batch owns the ordering"
+    assert "approved_plan_hash" in M.CONTROL_FIELDS, \
+        "a stage that writes the approval hash must escalate, not be reverted"
+    assert "approved_plan_hash" not in M.CLAIMS
+
+
+def test_an_identical_approved_plan_revalidates_without_a_human():
+    """TICKET-144: the dispatcher, not an agent, issues `approved` -- only for
+    a plan byte-identical to the one a human approved. The row charges no
+    counter, and the ordinary `ok` still parks at the human gate."""
+    assert t("plan-validation", "approved") == ("revalidating", {})
+    assert t("plan-validation", "approved", {"rebase_conflicts": 1})[1] == {"rebase_conflicts": 1}
+    assert t("plan-validation", "ok")[0] == "awaiting-approval"
 
 
 def test_escalated_tickets_keep_their_worktree():

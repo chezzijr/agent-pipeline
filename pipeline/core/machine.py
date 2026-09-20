@@ -156,6 +156,13 @@ def transition(stage: str, result: str, counters: dict, klass: str = "bugfix"):
             return "needs-input", c
         case ("plan-validation", "ok"):
             return "awaiting-approval", c
+        case ("plan-validation", "approved"):
+            # The dispatcher issues this result, never an agent: `advance()`
+            # rewrites `ok` to `approved` only when `## Plan`, `## Acceptance
+            # criteria` and `## Rollback` are byte-identical to what a human
+            # approved. It charges nothing because every exit from
+            # `revalidating` either charges or leaves for `implementing`.
+            return "revalidating", c
         case ("plan-validation", "fail"):
             # every finding is structural: the gate stopped on formatting --
             # a missing section, a plan line that is not a numbered step --
@@ -305,6 +312,8 @@ def transition(stage: str, result: str, counters: dict, klass: str = "bugfix"):
 # has broken the contract, and the ticket is escalated rather than trusted.
 CONTROL_FIELDS = {"id", "stage", "class", "branch", "counters", "lease",
                   "approved_by", "approved_at",
+                  # what a human approved, as a digest of `PLAN_SECTIONS`
+                  "approved_plan_hash",
                   # `depends_on` is the human's, not a stage's -- it is in no
                   # `CLAIMS` entry, so a stage's sidecar cannot set it, and
                   # listing it here turns an agent's frontmatter write from a
