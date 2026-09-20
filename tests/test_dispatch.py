@@ -2389,6 +2389,32 @@ def test_a_bad_correction_in_a_stage_result_is_a_finding_and_the_verdict_stands(
     shutil.rmtree(d, ignore_errors=True)
 
 
+def test_a_null_correction_in_a_stage_result_is_no_correction_and_no_finding():
+    """TICKET-142: `_common.md` shows `correction: null` as the template line, so
+    a stage that leaves it null reported nothing. Fails if `_finish()` gates on
+    the key rather than the value and appends a false `finding`."""
+    for line in ("correction: null\n", "correction:\n", "correction: ''\n"):
+        d = project(FIXTURE.replace("stage: plan-validation", "stage: review"))
+        path = d / ".project/tickets/TICKET-001.md"
+        dec = d / ".project/decisions"
+        dec.mkdir(parents=True)
+        (dec / "DEC-125.md").write_text("# DEC-125\n\nbody\n")
+        snap = Ticket.load(path)
+        T.result_file(d, "TICKET-001").write_text(
+            "result: ok\nsummary: ✓ reported\n" + line)
+        log = d / ".project/logs/TICKET-001.log"
+        log.parent.mkdir(parents=True, exist_ok=True)
+        rec = {"fh": log.open("w"), "prompt": d / "gone.md", "settings": None,
+               "path": path, "tid": "TICKET-001", "stage": "review",
+               "session": "s1", "log": log, "wt": d, "meta": snap, "before": None}
+
+        assert supervisor._finish(d, rec) == "ok", line
+        assert (dec / "DEC-125.md").read_text() == "# DEC-125\n\nbody\n", line
+        findings = [e for e in Ticket.load(path).thread() if e.kind == "finding"]
+        assert findings == [], (line, findings)
+        shutil.rmtree(d, ignore_errors=True)
+
+
 def test_a_budget_kill_is_charged_and_retried_exactly_like_a_crash():
     """A stage killed at its `--max-budget-usd` cap escalates on the FIRST
     kill, charged to its own counter, naming the cap it hit -- not a blind

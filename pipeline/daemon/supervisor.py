@@ -1350,8 +1350,9 @@ def _finish(project: Path, rec: dict, emit=noop) -> str:
     # A stage cannot write `.project/decisions/`, so the dispatcher appends the
     # correction it reported, into the PROJECT's records (DEC-018). It runs
     # before the sidecar is dropped, so a crash here replays into an
-    # idempotent append rather than losing the correction.
-    if "correction" in res:
+    # idempotent append rather than losing the correction. A falsy value is
+    # the `correction: null` template line left alone: nothing was reported.
+    if res.get("correction"):
         correct_decision(project, t, res["correction"])
     t.save()
     drop_result(project, tid)
