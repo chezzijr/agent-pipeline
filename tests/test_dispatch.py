@@ -667,6 +667,32 @@ def test_implementing_voids_a_carried_approval():
     shutil.rmtree(d, ignore_errors=True)
 
 
+def test_spawning_implementing_voids_an_approval_however_the_stage_was_set():
+    """DEC-029, second door: `pipeline resume --stage implementing` sets the
+    stage without `advance()`, so the approval it kept would carry a
+    `blocked` ticket into `revalidating`'s `git reset --hard`. `start()` drops
+    the hash on every implementing spawn."""
+    d, sh, path, wt = _ticket_awaiting_approval()
+    t = Ticket.load(path)
+    assert t.extra["approved_plan_hash"]
+    t.stage = "implementing"  # what cmd_resume does; no advance()
+    t.save()
+
+    did, rec = supervisor.start(d, path, harness("fake"), {})
+    assert did
+    if rec is not None and rec.get("proc"):
+        rec["proc"].wait()
+    t = Ticket.load(path)
+    assert "approved_plan_hash" not in t.extra, \
+        "a resumed implementing ticket kept its approval"
+
+    t.stage = "plan-validation"
+    t.save()
+    supervisor.advance(d, Ticket.load(path), "ok", "replanned", agent=False)
+    assert Ticket.load(path).stage == "awaiting-approval"
+    shutil.rmtree(d, ignore_errors=True)
+
+
 def test_a_forged_approved_result_cannot_skip_the_human_gate():
     """A stage's sidecar `result` reaches `advance()` unchecked. `approved` is
     the dispatcher's word: with no recorded approval it parks."""

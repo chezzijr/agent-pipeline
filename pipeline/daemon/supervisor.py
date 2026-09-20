@@ -974,6 +974,13 @@ def start(project: Path, path: Path, hcfg: dict, inflight: dict,
         if code == 0 and SAFE_SHA.match(head):
             t.extra["cheap_route_head"] = head
 
+    if stage == "implementing":
+        # DEC-029: a branch that may carry implementation commits must not
+        # reach `revalidating`'s `git reset --hard` on a carried approval.
+        # `advance()` pops this on its own route; `pipeline resume --stage
+        # implementing` reaches here without it.
+        t.extra.pop("approved_plan_hash", None)
+
     t.take_lease(f"{stage}-{os.getpid()}")
     t.save()
 
