@@ -196,6 +196,25 @@ def test_claude_code_render_is_unchanged_by_the_extraction():
     assert "claude -p" in cmd
 
 
+def test_claude_prompt_is_passed_by_path_never_expanded_into_argv():
+    """Linux caps ONE argv string at 128 KiB (MAX_ARG_STRLEN). A long-lived
+    ticket's bounded view plus the stage prompt crossed it (a 208 KB ticket:
+    `/bin/sh: claude: Argument list too long`, two spawns, escalated). The
+    composed prompt must reach claude as a file path, for `cmd` and
+    `interactive_cmd` alike, however large it is."""
+    hcfg = config.harness("claude-code")
+    stage_cfg = config.stage_config("planning")
+    prompt = Path("/proj/stage-prompt.md")
+    for key in ("cmd", "interactive_cmd"):
+        cmd = config.render(hcfg, stage_cfg, tid="TICKET-001",
+                            project=Path("/proj"), ticket=Path("/proj/t.md"),
+                            result_file=Path("/proj/t.result"), session="s1",
+                            prompt=prompt, settings=Path("/proj/settings.json"),
+                            key=key)
+        assert f'--append-system-prompt-file "{prompt}"' in cmd, key
+        assert "$(cat" not in cmd, key
+
+
 def test_add_dir_grants_only_the_project_dir_not_the_whole_main_checkout():
     """A stage needs to write exactly two things outside its worktree: the
     ticket file and the `.result` sidecar, both under `<project>/.project/`.

@@ -26,7 +26,12 @@
 # argument". Every stage this harness spawned died there, silently, because the
 # end-to-end tests use `fake.toml`, whose command has no positional argument.
 
-prompt_mode = "system"   # composed prompt via --append-system-prompt
+# The composed prompt is passed BY PATH (`--append-system-prompt-file`), never expanded
+# into argv with `$(cat ...)`: Linux caps a single argument at 128 KiB (MAX_ARG_STRLEN),
+# and a long-lived ticket's bounded view plus the stage prompt crossed it
+# (chezzilang TICKET-180, 208 KB ticket: `/bin/sh: claude: Argument list too long`,
+# two spawns, escalated). Verified 2026-09-29: a 156 KB file loads intact.
+prompt_mode = "system"   # composed prompt via --append-system-prompt-file
 supports_hooks = true    # PreToolUse hooks registered via --settings
 usage_source = "claude"
 replay_cmd = "claude --resume {session}"
@@ -184,7 +189,7 @@ no_skills_flag = "--disable-slash-commands"
 cmd = """claude -p --model {model} {effort_flag} {session_flag} {settings_flag} \
 --output-format stream-json --verbose \
 --setting-sources project \
---append-system-prompt "$(cat {stage_prompt})" \
+--append-system-prompt-file "{stage_prompt}" \
 --tools "{tools}" --strict-mcp-config {mcp_flag} {skills_flag} \
 --permission-mode {permission_mode} \
 --max-budget-usd {cap} \
@@ -201,7 +206,7 @@ cmd = """claude -p --model {model} {effort_flag} {session_flag} {settings_flag} 
 # A harness without this key falls back to `cmd` under the PTY.
 interactive_cmd = """claude --model {model} {effort_flag} {session_flag} {settings_flag} \
 --setting-sources project \
---append-system-prompt "$(cat {stage_prompt})" \
+--append-system-prompt-file "{stage_prompt}" \
 --tools "{tools}" --strict-mcp-config {mcp_flag} {skills_flag} \
 --permission-mode {permission_mode} \
 --max-budget-usd {cap} \

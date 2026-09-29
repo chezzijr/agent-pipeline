@@ -796,8 +796,8 @@ def render(hcfg: dict, cfg: dict, *, tid: str, project: Path, ticket: Path,
     agent, which is how `codex.toml` is tested.
 
     `prompt_mode`: "system" (default) passes `stage_prompt` as a path the
-    harness's own template reads (`claude-code.toml`'s `$(cat {stage_prompt})`
-    via `--append-system-prompt`). "inline" is for a harness with no system
+    harness's own template reads (`claude-code.toml`'s
+    `--append-system-prompt-file {stage_prompt}`). "inline" is for a harness with no system
     prompt flag: the composed prompt is read here and prepended to the
     work-ticket message as one positional `{prompt}` argument.
 
