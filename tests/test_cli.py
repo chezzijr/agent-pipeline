@@ -1738,3 +1738,15 @@ def test_start_forwards_the_upgrade_restart_flag():
     finally:
         clim.subprocess.Popen = orig_popen
         clim.connect = orig_connect
+
+
+def test_register_warns_when_a_lockfile_has_no_worktree_setup():
+    """A fresh worktree has no installed dependencies; a project with a
+    lockfile and no `worktree_setup` registered with no word about it."""
+    d = register_project()
+    (d / "package-lock.json").write_text("{}")
+    r = cli(d, "register", str(d), "--force",
+            env={"XDG_CONFIG_HOME": str(tempfile.mkdtemp())})
+    out = r.stdout + r.stderr
+    assert "package-lock.json" in out and "worktree_setup" in out, out
+    shutil.rmtree(d, ignore_errors=True)

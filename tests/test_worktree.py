@@ -366,3 +366,17 @@ def test_run_cmd_keeps_an_early_failure_marker_in_oversized_output():
     assert "TICKET-135 early failure marker" in out
     assert "TICKET-135 late failure marker" in out
     assert "characters omitted" in out
+
+
+def test_a_failing_worktree_setup_fails_the_ticket_worktree(capsys):
+    """A non-zero `worktree_setup` used to be discarded: the worktree came
+    back as ready with no dependencies installed."""
+    d, _ = git_project()
+    meta = {"id": "TICKET-001", "branch": "ticket/001"}
+    cfg = {"base": "main", "worktree_setup": "echo setup-broke; exit 3"}
+
+    wt = W.ensure_worktree(d, meta, cfg)
+
+    assert wt is None, "worktree_setup exited 3 but the worktree was returned as ready"
+    assert "worktree_setup failed" in capsys.readouterr().out
+    shutil.rmtree(d, ignore_errors=True)
