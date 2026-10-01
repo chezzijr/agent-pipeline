@@ -1765,3 +1765,42 @@ def test_gate_does_not_revert_a_write_made_while_it_ran():
     assert "2. AMENDED" in after.body, "the gate reverted a write made while it ran"
     assert after.lease["expires"] != stale, "the gate wrote back a stale lease"
     shutil.rmtree(d, ignore_errors=True)
+
+
+def test_a_red_test_added_on_the_branch_is_not_reported_as_pre_existing_breakage():
+    """TICKET-146: triage committed two red tests and listed one. The other
+    is the branch's own, absent from base, so it is not pre-existing."""
+    d = Path(tempfile.mkdtemp())
+    sh = lambda c, cwd=d: subprocess.run(c, shell=True, cwd=cwd,
+                                         capture_output=True, text=True)
+    sh("git init -qb main && git config user.email t@t && git config user.name t")
+    (d / ".project" / "tickets").mkdir(parents=True)
+    (d / ".project" / "pipeline.toml").write_text(
+        'test_one = "echo test_broken; exit 1"\n'
+        'test_suite = "true"\n'
+        'test_suite_without_new = "echo 1 failed; ! test -f test_extra.py"\n'
+        'base = "main"\n')
+    (d / ".project" / "tickets" / "TICKET-001.md").write_text(FIXTURE)
+    sh("git add -A && git commit -qm init")
+    wt = d / ".worktrees" / "TICKET-001"
+    sh(f"git worktree add -q -b ticket/001 {wt} main")
+    (wt / "test_thing.py").write_text("def test_broken(): assert False")
+    (wt / "test_extra.py").write_text("def test_extra(): assert False")
+    sh("git add -A && git commit -qm branch", cwd=wt)
+    ok, failures = gate(d, "TICKET-001", workdir=wt)
+    assert not ok
+    assert not any("pre-existing breakage" in f for f in failures), failures
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_a_test_runner_that_cannot_start_is_an_environment_failure():
+    """TICKET-146: exit 127 means the runner never started, not that the
+    test errored; no re-plan fixes it."""
+    d = project()
+    (d / ".project" / "pipeline.toml").write_text(
+        'test_one = "no-such-runner {test}"\n'
+        'test_suite = "true"\ntest_suite_without_new = "true"\n')
+    ok, failures = gate(d, "TICKET-001")
+    assert not ok
+    assert gate_result(ok, failures, "plan-validation") == "environment", failures
+    shutil.rmtree(d)
