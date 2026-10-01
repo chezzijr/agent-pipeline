@@ -8,7 +8,8 @@ from pathlib import Path
 
 from pipeline.core.config import (NO_TESTS_RE, format_test_cmd,
                                   format_tests_cmd, project_config,
-                                  selector_parts, gate_quarantine)
+                                  selector_parts, gate_quarantine,
+                                  SHELL_CANNOT_RUN)
 from pipeline.core.ticket import (FENCE_RE, Ticket, _fenced, active_decisions,
                                   decisions_dir, ticket_path)
 from pipeline.core.worktree import base_checkout, base_ref, run_cmd
@@ -811,6 +812,18 @@ def gate(project: Path, tid: str, workdir: Path | None = None) -> tuple[bool, li
             node = test.split("::")[-1]
             if code == 0:
                 passing.append((test, out))
+            # the shell's own 126/127 means the runner never started
+            # (SHELL_CANNOT_RUN, the codes `register` knows); the mark must
+            # lead because the classifiers are `startswith` (DEC-065, DEC-089)
+            elif code in SHELL_CANNOT_RUN and node not in out:
+                findings.append(
+                    f"{ENVIRONMENT_MARK}`{test}`: `test_one` could not start -- "
+                    f"the shell exited {code}, {SHELL_CANNOT_RUN[code]}, so no "
+                    f"test ran and no plan can fix it. The usual cause is a "
+                    f"runner that `worktree_setup` did not install (e.g. "
+                    f"`node_modules`); fix `test_one` or `worktree_setup` in "
+                    f"`.project/pipeline.toml`, then `pipeline resume {tid}`"
+                    f"\n```\n{out[-1200:]}\n```")
             elif node not in out:
                 # a missing dependency or an import error exits non-zero too, and
                 # looks exactly like a failing test unless you check for the name

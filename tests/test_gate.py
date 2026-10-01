@@ -1804,3 +1804,17 @@ def test_a_test_runner_that_cannot_start_is_an_environment_failure():
     assert not ok
     assert gate_result(ok, failures, "plan-validation") == "environment", failures
     shutil.rmtree(d)
+
+
+def test_a_test_runner_that_cannot_start_names_the_cause():
+    d = project()
+    (d / ".project" / "pipeline.toml").write_text(
+        'test_one = "no-such-runner {test}"\n'
+        'test_suite = "true"\ntest_suite_without_new = "true"\n')
+    ok, failures = gate(d, "TICKET-001")
+    env = [f for f in failures if f.startswith("ENVIRONMENT: ")]
+    assert len(env) == 1, failures
+    assert "exited 127" in env[0]
+    assert "worktree_setup" in env[0]
+    assert not any("errored rather than failed" in f for f in failures)
+    shutil.rmtree(d)
