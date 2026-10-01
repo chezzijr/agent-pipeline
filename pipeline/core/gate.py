@@ -11,7 +11,7 @@ from pipeline.core.config import (NO_TESTS_RE, format_test_cmd,
                                   selector_parts, gate_quarantine)
 from pipeline.core.ticket import (FENCE_RE, Ticket, _fenced, active_decisions,
                                   decisions_dir, ticket_path)
-from pipeline.core.worktree import base_checkout, base_ref, run_cmd
+from pipeline.core.worktree import SETUP_FAILED, base_checkout, base_ref, run_cmd
 
 # `## Thread` is deliberately absent: it starts empty on every ticket and the
 # gate itself is what first writes to it.
@@ -633,6 +633,14 @@ def _base_findings(project: Path, cfg: dict, wd: Path,
     zero_on_base: dict[str, str] = {}
     with base_checkout(project, cfg) as (base_wt, err):
         if base_wt is None:
+            if err.startswith(SETUP_FAILED):
+                # No plan can fix the environment, so this must not charge a
+                # planning respawn (TICKET-147).
+                return ([f"{ENVIRONMENT_MARK}`worktree_setup` failed in the throwaway "
+                         f"checkout of base `{base}`, so {named} cannot be re-run there "
+                         f"and base proves nothing. Fix `worktree_setup` or the "
+                         f"environment, then resume the ticket"
+                         f"\n```\n{err[-1200:]}\n```"], {}, {})
             return ([f"could not check out base `{base}` to re-run {named}"
                     f"\n```\n{err[-1200:]}\n```"], {}, {})
         _copy_tests(wd, base_wt, tests)

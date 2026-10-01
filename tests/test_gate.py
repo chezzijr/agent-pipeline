@@ -6,10 +6,11 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from helpers import FIXTURE, ROOT, project
+from helpers import FIXTURE, ROOT, git_project, project
 from pipeline.core import ticket as T
 from pipeline.core.config import project_config
-from pipeline.core.gate import _base_findings, _dedupe, gate, plan_steps
+from pipeline.core.gate import ENVIRONMENT_MARK, _base_findings, _dedupe, gate, plan_steps
+from pipeline.core import worktree as W
 from pipeline.core.machine import transition
 from pipeline.daemon.supervisor import gate_result
 
@@ -1764,4 +1765,19 @@ def test_gate_does_not_revert_a_write_made_while_it_ran():
     after = T.Ticket.load(path)
     assert "2. AMENDED" in after.body, "the gate reverted a write made while it ran"
     assert after.lease["expires"] != stale, "the gate wrote back a stale lease"
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_a_base_checkout_whose_setup_fails_is_an_environment_finding():
+    """No plan can fix a broken environment, so it must not charge planning."""
+    d, _ = git_project()
+    wd = W.ensure_worktree(d, {"id": "TICKET-001", "branch": "ticket/001"}, {"base": "main"})
+    cfg = {"base": "main", "test_one": "true", "worktree_setup": "echo setup-broke; exit 3"}
+
+    findings, on_base, zero = _base_findings(d, cfg, wd, ["tests/test_x.py::test_x"])
+
+    assert len(findings) == 1
+    assert findings[0].startswith(ENVIRONMENT_MARK)
+    assert "setup-broke" in findings[0]
+    assert on_base == {} and zero == {}
     shutil.rmtree(d, ignore_errors=True)
