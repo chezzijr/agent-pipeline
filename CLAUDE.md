@@ -388,8 +388,10 @@ still worth it: it prints one line per case, and the failure names the case.
   verdicts: `fail` (structural), `bad-plan` (substantive), `no-test-file`
   (the `test_file` names no file), `load-flaky` (the `test_file` exits 0 in
   the worktree and on base), `invalid-test` (the selected test hides
-  statically unreachable statements) and `environment` (the suite is red on
-  base too) -- the last four escalate and charge nothing.** `structural_only()`
+  statically unreachable statements, or a test file the branch added but
+  `test_file` does not list turns the suite red -- `UNLISTED-TEST: `) and
+  `environment` (the suite is red on base too, or the shell exits 126/127
+  running `test_one`) -- the last four escalate and charge nothing.** `structural_only()`
   in `pipeline/core/gate.py` classifies the findings against `STRUCTURAL_MARKS`, a
   `startswith` prefix allowlist: an unlisted finding reads as substantive on
   purpose, so a new structural finding in `gate()` needs its own mark or it

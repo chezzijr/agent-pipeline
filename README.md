@@ -672,12 +672,19 @@ gate parses the selected test with `ast` and flags a statement that sits
 after an unconditional `raise`, `return`, `break` or `continue` in the same
 statement list.
 
+An `UNLISTED-TEST: ` finding takes the same `invalid-test` route. The gate
+raises it only when the suite is red in the worktree, green on base, and red
+again on base once the files the branch added (same suffix as a `test_file`
+path, outside `.project/`) are copied onto it.
+
 A Tier A failure at `plan-validation` whose findings are all `ENVIRONMENT: `
 findings -- `test_suite_without_new` is red on base too, not this branch's
 doing -- escalates to a human and charges no counter, because no re-plan can
 fix an environment that is already broken on base. That base run uses base's
 own test files -- the branch's are not copied onto it -- so a defect the
-branch introduced in a test file cannot make base look broken.
+branch introduced in a test file cannot make base look broken. `test_one`
+exiting 126 or 127 with no test name in its output is an `ENVIRONMENT: `
+finding too, usually a runner `worktree_setup` did not install.
 
 `stale_regate` is the one counter a later pass credits back: a passing
 `revalidating` writes `stale_regate_cleared`, capped at the failures already

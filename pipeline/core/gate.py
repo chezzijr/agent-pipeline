@@ -8,7 +8,8 @@ from pathlib import Path
 
 from pipeline.core.config import (NO_TESTS_RE, format_test_cmd,
                                   format_tests_cmd, project_config,
-                                  selector_parts, gate_quarantine)
+                                  selector_parts, gate_quarantine,
+                                  SHELL_CANNOT_RUN)
 from pipeline.core.ticket import (FENCE_RE, Ticket, _fenced, active_decisions,
                                   decisions_dir, ticket_path)
 from pipeline.core.worktree import SETUP_FAILED, base_checkout, base_ref, run_cmd
@@ -335,7 +336,11 @@ def load_flaky(failures: list[str]) -> bool:
 
 
 INVALID_TEST_MARK = "INVALID-TEST: "
-INVALID_TEST_MARKS = (INVALID_TEST_MARK,)
+# a red test the branch ADDED in a file `test_file` does not list belongs to
+# `triage` like an unreachable assertion does (`CLAIMS`), so it routes to the
+# same no-charge `invalid-test` verdict (TICKET-146)
+UNLISTED_TEST_MARK = "UNLISTED-TEST: "
+INVALID_TEST_MARKS = (INVALID_TEST_MARK, UNLISTED_TEST_MARK)
 TERMINATORS = (ast.Raise, ast.Return, ast.Break, ast.Continue)
 PARAM_RE = re.compile(r"\[.*\]$")
 
@@ -593,11 +598,29 @@ def _unsafe_rel(tests: list[str]) -> str | None:
 def _copy_tests(wd: Path, base_wt: Path, tests: list[str]) -> None:
     """Copy each test file `tests` names, from `wd` onto `base_wt`, once per
     distinct file even when several node ids share it. Called by
-    _base_findings() only; _base_suite() must not call it (TICKET-104)."""
+    _base_findings() and _added_red_on_base(); _base_suite() must not call it
+    (TICKET-104)."""
     for rel in dict.fromkeys(x.split("::")[0] for x in tests):
         dst = base_wt / rel
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(wd / rel, dst)
+
+
+def _branch_added(wd: Path, cfg: dict, tests: list[str]) -> list[str]:
+    """Files absent from base that look like the ticket's own tests: added on
+    the branch, outside `.project/`, not declared, and sharing a suffix with a
+    declared `test_file` path. Empty when git cannot answer, so the caller
+    keeps DEC-089's fail-closed finding."""
+    code, out = run_cmd(
+        f"git -c core.quotePath=false diff --name-only --no-renames "
+        f"--diff-filter=A {shlex.quote(base_ref(cfg))} HEAD", wd)
+    if code != 0:
+        return []
+    declared = {x.split("::")[0] for x in tests}
+    suffixes = {Path(x).suffix for x in declared} - {""}
+    return [p for p in out.splitlines()
+            if p and not p.startswith(".project/") and p not in declared
+            and Path(p).suffix in suffixes and (wd / p).is_file()]
 
 
 def _base_findings(project: Path, cfg: dict, wd: Path,
@@ -734,6 +757,21 @@ def _base_suite(project: Path, cfg: dict, wd: Path,
     return None, f"the suite exited {code} on base `{base}` and reported no test result"
 
 
+def _added_red_on_base(project: Path, cfg: dict, wd: Path,
+                       suite_tests: list[str], added: list[str]) -> str | None:
+    """Rerun `test_suite_without_new` on base with only `added` copied onto it.
+    Returns the output when the suite RAN and is RED there, else None. The
+    added files are absent from base, so the copy overwrites nothing base has,
+    unlike the copy DEC-104 forbids in _base_suite()."""
+    with base_checkout(project, cfg) as (base_wt, _):
+        if base_wt is None:
+            return None
+        _copy_tests(wd, base_wt, added)
+        code, out = _confirmed_suite(
+            format_tests_cmd(cfg["test_suite_without_new"], suite_tests), base_wt)
+    return out if code != 0 and suite_ran(code, out) else None
+
+
 def gate(project: Path, tid: str, workdir: Path | None = None) -> tuple[bool, list[str]]:
     """Tier A checks, run in the ticket's checkout. Returns (passed, findings)."""
     path = ticket_path(project, tid)
@@ -819,6 +857,18 @@ def gate(project: Path, tid: str, workdir: Path | None = None) -> tuple[bool, li
             node = test.split("::")[-1]
             if code == 0:
                 passing.append((test, out))
+            # the shell's own 126/127 means the runner never started
+            # (SHELL_CANNOT_RUN, the codes `register` knows); the mark must
+            # lead because the classifiers are `startswith` (DEC-065, DEC-089)
+            elif code in SHELL_CANNOT_RUN and node not in out:
+                findings.append(
+                    f"{ENVIRONMENT_MARK}`{test}`: `test_one` could not start -- "
+                    f"the shell exited {code}, {SHELL_CANNOT_RUN[code]}, so no "
+                    f"test ran and no plan can fix it. The usual cause is a "
+                    f"runner that `worktree_setup` did not install (e.g. "
+                    f"`node_modules`); fix `test_one` or `worktree_setup` in "
+                    f"`.project/pipeline.toml`, then `pipeline resume {tid}`"
+                    f"\n```\n{out[-1200:]}\n```")
             elif node not in out:
                 # a missing dependency or an import error exits non-zero too, and
                 # looks exactly like a failing test unless you check for the name
@@ -965,10 +1015,30 @@ def gate(project: Path, tid: str, workdir: Path | None = None) -> tuple[bool, li
                             f"\n```in the ticket's worktree\n{out[-1200:]}\n```"
                         )
                     elif not why:
-                        findings.append(
-                            f"suite excluding {names} is RED -- pre-existing breakage, "
-                            f"fix that first\n```\n{out[-1200:]}\n```"
-                        )
+                        added = _branch_added(wd, cfg, tests)
+                        added_out = (_added_red_on_base(
+                            project, cfg, wd, suite_tests, added)
+                            if added and not _unsafe_rel(added) else None)
+                        if added_out is not None:
+                            listed = " ".join(f"`{x}`" for x in added)
+                            findings.append(
+                                f"{UNLISTED_TEST_MARK}suite excluding {names} is RED "
+                                f"in the ticket's worktree and green on base "
+                                f"`{base_ref(cfg)}`, and base turns RED once this "
+                                f"branch's added file(s) {listed} are copied onto "
+                                f"it -- the branch added a failing test that "
+                                f"`test_file` does not list. Only `triage` may write "
+                                f"`test_file` (`CLAIMS`), so no re-plan can repair "
+                                f"it: list the test in `test_file` or remove it, "
+                                f"then `pipeline resume {tid} --stage triage`"
+                                f"\n```on base with the added files\n{added_out[-1200:]}\n```"
+                                f"\n```in the ticket's worktree\n{out[-1200:]}\n```"
+                            )
+                        else:
+                            findings.append(
+                                f"suite excluding {names} is RED -- pre-existing breakage, "
+                                f"fix that first\n```\n{out[-1200:]}\n```"
+                            )
                     else:
                         findings.append(
                             f"suite excluding {names} is RED -- pre-existing breakage, "
