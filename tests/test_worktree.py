@@ -380,3 +380,31 @@ def test_a_failing_worktree_setup_fails_the_ticket_worktree(capsys):
     assert wt is None, "worktree_setup exited 3 but the worktree was returned as ready"
     assert "worktree_setup failed" in capsys.readouterr().out
     shutil.rmtree(d, ignore_errors=True)
+
+
+def test_a_failed_worktree_setup_leaves_no_checkout_behind():
+    """A checkout left behind is returned as ready by the next call."""
+    d, sh = git_project()
+    meta = {"id": "TICKET-001", "branch": "ticket/001"}
+
+    assert W.ensure_worktree(d, meta, {"base": "main", "worktree_setup": "exit 3"}) is None
+    assert not W.worktree(d, meta).exists()
+    assert sh("git rev-parse --verify --quiet ticket/001").returncode == 0
+
+    wt = W.ensure_worktree(d, meta, {"base": "main", "worktree_setup": "touch setup-ran"})
+    assert wt is not None and (wt / "setup-ran").is_file()
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_a_failing_worktree_setup_fails_the_base_checkout(capsys):
+    d, sh = git_project()
+    cfg = {"base": "main", "worktree_setup": "echo setup-broke; exit 3"}
+
+    with W.base_checkout(d, cfg) as (wt, err):
+        assert wt is None
+        assert err.startswith(W.SETUP_FAILED)
+        assert "setup-broke" in err
+
+    assert "worktree_setup failed in the base checkout" in capsys.readouterr().out
+    assert len(sh("git worktree list").stdout.splitlines()) == 1
+    shutil.rmtree(d, ignore_errors=True)

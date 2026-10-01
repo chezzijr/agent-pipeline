@@ -11,6 +11,9 @@ from pathlib import Path
 EAGAIN_TRIES = 4
 EAGAIN_BACKOFF = 0.25
 OUTPUT_EDGE = 2000
+# The prefix `gate._base_findings()` matches to tell a setup failure from a
+# failed `git worktree add`.
+SETUP_FAILED = "worktree_setup exited "
 
 
 def retry_eagain(fn, tries: int = EAGAIN_TRIES, backoff: float = EAGAIN_BACKOFF, sleep=time.sleep):
@@ -94,7 +97,13 @@ def ensure_worktree(project: Path, meta: dict, cfg: dict) -> Path | None:
         # per-project: copy .env, install deps, key a build cache to THIS
         # worktree. A cache shared across worktrees unkeyed serves one
         # ticket's artifact into another's build -- see README.
-        run_cmd(cfg["worktree_setup"], wt)
+        code, out = run_cmd(cfg["worktree_setup"], wt)
+        if code:
+            print(f"  worktree_setup failed for {meta['id']} (exit {code}): {out.strip()[:300]}")
+            # A checkout left behind is returned as ready by the `wt.is_dir()`
+            # early return and setup never re-runs. The branch is kept.
+            drop_worktree(project, meta, cfg)
+            return None
     return wt
 
 
@@ -113,6 +122,8 @@ def base_checkout(project: Path, cfg: dict):
     """A throwaway detached checkout of base, outside the repo, for running a
     ticket's test against the code the ticket branched from. Yields
     `(path, "")`, or `(None, git's output)` when base cannot be checked out.
+    It also yields `(None, ...)` when `worktree_setup` fails, because a base
+    run without the project's dependencies proves nothing.
 
     Always removed. It is not a ticket's checkout: nothing resumes in it and
     nothing may be left behind for a human to look at."""
@@ -125,8 +136,13 @@ def base_checkout(project: Path, cfg: dict):
         if code:
             yield None, out
         else:
-            if cfg.get("worktree_setup"):
-                run_cmd(cfg["worktree_setup"], wt)
+            setup_code, setup_out = (run_cmd(cfg["worktree_setup"], wt)
+                                     if cfg.get("worktree_setup") else (0, ""))
+            if setup_code:
+                print(f"  worktree_setup failed in the base checkout (exit {setup_code}): "
+                      f"{setup_out.strip()[:300]}")
+                yield None, f"{SETUP_FAILED}{setup_code} in the base checkout\n{setup_out}"
+                return
             yield wt, ""
     finally:
         if not code:
