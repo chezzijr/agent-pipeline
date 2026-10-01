@@ -185,8 +185,9 @@ pipeline diagnostics             # what a stage needs before it runs
 `pipeline status` **exits 1 when no daemon is running** — that is its answer, not a
 failure. Read the line it prints, not the exit code.
 
-`pipeline diagnostics` is read-only and prints eight rows: `package`,
-`executable`, `pipeline`, `harness`, `daemon`, `registration`, `git author`
+`pipeline diagnostics` is read-only and prints nine rows: `package`,
+`executable`, `pipeline`, `harness`, `daemon`, `registration`, `worktree setup`
+(`missing: <lockfile> ...` when a lockfile has no `worktree_setup`), `git author`
 (`user.name`/`user.email`, or `missing: ...` naming which is unset) and
 `worktree commit` (`ready (<dir>)` or `blocked: <reason>`). A project that is
 not a Git checkout reports both Git rows as `not applicable` and still

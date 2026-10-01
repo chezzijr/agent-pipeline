@@ -65,7 +65,8 @@ def test_diagnostics_exits_nonzero_when_git_author_is_missing():
     assert r.returncode == 1, r.stdout
     rows = dict(l.split(": ", 1) for l in r.stdout.splitlines() if ": " in l)
     for label in ("package", "executable", "pipeline", "harness",
-                  "daemon", "registration", "git author", "worktree commit"):
+                  "daemon", "registration", "worktree setup", "git author",
+                  "worktree commit"):
         assert label in rows, r.stdout
     assert rows["git author"] == "missing: user.name, user.email"
     assert rows["worktree commit"] == "blocked: no Git author identity"
@@ -1663,12 +1664,32 @@ def test_decisions_marks_a_corrected_record_and_keeps_one_row_per_record():
     shutil.rmtree(d, ignore_errors=True)
 
 
+def test_diagnostics_reports_a_lockfile_without_worktree_setup():
+    d, _ = git_project()
+    (d / "package-lock.json").write_text("{}")
+    env = {"XDG_CONFIG_HOME": str(tempfile.mkdtemp())}
+
+    def rows_of(r):
+        return dict(l.split(": ", 1) for l in r.stdout.splitlines() if ": " in l)
+
+    r = cli(d, "diagnostics", env=env)
+    assert r.returncode == 0, r.stderr
+    assert rows_of(r)["worktree setup"].startswith("missing: package-lock.json")
+
+    with (d / ".project" / "pipeline.toml").open("a") as f:
+        f.write('\nworktree_setup = "true"\n')
+    r = cli(d, "diagnostics", env=env)
+    assert r.returncode == 0, r.stderr
+    assert rows_of(r)["worktree setup"] == "set"
+    shutil.rmtree(d, ignore_errors=True)
+
+
 def test_diagnostics_documentation_explains_rows_and_force_boundary():
     """`pipeline diagnostics` and register's Git-identity refusal must be
     documented where an agent reads setup instructions, not just in code."""
     terms = ("pipeline diagnostics", "package", "executable", "harness",
-             "daemon", "registration", "git author", "worktree commit",
-             "user.name", "user.email", "not applicable",
+             "daemon", "registration", "worktree setup", "git author",
+             "worktree commit", "user.name", "user.email", "not applicable",
              "never skips the Git author identity",
              "skips only the `test_suite` and `test_one` probes")
     for path in (Path(ROOT) / "README.md",

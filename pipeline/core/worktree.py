@@ -73,6 +73,20 @@ def base_ref(cfg: dict) -> str:
     return str(cfg.get("base", "main"))
 
 
+LOCKFILES = ("package-lock.json", "pnpm-lock.yaml", "yarn.lock", "uv.lock",
+             "poetry.lock", "Gemfile.lock")
+
+
+def unset_setup_lockfile(project: Path, cfg: dict) -> str | None:
+    """The lockfile at the project root when `worktree_setup` is unset, else None.
+
+    A ticket worktree is a fresh checkout with no dependencies installed; a
+    lockfile at the project root says the project needs some."""
+    if cfg.get("worktree_setup"):
+        return None
+    return next((n for n in LOCKFILES if (project / n).is_file()), None)
+
+
 def ensure_worktree(project: Path, meta: dict, cfg: dict) -> Path | None:
     """A ticket owns a checkout. Two tickets cannot share one, which is why
     concurrency and worktrees arrive together. Scripted, never improvised by an

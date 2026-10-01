@@ -210,6 +210,16 @@ an env file, install dependencies, key a build cache:
 worktree_setup = "cp ../../.env . && npm ci --prefer-offline"
 ```
 
+**A non-zero exit fails the checkout.** In a ticket worktree the dispatcher
+prints the output, removes the checkout (the branch stays) and escalates the
+ticket with `could not create a worktree`; fix the command, then
+`pipeline resume`. In the gate's checkout of base it is an `ENVIRONMENT:`
+finding, and the ticket escalates without a charge. A project with
+`package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`, `uv.lock`, `poetry.lock`
+or `Gemfile.lock` at its root and no `worktree_setup` gets a warning from
+`pipeline register` and a `worktree setup: missing: ...` row from
+`pipeline diagnostics`.
+
 **Key any build cache per checkout.** Every ticket gets its own
 worktree. `ln -s ~/.cache/cargo-target target` points them all at one
 directory, and one ticket's stale artifact is then served into

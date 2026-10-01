@@ -194,7 +194,7 @@ pipeline stop
 pipeline unregister ~/code/myproject
 ```
 
-`pipeline diagnostics` prints eight rows and mutates nothing:
+`pipeline diagnostics` prints nine rows and mutates nothing:
 
 - `package` -- the loaded package directory, so an editable install cannot
   silently run a different checkout than the one you edited.
@@ -204,6 +204,11 @@ pipeline unregister ~/code/myproject
   and its write-stage tools.
 - `daemon` -- `running pid <pid> on <socket>` or `not running (<socket>)`.
 - `registration` -- whether this project is in the registry.
+- `worktree setup` -- `set`, `not needed (no known lockfile)`, or
+  `missing: <lockfile> found and worktree_setup is unset ...` when the project
+  root has `package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`, `uv.lock`,
+  `poetry.lock` or `Gemfile.lock` and no `worktree_setup`. Informational: it
+  never changes the exit code.
 - `git author` -- `name <email>` when Git can author a commit here, else
   `missing: user.name, user.email` naming the unset key(s).
 - `worktree commit` -- `ready (<common dir>)` when a write stage's commit

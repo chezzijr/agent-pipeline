@@ -24,7 +24,7 @@ from pipeline.core.machine import KNOWN_STAGES, TERMINAL, cleared_key
 from pipeline.core.ticket import (PLAN_SECTIONS, SAFE_DEC_ID, SAFE_ID, Ticket,
                                    all_decisions, decisions_dir, now, plan_digest,
                                    tickets_dir, write_atomic)
-from pipeline.core.worktree import exclude_project_dir, worktree
+from pipeline.core.worktree import exclude_project_dir, unset_setup_lockfile, worktree
 from pipeline.daemon import registry
 from pipeline.daemon.server import (STALE_HOURS, socket_path, ticket_rows,
                                     waiting_text)
@@ -593,13 +593,25 @@ def cmd_ls(args) -> None:
                   f"{replay_text}{cost}")
 
 
+def worktree_setup_state(path: Path) -> str:
+    try:
+        cfg = project_config(path)
+    except (PipelineError, ValueError) as e:
+        return f"unknown ({e})"
+    lock = unset_setup_lockfile(path, cfg)
+    if lock:
+        return (f"missing: {lock} found and worktree_setup is unset -- ticket "
+                f"worktrees are fresh checkouts with no dependencies installed")
+    return "set" if cfg.get("worktree_setup") else "not needed (no known lockfile)"
+
+
 def cmd_diagnostics(args) -> None:
     """What a stage needs before it runs, read-only: the package, harness,
     daemon, registration and Git identity a stage would otherwise discover
     only by failing partway through -- an editable install loading a
     different checkout, or a write stage dying at its first `git commit`.
 
-    Prints exactly eight `label: value` rows and never mutates anything: no
+    Prints exactly nine `label: value` rows and never mutates anything: no
     worktree, ref, index, commit, config entry, registry entry or daemon
     state.
     """
@@ -624,6 +636,7 @@ def cmd_diagnostics(args) -> None:
     else:
         print(f"daemon: not running ({socket_path()})")
     print(f"registration: {'registered' if path in registry.projects() else 'not registered'}")
+    print(f"worktree setup: {worktree_setup_state(path)}")
 
     is_checkout = registry.is_git_checkout(path)
     if not is_checkout:
@@ -680,6 +693,11 @@ def cmd_register(args) -> None:
         if problem:
             raise PipelineError(problem)
     print(f"registered {registry.register(path)}")
+    # a warning, never a refusal, and --force does not skip it
+    state = worktree_setup_state(path)
+    if state.startswith("missing: "):
+        print(f"  warning: {state.removeprefix('missing: ')}; set worktree_setup in "
+              f".project/pipeline.toml (the pipeline-config skill shows how)")
     if config_source(path) == "pinned":
         print(f"  its .project/pipeline.toml is pinned -- run "
               f"`pipeline --project {path} config --sync` after an edit")
