@@ -428,10 +428,23 @@ def spawn(project: Path, wt: Path, tid: str, stage: str, hcfg: dict,
     # ticket, so it is keyed by project, stage and reason and printed once
     # per process (TICKET-096). The ticket id is gone from the message on
     # purpose, because a line printed once must not name one ticket.
+    counters: dict = {}
+    t: Ticket | None = None
+    try:
+        t = Ticket.find(project, tid)
+        counters, view = t.counters, stage_view(t, stage)
+    except PipelineError:
+        # Total: `spawn()` is called directly with no ticket on disk
+        # (tests/test_pty.py:393). No view means the agent reads the file,
+        # which is exactly what it did before this existed.
+        view = ""
     attached = (poller.watchers(str(project.resolve()))
                 if getattr(poller, "attachable", False) else 0)
-    interactive = cfg.get("mode") == "interactive" and attached > 0
-    if cfg.get("mode") == "interactive" and not interactive:
+    idled = bool(counters.get("idle_kills"))
+    interactive = cfg.get("mode") == "interactive" and attached > 0 and not idled
+    if cfg.get("mode") == "interactive" and idled:
+        print(f"  {tid}: `{stage}` sat unanswered at a prompt before -- running headless")
+    elif cfg.get("mode") == "interactive" and not interactive:
         why = ("nothing can attach to it here"
                if not getattr(poller, "attachable", False)
                else "no client is attached")
@@ -443,17 +456,7 @@ def spawn(project: Path, wt: Path, tid: str, stage: str, hcfg: dict,
     logs = project / ".project" / "logs"
     logs.mkdir(parents=True, exist_ok=True)
     log = logs / f"{tid}-{stage}-{session[:8]}.log"
-    counters: dict = {}
-    t: Ticket | None = None
     cheap_route_head: str | None = None
-    try:
-        t = Ticket.find(project, tid)
-        counters, view = t.counters, stage_view(t, stage)
-    except PipelineError:
-        # Total: `spawn()` is called directly with no ticket on disk
-        # (tests/test_pty.py:393). No view means the agent reads the file,
-        # which is exactly what it did before this existed.
-        view = ""
     if t is not None and stage == "quick-review":
         cheap_route_head = str(t.extra.get("cheap_route_head") or "")
         if not SAFE_SHA.fullmatch(cheap_route_head):
@@ -1321,6 +1324,31 @@ def _finish(project: Path, rec: dict, emit=noop) -> str:
         return "wrote-in-readonly"
 
     if res is None:
+        # An operator kill is human intent, not a crash: nothing is charged,
+        # nothing respawns, and the ticket waits for `pipeline resume`.
+        if rec.get("operator_kill"):
+            escalate(t, f"`{stage}` was stopped by an operator kill; nothing "
+                        f"was charged -- `pipeline resume {tid} --stage <stage>` "
+                        f"continues it", emit)
+            return "killed"
+        # An interactive stage that sat on one screen was ended by
+        # `end_interactive()`. Charge its own bound and respawn headless.
+        if rec.get("idle") is not None:
+            n = t.counters.get("idle_kills", 0) + 1
+            t.counters["idle_kills"] = n
+            shown = f"{rec['idle']}\n```"
+            if n >= MAX_ATTEMPTS:
+                escalate(t, f"`{stage}` sat on one screen for {IDLE_MINUTES} "
+                            f"minutes {n} times. Its last screen:\n\n```\n"
+                            f"{shown}", emit)
+                return "idle"
+            t.release_lease()
+            t.append(stage, "note",
+                     f"`{stage}` showed one screen for {IDLE_MINUTES} minutes "
+                     f"with nobody answering it (attempt {n}) -- terminated; "
+                     f"it respawns headless. Its last screen:\n\n```\n{shown}")
+            t.save()
+            return "idle"
         # A budget kill is not a crash: the same prompt against the same
         # tree spends the same cap and stops at the same point, so a respawn
         # buys nothing. The bound is one, and there is no second attempt to
@@ -1407,6 +1435,11 @@ def end_interactive(project: Path, inflight: dict) -> None:
         if (rec.get("mode") == "interactive" and rec["proc"].poll() is None
                 and result_file(project, tid).is_file()):
             print(f"  {tid}: `{rec['stage']}` reported its result; ending the session")
+            rec["proc"].terminate()
+        elif (rec.get("mode") == "interactive" and rec["proc"].poll() is None
+                and rec.get("idle") is not None):
+            print(f"  {tid}: `{rec['stage']}` sat on one screen for "
+                  f"{IDLE_MINUTES}+ minutes; ending the session")
             rec["proc"].terminate()
 
 
@@ -1599,7 +1632,23 @@ def machine_demand(project: Path, want: bool) -> None:
         entry["want"] = want
 
 
-def renew_leases(project: Path, inflight: dict) -> None:
+IDLE_MINUTES = 15
+
+
+def screen_idle(rec: dict) -> float:
+    """Minutes the child's screen has shown the same text. 0.0 for a child
+    with no screen (a batch stage)."""
+    if rec.get("screen") is None:
+        return 0.0
+    text = host.screen_text(rec["screen"])
+    seen = rec.get("screen_seen")
+    if seen is None or seen[0] != text:
+        rec["screen_seen"] = (text, now())
+        return 0.0
+    return (now() - seen[1]).total_seconds() / 60
+
+
+def renew_leases(project: Path, inflight: dict, emit=noop) -> None:
     """Keep a live child's lease from lapsing while it works.
 
     Only below half of `LEASE_MINUTES`: a save rewrites the ticket, its
@@ -1615,6 +1664,17 @@ def renew_leases(project: Path, inflight: dict) -> None:
         snap = rec.get("meta")
         try:
             if snap is None or rec["proc"].poll() is not None:
+                continue
+            idle = screen_idle(rec)
+            if idle >= IDLE_MINUTES:
+                # No renewal; `end_interactive()` terminates it next tick.
+                if rec.get("idle") is None:
+                    rec["idle"] = host.screen_text(rec["screen"], last=12)
+                    print(f"  {tid}: {rec['stage']} screen unchanged for "
+                          f"{int(idle)} minutes -- ending it")
+                    emit("stage_idle", ticket=tid, stage=rec["stage"],
+                         session=rec.get("session"), minutes=int(idle),
+                         screen=rec["idle"])
                 continue
             exp = lease_expiry((snap.lease or {}).get("expires"))
             if exp is not None and exp - now() >= half:
@@ -1638,7 +1698,7 @@ def tick(project: Path, hcfg: dict, inflight: dict, max_parallel: int = 3,
     `max_parallel` key."""
     worked = reap(project, inflight, emit)
     if not stopping():
-        renew_leases(project, inflight)
+        renew_leases(project, inflight, emit)
     tickets = all_tickets(project)
     share = machine_share(project, inflight, max_parallel)
     cap = min(_start_cap(project, max_parallel), share) if tickets else share

@@ -478,6 +478,41 @@ def cmd_resume(args) -> None:
                   "run `pipeline config --sync` to adopt disk edits")
 
 
+KILL_WAIT = 60
+
+
+def cmd_kill(args) -> None:
+    project = proj(args)
+    if args.note is not None and args.resume_at is None:
+        die("--note goes with --resume-at")
+    if args.resume_at is not None and args.resume_at not in KNOWN_STAGES:
+        die(f"`{args.resume_at}` is not a stage: {', '.join(sorted(KNOWN_STAGES))}")
+    t = Ticket.find(project, args.id)
+    c = connect()
+    if c is None:
+        die("no daemon is running -- pipeline kill stops a stage the daemon "
+            "runs; stop pipeline run with Ctrl-C")
+    try:
+        r = c.request("kill", project=str(project), ticket=t.id)
+    except PipelineError as e:
+        die(f"kill: {e}")
+    finally:
+        c.close()
+    # Resuming before the dispatcher reaps the stage rewrites `stage` under a
+    # live lease, and `_finish()` escalates that as tampering.
+    deadline = time.monotonic() + KILL_WAIT
+    while live_holder(Ticket.find(project, t.id)) is not None:
+        if time.monotonic() >= deadline:
+            die(f"{t.id}: the stage did not stop within {KILL_WAIT} seconds -- "
+                f"see `pipeline ls {t.id}`")
+        time.sleep(0.25)
+    print(f"{t.id}: stopped (pid {r.get('pid')}) -> {Ticket.find(project, t.id).stage}")
+    if args.resume_at is not None:
+        cmd_resume(argparse.Namespace(project=args.project, id=t.id,
+                                      stage=args.resume_at, note=args.note,
+                                      grant=None, reset=None, force=False))
+
+
 def live_holder(t: Ticket) -> str | None:
     """The one lease rule for human commands that rewrite control fields."""
     holder = (t.lease or {}).get("holder")
@@ -982,6 +1017,7 @@ def main() -> None:
     p = sub.add_parser("note"); p.add_argument("id"); p.add_argument("text"); p.set_defaults(fn=cmd_note)
     p = sub.add_parser("answer"); p.add_argument("id"); p.add_argument("text"); p.set_defaults(fn=cmd_answer)
     p = sub.add_parser("resume"); p.add_argument("id"); p.add_argument("--stage", help="stage to resume; defaults to last_session.stage when valid"); p.add_argument("--grant", nargs="*", metavar="COUNTER[=N]", help="hand back N spent attempts (default 1) on a counter; a grant only subtracts"); p.add_argument("--reset", nargs="*"); p.add_argument("--note", metavar="TEXT", help="a note for the resumed stage; recorded in the ticket thread, attributed to you"); p.add_argument("--force", action="store_true", help="resume even while a stage holds a live lease; the running stage keeps going and the dispatcher escalates the ticket when it finishes"); p.set_defaults(fn=cmd_resume)
+    p = sub.add_parser("kill", help="stop a running stage; the ticket waits for you"); p.add_argument("id"); p.add_argument("--resume-at", metavar="STAGE", help="then resume the ticket at this stage"); p.add_argument("--note", metavar="TEXT", help="a note for the resumed stage; needs --resume-at"); p.set_defaults(fn=cmd_kill)
     p = sub.add_parser("logs"); p.add_argument("id"); p.add_argument("-f", "--follow", action="store_true"); p.set_defaults(fn=cmd_logs)
     p = sub.add_parser("ls", help="tickets (via the daemon if one is running)"); p.add_argument("ticket", nargs="?", help="show only this ticket, history included"); p.add_argument("--all", action="store_true", help="show finished tickets (done, rejected) too"); p.add_argument("--stage", help="show only tickets at this stage, history included"); p.add_argument("-v", "--verbose", action="store_true"); p.set_defaults(fn=cmd_ls)
     p = sub.add_parser("status", help="is the daemon running"); p.set_defaults(fn=cmd_daemon_status)
