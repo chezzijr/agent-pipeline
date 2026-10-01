@@ -155,6 +155,15 @@ class Screen:
         self.screen.resize(rows, cols)
 
 
+def screen_text(screen, last: int | None = None) -> str:
+    """The non-blank, right-stripped lines of a screen's `display`. Takes a
+    `Screen` or a bare `pyte.Screen`; `last` keeps only the final N lines."""
+    lines = [ln.rstrip() for ln in screen.display if ln.strip()]
+    if last is not None:
+        lines = lines[-last:]
+    return chr(10).join(lines)
+
+
 def start(cmd: str, cwd, env: dict, rows: int = ROWS, cols: int = COLS):
     """Fork `sh -c cmd` on a new PTY. Returns (PtyProc, master file object).
 

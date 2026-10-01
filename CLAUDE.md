@@ -179,6 +179,12 @@ still worth it: it prints one line per case, and the failure names the case.
   REPL, and it parked at a prompt nobody could see until the lease expired
   twice (TICKET-059). A TUI that attaches after the spawn gets a headless
   stage; that race is accepted.
+  An attached session whose screen text is unchanged for `IDLE_MINUTES`
+  (15) is not renewed and is terminated by `end_interactive()`; `_finish()`
+  charges `idle_kills` and the ticket respawns headless from then on
+  (`pipeline resume <id> --reset idle_kills` re-enables the PTY). An operator
+  `kill` (`pipeline kill`, TUI `k`) sets `rec["operator_kill"]` and escalates
+  with nothing charged (TICKET-148).
 - **`notice_once()` in `pipeline/core/__init__.py` holds a module-level set
   of keys.** `spawn()`'s headless line and `cap_config()`'s pinned-`max_usd`
   warning both go through it, keyed on the project and the stage; both fire

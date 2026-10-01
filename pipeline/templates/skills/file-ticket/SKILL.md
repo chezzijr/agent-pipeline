@@ -272,7 +272,8 @@ can fail on, so triage returns `result: rejected` and the ticket dies there.
   plan-validation scores the plan against eight judgment checks. A plan written here
   skips both.
 - **Do not resume or reject an escalated ticket on the user's behalf.** The bound it
-  hit is the checkpoint, the same as approval is. Read it -- README's *When a ticket
+  hit is the checkpoint, the same as approval is. An operator `pipeline kill` also
+  escalates and charges nothing. Read it -- README's *When a ticket
   escalates* is the procedure -- and hand the user the command. Bare `pipeline resume
   TICKET-NNN` returns to `last_session.stage`; `--stage` overrides it. A ticket without
   a valid recorded stage requires `--stage`. A successful private-project resume names

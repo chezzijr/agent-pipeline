@@ -16,6 +16,7 @@ import fcntl
 import json
 import os
 import selectors
+import signal
 import socket
 import stat
 import sys
@@ -551,8 +552,10 @@ class Server(Poller):
         raise PipelineError(f"{tid} is not running")
 
     def _op_kill(self, conn, rid, req) -> dict:
+        from pipeline.daemon.supervisor import _signal_child  # supervisor imports Poller
         proj, rec = self._running(req)
-        rec["proc"].terminate()
+        rec["operator_kill"] = True
+        _signal_child(rec, signal.SIGTERM)
         return {"ticket": rec["tid"], "project": proj, "pid": rec["proc"].pid}
 
     # -- interactive stages ------------------------------------------------

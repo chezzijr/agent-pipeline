@@ -81,6 +81,7 @@ pipeline --project ~/code/myproject resume  TICKET-001 \
 pipeline --project ~/code/myproject resume  TICKET-001 \
     --stage planning --grant plan_validation_attempts   # hand back one spent attempt, not the whole budget
 pipeline --project ~/code/myproject resume  TICKET-001 --stage planning --note "the escalation was a flaky test"
+pipeline --project ~/code/myproject kill    TICKET-001 --resume-at planning --note "..."  # stop the running stage, then resume
 pipeline --project ~/code/myproject skills --refresh   # bring this project's skill copies up to the packaged templates
 ```
 
@@ -588,6 +589,7 @@ Then one of three:
 |---|---|
 | a flake -- crashed harness, expired lease, no sidecar | `pipeline resume TICKET-017 --stage plan-validation --reset no_result` |
 | the stage hit its `--max-budget-usd` cap (`budget_kills`) | raise that stage's `max_usd` in `pipeline/stages/<name>.md`, then `pipeline resume TICKET-017 --stage review --reset budget_kills` |
+| the operator stopped it (`pipeline kill`) | `pipeline resume TICKET-017 --stage <stage>` |
 | real, but the stage deserves another go with the thread it has now | `pipeline resume TICKET-017 --stage planning --grant plan_validation_attempts` |
 | the ticket itself is wrong | `pipeline close TICKET-017 --reason "why"` |
 

@@ -1738,3 +1738,84 @@ def test_start_forwards_the_upgrade_restart_flag():
     finally:
         clim.subprocess.Popen = orig_popen
         clim.connect = orig_connect
+
+
+def test_kill_stops_the_stage_and_resumes_at_the_named_stage():
+    import pipeline.cli.main as clim
+    from datetime import timedelta
+    from pipeline.core import ticket as T
+
+    d = project()
+    path = d / ".project/tickets/TICKET-001.md"
+    t = Ticket.load(path)
+    t.lease = {"holder": f"planning-{os.getpid()}",
+               "expires": (T.now() + timedelta(minutes=30)).isoformat()}
+    t.save()
+    old_connect = clim.connect
+    asked = []
+
+    class Client:
+        def request(self, op, **kw):
+            asked.append((op, kw))
+            k = Ticket.load(path)
+            k.stage = "escalated"
+            k.release_lease()
+            k.save()
+            return {"ticket": "TICKET-001", "project": str(d), "pid": 1}
+
+        def close(self):
+            pass
+
+    try:
+        clim.connect = lambda: Client()
+        with contextlib.redirect_stdout(io.StringIO()):
+            clim.cmd_kill(argparse.Namespace(project=str(d), id="TICKET-001",
+                                             resume_at="planning", note="redirect"))
+        after = Ticket.load(path)
+        assert asked[0][0] == "kill"
+        assert after.stage == "planning"
+        assert "note from" in "".join(e.text for e in after.thread())
+    finally:
+        clim.connect = old_connect
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def test_kill_without_a_daemon_dies():
+    import pipeline.cli.main as clim
+
+    d = project()
+    path = d / ".project/tickets/TICKET-001.md"
+    before = path.read_bytes()
+    old_connect = clim.connect
+    try:
+        clim.connect = lambda: None
+        try:
+            clim.cmd_kill(argparse.Namespace(project=str(d), id="TICKET-001",
+                                             resume_at="planning", note=None))
+            raise AssertionError("cmd_kill did not exit")
+        except SystemExit:
+            pass
+        assert path.read_bytes() == before
+    finally:
+        clim.connect = old_connect
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def test_kill_refuses_a_note_without_resume_at():
+    import pipeline.cli.main as clim
+
+    d = project()
+    asked = []
+    old_connect = clim.connect
+    try:
+        clim.connect = lambda: asked.append(1)
+        try:
+            clim.cmd_kill(argparse.Namespace(project=str(d), id="TICKET-001",
+                                             resume_at=None, note="x"))
+            raise AssertionError("cmd_kill did not exit")
+        except SystemExit:
+            pass
+        assert asked == [], "it contacted the daemon before validating"
+    finally:
+        clim.connect = old_connect
+        shutil.rmtree(d, ignore_errors=True)
