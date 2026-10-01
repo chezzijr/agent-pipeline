@@ -1818,3 +1818,51 @@ def test_a_test_runner_that_cannot_start_names_the_cause():
     assert "worktree_setup" in env[0]
     assert not any("errored rather than failed" in f for f in failures)
     shutil.rmtree(d)
+
+
+def _branch_added_fixture(suite_cmd, files):
+    d = Path(tempfile.mkdtemp())
+    sh = lambda c, cwd=d: subprocess.run(c, shell=True, cwd=cwd,
+                                         capture_output=True, text=True)
+    sh("git init -qb main && git config user.email t@t && git config user.name t")
+    (d / ".project" / "tickets").mkdir(parents=True)
+    (d / ".project" / "pipeline.toml").write_text(
+        'test_one = "echo test_broken; exit 1"\n'
+        'test_suite = "true"\n'
+        f'test_suite_without_new = "{suite_cmd}"\n'
+        'base = "main"\n')
+    (d / ".project" / "tickets" / "TICKET-001.md").write_text(FIXTURE)
+    sh("git add -A && git commit -qm init")
+    wt = d / ".worktrees" / "TICKET-001"
+    sh(f"git worktree add -q -b ticket/001 {wt} main")
+    for name in files:
+        (wt / name).write_text("def test_x(): assert False" if name.endswith(".py") else "")
+    sh("git add -A && git commit -qm branch", cwd=wt)
+    return d, wt
+
+
+def test_a_red_test_added_on_the_branch_escalates_without_charging_the_plan():
+    d, wt = _branch_added_fixture("echo 1 failed; ! test -f test_extra.py",
+                                  ["test_thing.py", "test_extra.py"])
+    ok, failures = gate(d, "TICKET-001", workdir=wt)
+    assert not ok
+    hits = [f for f in failures if f.startswith("UNLISTED-TEST: ")]
+    assert len(hits) == 1, failures
+    assert "`test_extra.py`" in hits[0]
+    res = gate_result(ok, failures, "plan-validation")
+    assert res == "invalid-test"
+    _, counters = transition("plan-validation", res, {})
+    assert counters.get("plan_validation_attempts", 0) == 0
+    assert gate_result(ok, failures, "revalidating") == "fail"
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_an_added_file_that_leaves_base_green_keeps_the_pre_existing_finding():
+    d, wt = _branch_added_fixture("echo 1 failed; ! test -f broken",
+                                  ["test_thing.py", "test_extra.py", "broken"])
+    ok, failures = gate(d, "TICKET-001", workdir=wt)
+    assert not ok
+    assert not any(f.startswith("UNLISTED-TEST: ") for f in failures)
+    assert any("RED -- pre-existing breakage" in f for f in failures), failures
+    assert gate_result(ok, failures, "plan-validation") == "bad-plan"
+    shutil.rmtree(d, ignore_errors=True)
