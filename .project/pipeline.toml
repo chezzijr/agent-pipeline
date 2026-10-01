@@ -20,3 +20,24 @@ allow = ["pipeline ls", "pipeline status", "pipeline plan", "pipeline projects",
 # batch planned well under it; this raises the ceiling for the large ones only.
 [stages.planning]
 max_usd = 10
+model = "claude-opus-5-5"
+
+# Pin the model ids instead of the CLI's moving `opus`/`sonnet` aliases.
+# Same split as the stage frontmatter: opus for judgment, sonnet for the rest.
+[stages.plan-validation]
+model = "claude-opus-5-5"
+
+[stages.review]
+model = "claude-opus-5-5"
+
+[stages.holistic-review]
+model = "claude-opus-5-5"
+
+[stages.triage]
+model = "claude-sonnet-5-5"
+
+[stages.implementing]
+model = "claude-sonnet-5-5"
+
+[stages.quick-review]
+model = "claude-sonnet-5-5"
