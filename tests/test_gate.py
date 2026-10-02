@@ -1882,3 +1882,47 @@ def test_an_added_file_that_leaves_base_green_keeps_the_pre_existing_finding():
     assert any("RED -- pre-existing breakage" in f for f in failures), failures
     assert gate_result(ok, failures, "plan-validation") == "bad-plan"
     shutil.rmtree(d, ignore_errors=True)
+
+
+def test_gate_flags_a_plan_step_no_criterion_names():
+    from pipeline.core.gate import structural_only
+    text = FIXTURE.replace("1. fix thing.py", "1. fix thing.py\n2. document thing.py").replace(
+        "- `test_broken` passes", "- `test_broken` passes (step 1)")
+    assert "2. document thing.py" in text and "(step 1)" in text
+    d = project(text)
+    ok, failures = gate(d, "TICKET-001")
+    bad = [f for f in failures if f.startswith("plan step has no acceptance criterion")]
+    assert not ok and len(bad) == 1 and "step 2" in bad[0], failures
+    assert structural_only([f for f in failures if not f.startswith("ok:")]) is True
+    shutil.rmtree(d)
+
+
+def test_a_criterion_naming_a_step_range_or_list_covers_each_step():
+    for tag in ("(steps 1-3)", "(steps 1, 2 and 3)"):
+        text = FIXTURE.replace("1. fix thing.py", "1. fix thing.py\n2. document thing.py\n3. log thing.py").replace(
+            "- `test_broken` passes", f"- `test_broken` passes {tag}")
+        assert "3. log thing.py" in text and tag in text
+        d = project(text)
+        ok, failures = gate(d, "TICKET-001")
+        assert ok, (tag, failures)
+        shutil.rmtree(d)
+
+
+def test_a_one_step_plan_needs_no_step_reference():
+    assert "(step" not in FIXTURE
+    d = project()
+    ok, failures = gate(d, "TICKET-001")
+    assert ok and not any(f.startswith("plan step has no acceptance criterion") for f in failures), failures
+    shutil.rmtree(d)
+
+
+def test_a_malformed_step_reference_covers_no_step():
+    tag = "(steps 1-3-5, step 2026-10-02, steps 1-" + "9" * 5000 + ")"
+    text = FIXTURE.replace("1. fix thing.py", "1. fix thing.py\n2. document thing.py").replace(
+        "- `test_broken` passes", f"- `test_broken` passes {tag}")
+    assert "2. document thing.py" in text and tag in text
+    d = project(text)
+    ok, failures = gate(d, "TICKET-001")
+    bad = [f for f in failures if f.startswith("plan step has no acceptance criterion")]
+    assert not ok and len(bad) == 2, failures
+    shutil.rmtree(d)
