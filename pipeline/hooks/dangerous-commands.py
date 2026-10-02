@@ -127,9 +127,9 @@ def redirection(argv: list[str]) -> str | None:
     return None
 
 
-# loops expand to body x (words + 1) commands, quadratic in the command's length;
+# loops expand to body tokens x (words + 1), quadratic in the command's length;
 # a MemoryError exits 1, which Claude Code treats as non-blocking, so refuse first
-MAX_LOOP_COMMANDS = 2000
+MAX_LOOP_TOKENS = 5000
 # no bash or zsh special parameter is one lowercase letter, so the loop cannot
 # assign PATH, CDPATH, IFS or zsh's tied path/cdpath
 LOOP_NAME = re.compile(r"[a-z]")
@@ -167,6 +167,7 @@ def loop_bodies(segs: list[list[str]]) -> tuple[list[list[str]] | None, str | No
     if not any(a and a[0] == "for" for a in segs):
         return segs, None
     out = []
+    spent = 0  # tokens the loops expand to so far
     loop = None  # (name, words, body) of the open loop; loops do not nest
     want_do = False
     for argv in segs:
@@ -197,9 +198,10 @@ def loop_bodies(segs: list[list[str]]) -> tuple[list[list[str]] | None, str | No
             if any(c[0] == "cd" for c in body):
                 return None, ("`cd` inside a `for` loop runs once per word but is "
                               "judged once -- move it before the loop")
-            if len(out) + len(body) * (len(words) + 1) > MAX_LOOP_COMMANDS:
-                return None, (f"a `for` loop expands to more than {MAX_LOOP_COMMANDS} "
-                              "commands to judge")
+            spent += sum(len(c) + 1 for c in body) * (len(words) + 1)
+            if spent > MAX_LOOP_TOKENS:
+                return None, (f"`for` loops expand to more than {MAX_LOOP_TOKENS} "
+                              "tokens to judge")
             out.extend(body + [[substitute(t, name, w) for t in c]
                                for w in words for c in body])
             loop = None
@@ -632,6 +634,15 @@ def main() -> int:
         event = json.load(sys.stdin)
     except Exception:
         return 0  # never break the agent over a malformed event
+    try:
+        return decide(event)
+    except BaseException as exc:  # an exit 1 runs the command, so fail closed
+        print(f"Blocked by the pipeline guard: the guard failed on this call "
+              f"({type(exc).__name__}).", file=sys.stderr)
+        return 2
+
+
+def decide(event) -> int:
     tool = str(event.get("tool_name") or "")
     tool_input = event.get("tool_input") or {}
     if tool == "apply_patch":

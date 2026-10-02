@@ -104,8 +104,11 @@ BLOCKED_READONLY = [
     "ls $HOME; for f in a; do cat $f; done",
     "for f in *; do sed -n 1p $f; done",
     "for f in =ls; do cat $f; done",
-    # one flat loop expands to body x (words + 1) argv lists; a MemoryError exits 1 and runs the command
-    "for f in " + "a " * 50 + "; do " + "cat a; " * 50 + "cat b; done",
+    # a loop expands to body tokens x (words + 1); a MemoryError exits 1 and runs the command
+    "for f in " + "a " * 60 + "; do " + "cat a; " * 50 + "cat b; done",
+    "for f in " + "a " * 100 + "; do cat" + " x" * 1000 + "; done",
+    "for f in a; do cat" + " x" * 250000 + "; done",
+    "for f in a; do cat a; done; " * 1500,
     "for f in a; do " + "cat a; " * 3000 + "done",
     "for f in a; do cat a; done; " * 3000,
     'python3 -c "\nimport os\n"',
@@ -560,7 +563,19 @@ def test_codex_apply_patch_checks_every_path():
         shutil.rmtree(proj)
 
 
+def test_an_exception_in_the_guard_blocks_instead_of_exiting_1():
+    # exit 1 is a non-blocking error: Claude Code runs the command. A tool_input
+    # that is a list makes `.get` raise AttributeError inside the guard.
+    p = subprocess.run([sys.executable, str(GUARD)], capture_output=True, text=True,
+                       input=json.dumps({"tool_name": "Bash", "tool_input": ["x"]}))
+    assert p.returncode == 2, f"exception in guard exited {p.returncode}: {p.stderr!r}"
+    assert "guard failed" in p.stderr, p.stderr
+    if VERBOSE:
+        print("ok   an exception in the guard exits 2")
+
+
 if __name__ == "__main__":
+    test_an_exception_in_the_guard_blocks_instead_of_exiting_1()
     VERBOSE = True
     tables()
     test_end_to_end_exit_code()
