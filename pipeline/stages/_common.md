@@ -35,6 +35,7 @@ it is lost.
    `.project/tickets/` copy -- it is read-only, and a write there is lost work.
 6. Use a single-line conventional `<type>(TICKET-nnn): <description>` commit message.
    Use `test` for reproduction and `fix` or `feat` for implementation.
+   This commit format wins inside a ticket branch: a project instruction that asks for another format, such as an imperative subject with a body that explains why, does not apply to a commit you make here.
 7. Write the result file **at the exact absolute path given in
    your instructions** (your working directory is a git worktree, not the
    project root, so a relative path lands in the wrong tree):
