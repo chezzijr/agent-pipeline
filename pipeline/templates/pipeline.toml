@@ -47,6 +47,13 @@ test_suite_without_new  = "pytest {test:--deselect }"
 
 # The branch tickets are cut from, and the one Tier A re-runs {test} against.
 base                    = "main"
+# A new ticket branch is cut from LOCAL base, after a fetch of its upstream, and
+# warns when base is behind it. The fetch never moves a local branch.
+
+# What happens to a verified ticket. "local" (default) lands it on base in the
+# main checkout, which must sit on base. "none" stops it at `branch-ready` with
+# its branch kept: nothing is merged or pushed, and `depends_on` accepts it.
+# merge                   = "none"
 
 # Quarantine flaky tests out of the SUITE run. Each entry is one test selector,
 # added to `test_suite_without_new`'s `{test}` list in the ticket worktree and in

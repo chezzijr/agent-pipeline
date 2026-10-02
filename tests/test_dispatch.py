@@ -3556,3 +3556,63 @@ def test_a_source_change_drain_names_what_it_waits_on(capsys):
 
     out = capsys.readouterr().out
     assert "draining 1 inflight stage(s): TICKET-001 (implementing)" in out, out
+
+
+def test_a_branch_cut_behind_its_upstream_notes_the_ticket():
+    from helpers import upstream_ahead
+    d, sh = git_project()
+    upstream_ahead(d, sh)
+    path = d / ".project/tickets/TICKET-001.md"
+    path.write_text(FIXTURE.replace("stage: plan-validation", "stage: verifying"))
+    did, rec = supervisor.start(d, path, harness("fake"), {})
+    assert did and rec
+    rec["proc"].wait()
+    supervisor.finish(d, rec)
+    assert "behind" in Ticket.load(path).section("Thread")
+
+
+def _merge_none_project(ticket_text):
+    d, sh = git_project()
+    with open(d / ".project/pipeline.toml", "a") as f:
+        f.write('merge = "none"\n')
+    path = d / ".project/tickets/TICKET-001.md"
+    path.write_text(ticket_text)
+    wt = supervisor.ensure_worktree(
+        d, {"id": "TICKET-001", "branch": "ticket/001"}, {"base": "main"})
+    (wt / "ticket.py").write_text("the ticket's own change\n")
+    _commit(wt, "'ticket commit'")
+    return d, sh, path, wt
+
+
+def test_merge_none_ends_a_verified_ticket_at_branch_ready_with_its_branch_kept():
+    d, sh, path, wt = _merge_none_project(
+        FIXTURE.replace("stage: plan-validation", "stage: merging"))
+    tip = sh("git rev-parse ticket/001").stdout
+    sh("git checkout -qb somewhere-else")
+    base = sh("git rev-parse main").stdout
+    did, rec = supervisor.start(d, path, harness("fake"), {})
+    assert did and rec is None
+    t = Ticket.load(path)
+    assert t.stage == "branch-ready"
+    thread = t.section("Thread")
+    assert 'merge = "none"' in thread and "no `## Decisions` section" in thread
+    assert sh("git rev-parse main").stdout == base
+    did, rec = supervisor.start(d, path, harness("fake"), {})
+    assert did
+    assert not wt.is_dir()
+    assert sh("git rev-parse ticket/001").stdout == tip
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_merge_none_never_commits_onto_base_from_a_checkout_on_base():
+    text = (FIXTURE.replace("stage: plan-validation", "stage: merging")
+            .replace("## Thread", "## Decisions\nkeep the branch\n## Thread"))
+    d, sh, path, wt = _merge_none_project(text)
+    base = sh("git rev-parse main").stdout
+    did, rec = supervisor.start(d, path, harness("fake"), {})
+    assert did and rec is None
+    assert Ticket.load(path).stage == "branch-ready"
+    assert (d / ".project/decisions/DEC-001.md").is_file()
+    assert sh("git rev-parse main").stdout == base
+    assert sh("git ls-files .project/").stdout == ""
+    shutil.rmtree(d, ignore_errors=True)

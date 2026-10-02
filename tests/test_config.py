@@ -634,3 +634,12 @@ def test_the_js_seeds_fail_when_no_test_ran():
         assert r.returncode == 1, r.stdout
         assert "outer > does a thing" in r.stdout
         assert pattern in r.stdout
+
+
+def test_merge_mode_defaults_to_local_and_ignores_a_bad_value(capsys):
+    from pipeline.core.config import merge_mode
+    reset_notices()
+    assert merge_mode(Path("/p"), {}) == "local"
+    assert merge_mode(Path("/p"), {"merge": "none"}) == "none"
+    assert merge_mode(Path("/p"), {"merge": "pr"}) == "local"
+    assert "merge" in capsys.readouterr().out

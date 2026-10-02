@@ -57,7 +57,8 @@ MAX_TAIL = 256 << 10   # of a stage log, before the live stream takes over
 # belongs in the detail pane, not in a tree rebuild.
 TREE_KINDS = {"stage_start", "stage_end", "transition", "escalated", "gate"}
 # `escalated` is terminal, but it is the one terminal stage a human must open.
-FINISHED = TERMINAL - {"escalated"}
+# `branch-ready` waits on a human to push the branch, so it stays visible too.
+FINISHED = TERMINAL - {"escalated", "branch-ready"}
 # TICKET-012's passthrough kinds: `data` is the shape `cli.main.render` reads.
 STREAM_KINDS = {"init", "assistant", "tool_result", "hook_started",
                 "hook_response", "rate_limit", "result"}

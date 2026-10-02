@@ -159,11 +159,11 @@ An empty list clears an earlier rejected plan's exclusions. The suite still gets
 every selector through the project's configured placeholder; no placeholder means
 the command stays unchanged.
 
-**Ordering: `depends_on` names the tickets that must reach `done` first.** Write it as
+**Ordering: `depends_on` names the tickets that must reach `done` or `branch-ready` first.** Write it as
 `depends_on: [TICKET-023]` or pass `pipeline new --depends-on TICKET-023`, and only when
 the later ticket's work genuinely cannot be planned until the earlier one lands — prose
 in `## Summary` saying "land TICKET-023 first" enforces nothing. The dispatcher WAITS
-until it reaches `done`, and `pipeline ls` names what a ticket waits on. A missing,
+until it reaches `done` or `branch-ready`, and `pipeline ls` names what a ticket waits on. A missing,
 rejected, or cyclic dependency escalates the dependent. An escalated dependency waits
 for human resume. Two tickets that touch the same file are already ordered by
 `files_declared`; do not restate that as a dependency.
@@ -185,9 +185,10 @@ pipeline diagnostics             # what a stage needs before it runs
 `pipeline status` **exits 1 when no daemon is running** — that is its answer, not a
 failure. Read the line it prints, not the exit code.
 
-`pipeline diagnostics` is read-only and prints nine rows: `package`,
+`pipeline diagnostics` is read-only and prints ten rows: `package`,
 `executable`, `pipeline`, `harness`, `daemon`, `registration`, `worktree setup`
-(`missing: <lockfile> ...` when a lockfile has no `worktree_setup`), `git author`
+(`missing: <lockfile> ...` when a lockfile has no `worktree_setup`), `base`
+(`no upstream ...`, `up to date ...`, or `behind: ...` as of the last fetch), `git author`
 (`user.name`/`user.email`, or `missing: ...` naming which is unset) and
 `worktree commit` (`ready (<dir>)` or `blocked: <reason>`). A project that is
 not a Git checkout reports both Git rows as `not applicable` and still
@@ -238,6 +239,10 @@ again at `awaiting-merge`, a second human gate, if its diff touches anything `CL
 fences off from unattended merge. The class table below does not change: there is no
 `chore` class, and a human cannot request the cheap route. That gate is the point, so
 do not describe filing as "it will be fixed automatically".
+
+Under `merge = "none"` in `.project/pipeline.toml` a verified ticket ends at
+`branch-ready` instead of landing: nothing merges and nothing is pushed. Push the
+branch, open the pull request, then `pipeline resume <id> --stage done`.
 
 ## A docs-only ticket
 

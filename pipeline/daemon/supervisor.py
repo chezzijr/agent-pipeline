@@ -19,14 +19,14 @@ from pipeline.core.config import (cap_config, compose_prompt,
                                   format_tests_cmd, harness, is_readonly,
                                   mcp_config, mcp_servers, project_config,
                                   project_conflict_ignore, project_harness,
-                                  project_max_parallel, readonly_allow, render, stage_cap,
+                                  merge_mode, project_max_parallel, readonly_allow, render, stage_cap,
                                   stage_config, stage_settings,
                                   validate_stage_overrides)
 from pipeline.core.fence import fenced_touches
 from pipeline.core.gate import (environment_only, gate, invalid_test, load_flaky,
                                 missing_test_file, plan_steps, structural_only)
 from pipeline.core.machine import (CLEANUP_STAGES, CONTROL_FIELDS,
-                                   HUMAN_GATES, MAX_ATTEMPTS, TERMINAL,
+                                   HUMAN_GATES, MAX_ATTEMPTS, TERMINAL, VERIFIED,
                                    apply_claims, bound_for, conflict_holder,
                                    dep_holder, dep_unsatisfiable, transition)
 from pipeline.core.ticket import (LEASE_MINUTES, Ticket, all_tickets, as_list,
@@ -125,7 +125,7 @@ def advance(project: Path, t: Ticket, result: str, note: str, emit=noop,
             if charged else f"`{stage}` escalated on result `{result}`"))
     t.append(stage, "transition", f"**{stage} -> {nxt}** (result: `{result}`)\n\n{note}",
              to=nxt, result=result, **attrs)
-    if nxt == "done":
+    if nxt in VERIFIED:
         did = record_decision(project, t)
         t.append(stage, "decision", f"decision recorded as `{did}`" if did else
                  "no `## Decisions` section -- nothing recorded for "
@@ -143,7 +143,9 @@ def advance(project: Path, t: Ticket, result: str, note: str, emit=noop,
     # excluded with the same reasoning that keeps its worktree: its ticket is
     # evidence a human is about to edit, and committing it would land a
     # half-finished thread on the base branch.
-    if nxt in CLEANUP_STAGES:
+    # `merge = "none"` never writes base: a chore commit there would diverge it
+    # from the upstream the team merges into
+    if nxt in CLEANUP_STAGES and nxt != "branch-ready":
         code, head = run_cmd("git rev-parse --abbrev-ref HEAD", project)
         base = str(project_config(project).get("base", "main"))
         ignored = git_ignored(project, ".project")
@@ -899,9 +901,14 @@ def start(project: Path, path: Path, hcfg: dict, inflight: dict,
         # ticket's agent -- down with it
         return bail(str(e))
     drain_all(inflight)      # `git worktree add` + worktree_setup both block
-    wt = ensure_worktree(project, t.frontmatter(), cfg)
+    notes: list[str] = []
+    wt = ensure_worktree(project, t.frontmatter(), cfg, notes)
     if wt is None:
         return bail("could not create a worktree")
+    for n in notes:
+        t.append(stage, "note", n)
+    if notes:
+        t.save()
 
     def child(cmd: str, kind: str, env: dict | None = None) -> tuple[bool, dict]:
         # a child that outlives the tick must lease exactly like an agent, or a
@@ -922,6 +929,13 @@ def start(project: Path, path: Path, hcfg: dict, inflight: dict,
         return child(format_tests_cmd(cfg["test_suite"], t.tests or [""]), "suite")
 
     if stage == "merging":
+        if merge_mode(project, cfg) == "none":
+            advance(project, t, "kept",
+                    f"`merge = \"none\"`: nothing landed on `{base_ref(cfg)}` and nothing pushed. "
+                    f"Branch `{t.branch}` is kept -- push it and open the pull request, "
+                    f"then `pipeline resume {tid} --stage done` once it merges.",
+                    emit, agent=False)
+            return True, None
         if any(r.get("kind") == "merge" for r in inflight.values()):
             # Merges are serialised, not ordered by `files_declared`: two
             # DISJOINT tickets reaching `merging` in one tick both `git merge

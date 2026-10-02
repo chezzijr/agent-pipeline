@@ -35,7 +35,10 @@ USD_SCALED = {"implementing", "review", "quick-review", "holistic-review"}
 USD_FILES_PER_DOLLAR = 4
 USD_STEPS_PER_DOLLAR = 8
 USD_CEILING_FACTOR = 2
-TERMINAL = {"done", "rejected", "escalated"}
+TERMINAL = {"done", "rejected", "escalated", "branch-ready"}
+# the two stages a verified ticket ends in: both satisfy `depends_on` and both
+# record `## Decisions`
+VERIFIED = {"done", "branch-ready"}
 HUMAN_GATES = {"awaiting-approval", "needs-input", "awaiting-merge"}
 # The fenced things `CLAUDE.md` keeps out of unattended merge, path to symbol
 # tuple or None for whole-file. `CLAUDE.md` keeps the prose copy;
@@ -65,8 +68,9 @@ KNOWN_STAGES = TERMINAL | HUMAN_GATES | {
     "new", "triage", "planning", "plan-validation", "revalidating",
     "implementing", "review", "quick-review", "holistic-review", "verifying",
     "merging", "unwinding"}
-# only these leave a worktree behind for a human to look at
-CLEANUP_STAGES = {"done", "rejected"}
+# only these drop the worktree (and keep the branch); any other terminal stage
+# leaves it behind for a human to look at
+CLEANUP_STAGES = {"done", "rejected", "branch-ready"}
 # stages the dispatcher runs itself, with no agent and so no prompt file. A
 # test subtracts this set rather than hard-coding the exceptions.
 DISPATCHER_STAGES = {"verifying", "merging", "revalidating", "unwinding"}
@@ -298,6 +302,10 @@ def transition(stage: str, result: str, counters: dict, klass: str = "bugfix"):
             return "escalated", c
         case ("unwinding", "ok"):
             return "planning", c
+        case ("merging", "kept"):
+            # the dispatcher issues `kept` under `merge = "none"`: the branch
+            # is kept, nothing lands on base or is pushed, no counter is charged
+            return "branch-ready", c
         case ("unwinding", "fail"):
             # a repair that already refused is never guessed at -- the same
             # rule as `("merging", "fail")`. No counter is charged: there is
@@ -371,12 +379,12 @@ def files_conflict(meta: dict, inflight_meta: list[dict],
 
 
 def dep_holder(tid: str, deps: dict[str, list[str]], stages: dict[str, str]) -> tuple[str, str] | None:
-    """The first dependency of `tid` short of `done`, and the stage it sits at.
+    """The first dependency of `tid` short of `done` or `branch-ready`, and the stage it sits at.
     Sorted, so one blocked ticket always names the same holder. Only the
     direct dependencies: a transitive one blocks its own ticket, so the
     order holds one hop at a time."""
     for dep in sorted(deps.get(tid, [])):
-        if stages.get(dep) != "done":
+        if stages.get(dep) not in VERIFIED:
             return (dep, str(stages.get(dep, "?")))
     return None
 

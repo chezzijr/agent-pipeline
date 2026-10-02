@@ -59,3 +59,15 @@ def git_project():
     (d / ".project" / "pipeline.toml").write_text(
         'test_one="true"\ntest_suite="true"\ntest_suite_without_new="true"\nbase="main"\n')
     return d, sh
+
+
+def upstream_ahead(d, sh):
+    """Give `main` an origin that holds one commit local `main` lacks. Returns
+    the bare remote. Never `git add -A`: it sweeps the untracked `.project/`
+    into the commit, and the reset below then deletes the ticket files."""
+    remote = Path(tempfile.mkdtemp())
+    subprocess.run(f"git clone -q --bare {d} {remote}", shell=True, check=True)
+    sh(f"git remote add origin {remote} && git fetch -q origin && git branch -u origin/main main")
+    (d / "g.py").write_text("later")
+    sh("git add g.py && git commit -qm later && git push -q origin main && git reset -q --hard HEAD~1")
+    return remote

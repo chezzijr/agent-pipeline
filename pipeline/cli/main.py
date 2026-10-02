@@ -24,7 +24,7 @@ from pipeline.core.machine import KNOWN_STAGES, TERMINAL, cleared_key
 from pipeline.core.ticket import (PLAN_SECTIONS, SAFE_DEC_ID, SAFE_ID, Ticket,
                                    all_decisions, decisions_dir, now, plan_digest,
                                    tickets_dir, write_atomic)
-from pipeline.core.worktree import exclude_project_dir, unset_setup_lockfile, worktree
+from pipeline.core.worktree import base_lag, base_ref, exclude_project_dir, unset_setup_lockfile, worktree
 from pipeline.daemon import registry
 from pipeline.daemon.server import (STALE_HOURS, socket_path, ticket_rows,
                                     waiting_text)
@@ -572,7 +572,8 @@ def cmd_close(args) -> None:
 
 # `escalated` is terminal but actionable -- a human still has to look at it --
 # so a bare `ls` hides only the two stages nobody needs to act on (DEC-060).
-FINISHED = TERMINAL - {"escalated"}
+# `branch-ready` waits on a human to push the branch, so it stays visible too.
+FINISHED = TERMINAL - {"escalated", "branch-ready"}
 
 
 def filter_ls_rows(rows: list[dict], ticket: str | None, all_: bool,
@@ -661,13 +662,30 @@ def worktree_setup_state(path: Path) -> str:
     return "set" if cfg.get("worktree_setup") else "not needed (no known lockfile)"
 
 
+def base_state(path: Path) -> str:
+    """Whether local base lags its upstream, as of the last fetch. Never fetches."""
+    try:
+        cfg = project_config(path)
+    except (PipelineError, ValueError) as e:
+        return f"unknown ({e})"
+    base = base_ref(cfg)
+    lag = base_lag(path, cfg)
+    if lag is None:
+        return f"no upstream for `{base}`"
+    up, n = lag
+    if n == 0:
+        return f"up to date with `{up}` (as of the last fetch)"
+    return (f"behind: `{base}` is {n} commit(s) behind `{up}` (as of the last fetch) "
+            f"-- new tickets branch from the older code")
+
+
 def cmd_diagnostics(args) -> None:
     """What a stage needs before it runs, read-only: the package, harness,
     daemon, registration and Git identity a stage would otherwise discover
     only by failing partway through -- an editable install loading a
     different checkout, or a write stage dying at its first `git commit`.
 
-    Prints exactly nine `label: value` rows and never mutates anything: no
+    Prints exactly ten `label: value` rows and never mutates anything: no
     worktree, ref, index, commit, config entry, registry entry or daemon
     state.
     """
@@ -696,9 +714,11 @@ def cmd_diagnostics(args) -> None:
 
     is_checkout = registry.is_git_checkout(path)
     if not is_checkout:
+        print("base: not applicable (not a git checkout)")
         print("git author: not applicable (not a git checkout)")
         print("worktree commit: not applicable (not a git checkout)")
         return
+    print(f"base: {base_state(path)}")
     name, email = registry.git_author(path)
     ready = registry.git_author_ready(path)
     missing = [k for k, v in (("user.name", name), ("user.email", email)) if not v]

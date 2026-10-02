@@ -654,6 +654,21 @@ def project_conflict_ignore(project: Path) -> set[str]:
     return set()
 
 
+MERGE_MODES = ("local", "none")
+
+
+def merge_mode(project: Path, cfg: dict) -> str:
+    """`local` lands a verified ticket on base in the main checkout; `none`
+    stops it at `branch-ready` with its branch kept. A bad value reads as
+    `local`, which fails closed: nothing lands silently."""
+    v = cfg.get("merge", "local")
+    if isinstance(v, str) and v in MERGE_MODES:
+        return v
+    notice_once(f"  {project}: ignoring merge = {v!r} (want \"local\" or \"none\")",
+                str(project), "merge-mode")
+    return "local"
+
+
 def _toml_value(value) -> str:
     """The small TOML subset needed for command-line config overrides."""
     if isinstance(value, str):
