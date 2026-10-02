@@ -53,18 +53,14 @@ HOME_ISH = re.compile(r"^(/|~|~/|\$HOME/?|\$\{HOME\}/?|/\*)$")
 GIT_READ = {"status", "log", "diff", "show", "blame", "grep", "ls-files",
             "rev-parse", "rev-list", "branch", "remote", "describe", "cat-file",
             "shortlog", "ls-tree", "merge-base", "name-rev", "worktree"}
-GIT_WORKTREE_READ = {"list"}
-READ_TOOLS = {"ls", "cat", "head", "tail", "wc", "grep", "rg", "ag", "find",
-              "file", "stat", "du", "tree", "echo", "true", "false", "pwd",
-              "which", "basename", "dirname", "sort", "uniq", "cut", "awk",
-              "diff", "column", "jq", "yq", "date", "printf", "test", "[", "nl"}
-TEST_RUNNERS = {"pytest", "py.test", "tox", "nox", "unittest"}
+READ_TOOLS = {"ls", "cat", "head", "tail", "wc", "grep", "stat", "du", "echo",
+              "true", "false", "pwd", "which", "basename", "dirname", "cut",
+              "diff", "column", "jq", "date", "printf", "test", "[", "nl"}
 # programs allowed only with a vetted first argument
 GUARDED = {
-    "python": {"-m"}, "python3": {"-m"}, "uv": {"run"}, "poetry": {"run"},
+    "python": {"-m"}, "python3": {"-m"},
     "cargo": {"test", "check", "clippy", "build", "fmt"},
     "go": {"test", "vet", "build"},
-    "npm": {"test", "run"}, "pnpm": {"test", "run"}, "yarn": {"test", "run"},
     "make": {"test", "check", "lint"},
 }
 PY_MODULES_OK = {"pytest", "unittest", "tox", "nox"}
@@ -85,6 +81,322 @@ def sed_is_a_line_print(args: list[str]) -> bool:
     return (len(args) >= 3 and args[0] == "-n"
             and SED_PRINT.fullmatch(args[1]) is not None
             and all(a and not a.startswith("-") for a in args[2:]))
+
+
+# The tests, options and stdout actions of find. An allowlist (invariant 4):
+# -delete, -exec, -execdir, -ok, -okdir, -fprint, -fprint0, -fprintf and
+# -fls are on neither list, and neither is any primary added later.
+# FIND_ARG primaries consume exactly one following token, so a value such
+# as `-mtime -7` is never read as a primary.
+FIND_ARG = {"-name", "-iname", "-path", "-ipath", "-wholename", "-iwholename",
+            "-regex", "-iregex", "-lname", "-ilname", "-type", "-xtype", "-size",
+            "-newer", "-anewer", "-cnewer", "-mtime", "-mmin", "-atime", "-amin",
+            "-ctime", "-cmin", "-used", "-perm", "-user", "-group", "-uid", "-gid",
+            "-links", "-inum", "-samefile", "-fstype", "-maxdepth", "-mindepth",
+            "-regextype", "-printf"}
+FIND_FLAG = {"-H", "-L", "-P", "-depth", "-xdev", "-mount", "-follow", "-noleaf",
+             "-daystart", "-empty", "-readable", "-writable", "-executable",
+             "-nouser", "-nogroup", "-true", "-false", "-not", "-and", "-or",
+             "-a", "-o", "-print", "-print0", "-ls", "-prune", "-quit"}
+
+
+def find_only_reads(args: list[str]) -> bool:
+    """True when every `-` argument of `find` is in FIND_FLAG, or is in
+    FIND_ARG and has the value it consumes."""
+    i = 0
+    while i < len(args):
+        if args[i] in FIND_ARG:
+            if i + 1 >= len(args):
+                return False
+            i += 2
+            continue
+        if args[i].startswith("-") and args[i] not in FIND_FLAG:
+            return False
+        i += 1
+    return True
+
+
+# The routes awk has to a file or a command: `>`/`>>` and `|`/`|&` after
+# print or getline, system(), and gawk `@` (`@load`, `@include`, and `@f()`,
+# an indirect call that reaches system -- measured on gawk 5.4.1). `>=` is a
+# comparison and never a redirection, so `NR>=40` stays readable.
+AWK_UNSAFE = re.compile(r"[|@]|>(?!=)|system")
+
+
+def awk_only_reads(args: list[str]) -> bool:
+    """True for `awk [-F sep] [-v name=val]... program [file]...`: no other
+    option (so no -f, -i, -l, -o, -p, -e, -E or --long), a program
+    AWK_UNSAFE does not match, and no operand starting with `-`."""
+    i = 0
+    while i < len(args) and args[i].startswith("-"):
+        if args[i] in ("-F", "-v"):
+            i += 2
+        elif args[i][:2] in ("-F", "-v"):
+            i += 1
+        else:
+            return False
+    if i >= len(args):
+        return False
+    return (AWK_UNSAFE.search(args[i]) is None
+            and all(a and not a.startswith("-") for a in args[i + 1:]))
+
+
+# The options a program may take in a read-only stage: (short flags, short
+# options taking a value, long flags, long options taking a value, most
+# operands or None for any number). An allowlist (invariant 4): every write
+# or exec option -- sort -o/-T/--compress-program, rg --pre/--hostname-bin/-z,
+# file -C/-m, pytest --junit-xml/--basetemp/--log-file/--debug/-o/-p/--rootdir
+# -- is on no list and is refused, and so is a GNU long-option abbreviation.
+# uniq takes one operand, because its second is an output file.
+OPTION_SPECS = {
+    "sort": ("bcCdfghiMmnRrsuVz", "kSt",
+             {"--ignore-leading-blanks", "--dictionary-order", "--ignore-case",
+              "--general-numeric-sort", "--ignore-nonprinting", "--month-sort",
+              "--human-numeric-sort", "--numeric-sort", "--random-sort",
+              "--reverse", "--version-sort", "--stable", "--unique",
+              "--zero-terminated", "--merge"},
+             {"--key", "--field-separator", "--buffer-size", "--sort", "--parallel"},
+             None),
+    "uniq": ("cdDiuz", "fsw",
+             {"--count", "--repeated", "--ignore-case", "--unique",
+              "--zero-terminated"},
+             {"--skip-fields", "--skip-chars", "--check-chars"}, 1),
+    "rg": ("abcFHhIiLlNnoPpqSsUuvVwx0", "ABCdEefgjMmrTt",
+           {"--hidden", "--no-ignore", "--no-ignore-vcs", "--files",
+            "--files-with-matches", "--files-without-match", "--count",
+            "--count-matches", "--fixed-strings", "--ignore-case", "--smart-case",
+            "--case-sensitive", "--word-regexp", "--line-regexp", "--line-number",
+            "--no-line-number", "--heading", "--no-heading", "--with-filename",
+            "--no-filename", "--only-matching", "--invert-match", "--multiline",
+            "--multiline-dotall", "--pcre2", "--follow", "--json", "--vimgrep",
+            "--column", "--null", "--quiet", "--type-list", "--no-messages",
+            "--unrestricted", "--text", "--trim", "--stats", "--passthru"},
+           {"--glob", "--iglob", "--type", "--type-not", "--max-depth",
+            "--max-count", "--context", "--after-context", "--before-context",
+            "--regexp", "--file", "--replace", "--sort", "--sortr",
+            "--max-columns", "--max-filesize", "--threads", "--color",
+            "--encoding"}, None),
+    "file": ("bhikLN", "",
+             {"--brief", "--mime", "--mime-type", "--mime-encoding",
+              "--dereference", "--no-dereference", "--keep-going", "--no-pad"},
+             set(), None),
+    "pytest": ("xqvsl", "kmr",
+               {"--exitfirst", "--quiet", "--verbose", "--showlocals",
+                "--no-showlocals", "--lf", "--last-failed", "--ff", "--failed-first",
+                "--nf", "--new-first", "--sw", "--stepwise", "--co", "--collect-only",
+                "--no-header", "--no-summary", "--strict-markers", "--runxfail",
+                "--full-trace", "--setup-show", "--fixtures", "--markers",
+                "--disable-warnings", "--version", "--help"},
+               {"--maxfail", "--deselect", "--durations", "--tb", "--capture",
+                "--color", "--ignore", "--ignore-glob", "--import-mode",
+                "--report-chars", "--verbosity"}, None),
+    "unittest": ("vqfcb", "kspt",
+                 {"--verbose", "--quiet", "--failfast", "--catch", "--buffer",
+                  "--locals"},
+                 {"--start-directory", "--pattern", "--top-level-directory"}, None),
+    "tox": ("qv", "e", {"--quiet", "--verbose"}, set(), 0),
+    "nox": ("", "se", set(), {"--session", "--sessions"}, 0),
+}
+OPTION_SPECS["py.test"] = OPTION_SPECS["pytest"]
+
+
+def operands(args: list[str], spec: tuple) -> list[str] | None:
+    """`args` without its options, or None when an option is not in `spec`.
+    Reads GNU getopt syntax -- a short cluster (`-nr`, `-k2,2`, `-t,`),
+    `--long` and `--long=value`, a value in the next token, and `--` -- and
+    the single-dash long names of Go (`-run=x`, `-count 1`) when the spec
+    lists them among its long options."""
+    short, short_valued, long_flags, long_valued, _ = spec
+    out, i = [], 0
+    while i < len(args):
+        a = args[i]
+        i += 1
+        if a == "--":
+            return out + args[i:]
+        name, eq, _ = a.partition("=")
+        if name in long_flags and not eq:
+            continue
+        if name in long_valued:
+            if not eq and i >= len(args):
+                return None
+            i += 0 if eq else 1
+            continue
+        if a.startswith("--"):
+            return None
+        if a.startswith("-") and a != "-":
+            for j, c in enumerate(a[1:], 1):
+                if c in short_valued:
+                    if j == len(a) - 1:
+                        if i >= len(args):
+                            return None
+                        i += 1
+                    break
+                if c not in short:
+                    return None
+            continue
+        out.append(a)
+    return out
+
+
+def options_verdict(label: str, args: list[str], spec: tuple) -> str | None:
+    """None when every option in `args` is in `spec` and the operands number
+    at most spec[4]; otherwise the reason, naming `label`."""
+    ops = operands(args, spec)
+    if ops is not None and (spec[4] is None or len(ops) <= spec[4]):
+        return None
+    return (f"{label}: an option outside its read-only set, or one operand too "
+            "many -- that set, in pipeline/hooks/dangerous-commands.py, leaves "
+            "out every option that writes a file or runs a command")
+
+
+# git options that write a file or run a command, refused on every git call
+# and in every prefix: `git grep --open-files=./p.sh` ran p.sh as
+# --open-files-in-pager (git 2.55.0). Refusing options inside an allowlisted
+# subcommand is the written exception to invariant 4 in TICKET-153.
+GIT_REFUSED = ("--output", "--open-files-in-pager", "--ext-diff", "--exec-path",
+               "--config-env")
+# the options `git branch` lists with; a name operand creates a branch unless
+# -l/--list makes it a pattern
+GIT_BRANCH_LIST = ("alrvi", "",
+                   {"--all", "--remotes", "--list", "--verbose", "--show-current",
+                    "--ignore-case", "--color", "--no-color"},
+                   {"--contains", "--no-contains", "--merged", "--no-merged",
+                    "--points-at", "--sort", "--format", "--color"}, None)
+
+
+def git_verdict(args: list[str]) -> str | None:
+    """None when `git <args>` only reads: a GIT_READ subcommand, no global
+    `-c`, no GIT_REFUSED option or prefix of one, no `git grep -O`, and the
+    listing forms only of `branch`, `remote` and `worktree`."""
+    at = next((i for i, a in enumerate(args)
+               if not a.startswith("-") and (i == 0 or args[i - 1] != "-C")), None)
+    sub = None if at is None else args[at]
+    if sub not in GIT_READ:
+        return f"git {sub or ''}: not a read-only git subcommand"
+    if "-c" in args[:at]:
+        return "git -c: a config value can name a command for git to run"
+    for a in args:
+        opt = a.partition("=")[0]
+        if opt.startswith("--") and len(opt) > 2 and any(r.startswith(opt) for r in GIT_REFUSED):
+            return f"git {opt}: writes a file or runs a command"
+    rest = args[at + 1:]
+    if sub == "grep" and any(a[:1] == "-" and a[:2] != "--" and "O" in a for a in rest):
+        return "git grep -O: opens the matches in a pager, which runs a command"
+    if sub == "branch":
+        ops = operands(rest, GIT_BRANCH_LIST)
+        if ops is None or ops and not {"-l", "--list"} & set(rest):
+            return ("git branch: only listing is read-only -- a name operand "
+                    "creates a branch, and -d, -m, -c, -f and -u write refs")
+    if sub == "remote":
+        while rest[:1] in (["-v"], ["--verbose"]):
+            rest = rest[1:]
+        if rest[:1] not in ([], ["show"], ["get-url"]):
+            return "git remote: only listing, `show` and `get-url` are read-only"
+    if sub == "worktree" and rest[:1] != ["list"]:
+        return "git worktree: only `list` is read-only"
+    return None
+
+
+# The `uv run` and `poetry run` options a read-only stage may pass before the
+# command: (flags, options taking a value). An allowlist: --with installs a
+# package, --python runs the interpreter it names, and --directory, --project,
+# --script, -m and --env-file are refused with them.
+RUN_WRAPPERS = {
+    "uv": ({"--frozen", "--locked", "--offline", "--no-sync", "--all-extras",
+            "--all-groups", "--no-dev", "--quiet", "-q"},
+           {"--group", "--extra", "--only-group", "--no-group", "--package"}),
+    "poetry": (set(), set()),
+}
+
+
+def unwrap_run(argv: list[str]) -> tuple[list[str] | None, str | None]:
+    """`(command, None)`: the command a chain of `uv run`/`poetry run`
+    wrappers runs, with their allowlisted options stripped -- `argv` itself
+    when it is not one. `(None, reason)` when a wrapper option is not in
+    RUN_WRAPPERS or no command follows."""
+    while os.path.basename(argv[0]) in RUN_WRAPPERS and argv[1:2] == ["run"]:
+        name = os.path.basename(argv[0])
+        flags, valued = RUN_WRAPPERS[name]
+        rest, i = argv[2:], 0
+        while i < len(rest) and rest[i].startswith("-"):
+            opt, eq, _ = rest[i].partition("=")
+            if rest[i] in flags:
+                i += 1
+            elif opt in valued:
+                i += 1 if eq else 2
+            else:
+                return None, (f"{name} run {opt}: not a read-only {name} run option "
+                              "-- --with installs a package and --python runs the "
+                              "interpreter it names")
+        if i >= len(rest):
+            return None, f"{name} run: names no command to run"
+        argv = rest[i:]
+    return argv, None
+
+
+def runs_the_test_script(args: list[str]) -> bool:
+    """True for exactly npm/pnpm/yarn `test` or `run test`, with no argument.
+    An option is npm config (`npm test --script-shell=./p.sh` ran p.sh, npm
+    12.0.2), and an argument after `--` reaches the test tool unchecked
+    (jest --outputFile, pytest --junit-xml), as `cargo test --` would."""
+    return args in (["test"], ["run", "test"])
+
+
+# What may follow `<tool> <subcommand>` for a GUARDED build tool, in the
+# OPTION_SPECS shape; a `"<tool> <subcommand>"` key wins over `"<tool>"`.
+# Left out on purpose, each measured or documented to write outside the
+# worktree or run a command: make VAR=value, --eval, -f and -C; cargo
+# --config, --target-dir, --manifest-path and -Z; go -exec, -toolexec,
+# -vettool, -o, -c, -args, -ldflags, -gcflags and every -*profile.
+GUARDED_SPECS = {
+    "make": ("ks", "j", {"--keep-going", "--silent", "--quiet"}, {"--jobs"}, 0),
+    "cargo": ("qvr", "pjF",
+              {"--workspace", "--all", "--lib", "--bins", "--tests", "--examples",
+               "--benches", "--all-targets", "--doc", "--release", "--no-run",
+               "--no-fail-fast", "--all-features", "--no-default-features",
+               "--locked", "--frozen", "--offline", "--quiet", "--verbose",
+               "--keep-going"},
+              {"--package", "--exclude", "--bin", "--test", "--example", "--bench",
+               "--features", "--jobs", "--target", "--profile", "--message-format",
+               "--color"}, None),
+    "cargo fmt": ("", "p", {"--check", "--all"}, {"--package"}, 0),
+    "go": ("", "",
+           {"-v", "-short", "-race", "-failfast", "-cover", "-json", "-benchmem",
+            "-trimpath", "-fullpath"},
+           {"-run", "-skip", "-count", "-timeout", "-bench", "-benchtime", "-cpu",
+            "-parallel", "-p", "-tags", "-shuffle", "-covermode", "-coverpkg",
+            "-list"}, None),
+}
+# What may follow `--`: the libtest flags after `cargo test` (--logfile wrote
+# a file, cargo 1.98.1), lint levels after `cargo clippy`. Nothing else may.
+CARGO_TAIL = {
+    "test": ("q", "",
+             {"--nocapture", "--no-capture", "--exact", "--ignored",
+              "--include-ignored", "--show-output", "--quiet", "--list"},
+             {"--test-threads", "--skip", "--color", "--format"}, None),
+    "clippy": ("", "DWAF", set(), {"--deny", "--warn", "--allow", "--forbid"}, 0),
+}
+
+
+def guarded_options(name: str, sub: str, args: list[str]) -> str | None:
+    """None when every argument after `<name> <sub>` is in GUARDED_SPECS, and
+    after `cargo test --`/`cargo clippy --` in CARGO_TAIL. `cargo fmt` must
+    carry `--check`, or it rewrites source files."""
+    key = f"{name} {sub}"
+    spec = GUARDED_SPECS.get(key, GUARDED_SPECS[name])
+    tail_spec = CARGO_TAIL.get(sub) if name == "cargo" else None
+    head, tail = args, []
+    if "--" in args:
+        if tail_spec is None:
+            return f"{key} --: passes arguments the guard cannot judge"
+        head, tail = args[:args.index("--")], args[args.index("--") + 1:]
+    why = (options_verdict(key, head, spec)
+           or tail and options_verdict(f"{key} --", tail, tail_spec))
+    if why:
+        return why
+    if key == "cargo fmt" and "--check" not in head:
+        return "cargo fmt: only `cargo fmt --check` is read-only; without it cargo fmt rewrites source files"
+    return None
 
 
 def split_segments(tokens: list[str]) -> list[list[str]]:
@@ -478,16 +790,21 @@ def readonly_rules(segs: list[list[str]], raw: str, cwd: str | None = None) -> s
         # like "./pipeline/hooks/test_dangerous_commands.py" matches as written
         if any(argv[:len(p)] == p for p in allow):
             continue
-        name = os.path.basename(argv[0])
-        args = argv[1:]
+        # `uv run` and `poetry run` are judged by the command they run, so
+        # `uv run find . -delete` meets the rules bare `find` meets, and a
+        # project prefix matches that command too (TICKET-153)
+        inner, why = unwrap_run(argv)
+        if why:
+            return why
+        if inner is not argv and any(inner[:len(p)] == p for p in allow):
+            continue
+        name = os.path.basename(inner[0])
+        args = inner[1:]
 
         if name == "git":
-            sub = next((a for i, a in enumerate(args)
-                        if not a.startswith("-") and (i == 0 or args[i - 1] != "-C")), None)
-            if sub not in GIT_READ:
-                return f"git {sub or ''}: not a read-only git subcommand"
-            if sub == "worktree" and not (set(args) & GIT_WORKTREE_READ):
-                return "git worktree: only `list` is read-only"
+            why = git_verdict(args)
+            if why:
+                return why
             continue
 
         # sed is off the allowlist by name -- TICKET-057 -- except one
@@ -503,16 +820,46 @@ def readonly_rules(segs: list[list[str]], raw: str, cwd: str | None = None) -> s
                 continue
             return ("sed is not read-only: a sed script writes with `w`, "
                     "`s///w` and GNU `e` -- use head, tail or grep to read")
-        if name in READ_TOOLS or name in TEST_RUNNERS:
+        if name == "find":
+            if find_only_reads(args):
+                continue
+            return ("find: only tests and stdout actions are read-only -- "
+                    "-delete, -exec, -ok and -fprint write or run a command; "
+                    "use grep -r to search file contents")
+        if name == "awk":
+            if awk_only_reads(args):
+                continue
+            return ("awk: a read-only awk takes only -F and -v, and its program "
+                    "holds no |, @, system or > -- write NR>1 as NR>=2")
+        if name in ("npm", "pnpm", "yarn"):
+            if runs_the_test_script(args):
+                continue
+            return (f"{name}: only a bare `{name} test` or `{name} run test` is "
+                    "read-only -- another script is package.json text the guard "
+                    "cannot judge, an option is npm config such as --script-shell, "
+                    "which runs a command, and an argument after `--` reaches the "
+                    "test tool unchecked")
+        if name in OPTION_SPECS:
+            why = options_verdict(name, args, OPTION_SPECS[name])
+            if why:
+                return why
+            continue
+        if name in READ_TOOLS:
             continue
 
         if name in GUARDED:
             if name in ("python", "python3"):
                 if len(args) < 2 or args[0] != "-m" or args[1] not in PY_MODULES_OK:
                     return f"{name}: only `-m {'/'.join(sorted(PY_MODULES_OK))}` is allowed"
+                why = options_verdict(f"{name} -m {args[1]}", args[2:], OPTION_SPECS[args[1]])
+                if why:
+                    return why
                 continue
             if not args or args[0] not in GUARDED[name]:
                 return f"{name} {args[0] if args else ''}: not an allowed subcommand"
+            why = guarded_options(name, args[0], args[1:])
+            if why:
+                return why
             continue
 
         return f"`{name}` is not on the read-only allowlist"
