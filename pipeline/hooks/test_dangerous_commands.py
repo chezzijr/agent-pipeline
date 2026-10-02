@@ -359,6 +359,82 @@ def test_the_project_allowlist_reaches_the_real_hook():
             "the read-only allowlist") in p.stderr, p.stderr
     print("ok  project allowlist reaches the real hook")
 
+
+def cd_layout():
+    """A temp project with a worktree `wt` holding packages/x, a/b, a symlink
+    `up` to the project root (outside wt) and `inner` to wt/a/b (inside)."""
+    proj = os.path.realpath(tempfile.mkdtemp())
+    wt = proj + "/wt"
+    os.makedirs(wt + "/packages/x")
+    os.makedirs(wt + "/a/b")
+    os.symlink(proj, wt + "/up")
+    os.symlink(wt + "/a/b", wt + "/inner")
+    return proj, wt
+
+
+def test_cd_is_allowed_only_inside_the_worktree():
+    proj, wt = cd_layout()
+    saved_wt = os.environ.get("PIPELINE_WORKTREE")
+    saved_allow = os.environ.pop("PIPELINE_READONLY_ALLOW", None)
+    os.environ["PIPELINE_WORKTREE"] = wt
+    try:
+        allowed = ["cd ./packages/x && ls", f"cd {wt}/packages && ls", "cd . && pwd",
+                   "cd ./packages/x\nnl a.py", f"cd {wt}/packages/x && cd {wt}"]
+        for c in allowed:
+            got = guard.verdict(c, True, cwd=wt)
+            assert got is None, f"cd: {c!r} -> {got!r} (expected allow)"
+        c = "cd ../.. && ls"
+        got = guard.verdict(c, True, cwd=wt + "/packages/x")
+        assert got is None, f"cd: {c!r} -> {got!r} (expected allow)"
+        blocked = ["cd", "cd -", "cd ..", "cd /", "cd ./up", "cd ./inner/../..",
+                   "cd ~", "cd $HOME", "cd -P ./packages", "cd ./packages/x && rm a",
+                   "cd ./packages && cd ../..", "cd packages/x", "cd +1",
+                   "cd ./nosuch", "cd ./packages && cd ./x",
+                   "for d in a; do cd ./packages; done"]
+        for c in blocked:
+            got = guard.verdict(c, True, cwd=wt)
+            assert got, f"cd: {c!r} -> {got!r} (expected block)"
+        c = "for i in 1 2 3; do cd ..; done && ls"
+        got = guard.verdict(c, True, cwd=wt + "/packages/x")
+        assert got, f"cd: {c!r} -> {got!r} (expected block)"
+        os.environ.pop("PIPELINE_WORKTREE")
+        got = guard.verdict("cd ./packages/x", True, cwd=wt)
+        assert got, f"cd: with no worktree known -> {got!r} (expected block)"
+    finally:
+        if saved_wt is None:
+            os.environ.pop("PIPELINE_WORKTREE", None)
+        else:
+            os.environ["PIPELINE_WORKTREE"] = saved_wt
+        if saved_allow is not None:
+            os.environ["PIPELINE_READONLY_ALLOW"] = saved_allow
+        shutil.rmtree(proj)
+    if VERBOSE:
+        print("ok  cd is allowed only inside the worktree")
+
+
+def test_cd_reaches_the_real_hook_through_the_event_cwd():
+    proj, wt = cd_layout()
+    try:
+        env = dict(os.environ, PIPELINE_READONLY="1", PIPELINE_WORKTREE=wt,
+                   PIPELINE_STAGE="review")
+        env.pop("PIPELINE_READONLY_ALLOW", None)
+
+        def run(command):
+            event = json.dumps({"tool_name": "Bash", "cwd": wt,
+                                "tool_input": {"command": command}})
+            return subprocess.run([sys.executable, str(GUARD)], input=event,
+                                  capture_output=True, text=True, env=env, cwd=proj)
+        p = run("cd ./packages && ls")
+        assert p.returncode == 0, p
+        p = run("cd .. && ls")
+        assert p.returncode == 2, p
+        assert "leaves this stage's worktree" in p.stderr, p.stderr
+    finally:
+        shutil.rmtree(proj)
+    if VERBOSE:
+        print("ok  cd reaches the real hook through the event cwd")
+
+
 def test_write_outside_worktree_is_not_blocked():
     event = json.dumps({"tool_name": "Write", "tool_input": {"file_path": "/home/chezzijr/proj/agent-pipeline/tests/_probe.txt", "content": "probe123\n"}})
     env = dict(os.environ)
@@ -486,6 +562,8 @@ if __name__ == "__main__":
     test_end_to_end_exit_code()
     test_a_malformed_readonly_allowlist_fails_closed()
     test_the_project_allowlist_reaches_the_real_hook()
+    test_cd_is_allowed_only_inside_the_worktree()
+    test_cd_reaches_the_real_hook_through_the_event_cwd()
     test_write_outside_worktree_is_not_blocked()
     test_paths_outside_the_worktree_are_blocked()
     test_the_guard_sees_every_file_tool_not_just_bash()

@@ -24,6 +24,10 @@ an argv-prefix list the dispatcher exports from `[readonly] allow` in
 only, and it can never re-enable anything `always_rules()` or the redirection
 and command-substitution checks above refuse.
 
+A `for` loop's body is judged command by command, verbatim and once per word,
+and `cd` must land inside PIPELINE_WORKTREE from the cwd the hook event
+reports.
+
 Registered per stage via `hooks:` in that stage's frontmatter.
 
 This file is registered through `--settings`, which Claude Code merges
@@ -69,6 +73,9 @@ PY_MODULES_OK = {"pytest", "unittest", "tox", "nox"}
 # start-only match would allow "40,70p;s/a/b/w out.txt", which writes past
 # the `p` through sed's `s///w` (TICKET-106).
 SED_PRINT = re.compile(r"(\d+|\$)(,(\d+|\$))?p")
+# `.`, `..`, absolute, or `./`/`../`-led, because those forms skip CDPATH in
+# bash and zsh and none can be an option, `~`, `$`, `+N` or `=cmd`
+CD_TARGET = re.compile(r"\.\.?|(/|\.\.?/)[\w./@+,:=-]*")
 
 
 def sed_is_a_line_print(args: list[str]) -> bool:
@@ -377,7 +384,56 @@ def readonly_prefixes() -> list[list[str]]:
             and all(isinstance(a, str) and a for a in p)]
 
 
-def readonly_rules(segs: list[list[str]], raw: str) -> str | None:
+def within(path: str, root: str) -> bool:
+    return path == root or path.startswith(root + os.sep)
+
+
+def cd_places(cwd: str | None) -> set[str]:
+    try:
+        here = cwd if isinstance(cwd, str) and os.path.isabs(cwd) else os.getcwd()
+        return {os.path.normpath(here), os.path.realpath(here)}
+    except (OSError, ValueError):
+        return set()
+
+
+def cd_verdict(argv: list[str], places: set[str],
+               worktree: str | None) -> tuple[str | None, set[str]]:
+    """`(reason, places)` for one `cd`. `places` is the SET of directories the
+    shell may be in: a `cd` can fail or be skipped (`||`, `&&`), so each
+    approved `cd` adds its landing paths and removes nothing, and every target
+    must land inside the worktree from every member.
+
+    A target must land inside the worktree both logically (`normpath`, bash's
+    default `cd -L`) and physically (`realpath`): physical alone passes
+    `cd ./inner/../..` through an in-tree symlink, logical alone passes
+    `cd ./up` through a symlink to outside. It must also be an existing
+    directory, which stops zsh `CDABLE_VARS` reinterpreting a missing one.
+    `cd ./packages && cd ./x` is refused on purpose: write one `cd` with the
+    full path. Returns a reason, never raises -- an exception exits 1 and
+    Claude Code then runs the command."""
+    if len(argv) != 2 or not CD_TARGET.fullmatch(argv[1]):
+        return ("`cd` takes one directory operand that is `.`, `..`, absolute, or "
+                "starts with `./` or `../` -- no options, `-`, `~`, `$`, or a bare "
+                "name that CDPATH may redirect", places)
+    if not worktree or not os.path.isabs(worktree):
+        return "`cd` is judged against PIPELINE_WORKTREE, which is not an absolute path", places
+    if not places:
+        return "`cd` cannot tell which directory this command starts in", places
+    t = argv[1]
+    roots = {os.path.normpath(worktree), os.path.realpath(worktree)}
+    landed = set()
+    for here in places:
+        for p in (os.path.normpath(os.path.join(here, t)),
+                  os.path.realpath(os.path.join(here, t))):
+            if not any(within(p, root) for root in roots):
+                return f"`cd {t}` leaves this stage's worktree {worktree}", places
+            landed.add(p)
+        if not os.path.isdir(os.path.realpath(os.path.join(here, t))):
+            return f"`cd {t}` is not a directory from {here}", places
+    return None, places | landed
+
+
+def readonly_rules(segs: list[list[str]], raw: str, cwd: str | None = None) -> str | None:
     # a token-level scan, not a raw-string regex -- DEC-058 keeps this above
     # the allow-prefix loop below, so a project prefix cannot re-enable a
     # redirection. A raw regex cannot tell a real `>` from a quoted one; a
@@ -398,8 +454,17 @@ def readonly_rules(segs: list[list[str]], raw: str) -> str | None:
         return why
 
     allow = readonly_prefixes()
+    places = None
     for argv in segs:
         if not argv:
+            continue
+        # above the prefix match, so `[readonly] allow` cannot widen `cd`
+        if argv[0] == "cd":
+            if places is None:
+                places = cd_places(cwd)
+            why, places = cd_verdict(argv, places, os.environ.get("PIPELINE_WORKTREE"))
+            if why:
+                return why
             continue
         # argv[0] is compared verbatim, not by basename, so a project entry
         # like "./pipeline/hooks/test_dangerous_commands.py" matches as written
@@ -446,7 +511,7 @@ def readonly_rules(segs: list[list[str]], raw: str) -> str | None:
     return None
 
 
-def verdict(command: str, readonly: bool) -> str | None:
+def verdict(command: str, readonly: bool, cwd: str | None = None) -> str | None:
     segs = segments(command)
     if segs is None:
         if "\\" in command:
@@ -458,7 +523,7 @@ def verdict(command: str, readonly: bool) -> str | None:
     why = always_rules(segs, command)
     if why or not readonly:
         return why
-    return readonly_rules(segs, command)
+    return readonly_rules(segs, command, cwd)
 
 
 FILE_TOOLS = {"Write", "Edit", "MultiEdit", "NotebookEdit"}
@@ -490,7 +555,7 @@ def path_verdict(path: str, worktree: str, allowed: list[str]) -> str | None:
         return f"{path!r} does not resolve to a path"
     if any(target == resolve(p, wt) for p in allowed):
         return None
-    if target == wt or target.startswith(wt + os.sep):
+    if within(target, wt):
         return None
     return f"{target} is outside this stage's worktree {wt}"
 
@@ -575,7 +640,9 @@ def main() -> int:
     elif tool == "Bash":
         label = "Command"
         subject = tool_input.get("command", "")
-        why = verdict(subject, os.environ.get("PIPELINE_READONLY") == "1")
+        cwd = event.get("cwd")
+        why = verdict(subject, os.environ.get("PIPELINE_READONLY") == "1",
+                      cwd if isinstance(cwd, str) else None)
     elif tool.startswith("mcp__"):
         label, subject = "Tool", tool
         why = mcp_verdict(tool)
