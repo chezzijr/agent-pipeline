@@ -528,3 +528,5 @@ carries the same obligation.
 runs.** `merging` refuses to land otherwise -- "main checkout is parked on
 `<branch>`, not the base branch" -- and the ticket escalates with its work done.
 Read that message as "check out `main`", not as a merge conflict.
+Under `merge = "none"` in `.project/pipeline.toml`, `merging` never touches the
+main checkout, so it need not sit on base.

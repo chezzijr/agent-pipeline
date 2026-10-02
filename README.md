@@ -195,7 +195,7 @@ pipeline stop
 pipeline unregister ~/code/myproject
 ```
 
-`pipeline diagnostics` prints nine rows and mutates nothing:
+`pipeline diagnostics` prints ten rows and mutates nothing:
 
 - `package` -- the loaded package directory, so an editable install cannot
   silently run a different checkout than the one you edited.
@@ -210,6 +210,9 @@ pipeline unregister ~/code/myproject
   root has `package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`, `uv.lock`,
   `poetry.lock` or `Gemfile.lock` and no `worktree_setup`. Informational: it
   never changes the exit code.
+- `base` -- `no upstream for main`, `up to date with origin/main`, or
+  `behind: ...` when local base lags its upstream, as of the last fetch.
+  Informational: it never fetches and never changes the exit code.
 - `git author` -- `name <email>` when Git can author a commit here, else
   `missing: user.name, user.email` naming the unset key(s).
 - `worktree commit` -- `ready (<common dir>)` when a write stage's commit
