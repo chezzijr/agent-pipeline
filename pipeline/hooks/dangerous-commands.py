@@ -127,6 +127,9 @@ def redirection(argv: list[str]) -> str | None:
     return None
 
 
+# loops expand to body x (words + 1) commands, quadratic in the command's length;
+# a MemoryError exits 1, which Claude Code treats as non-blocking, so refuse first
+MAX_LOOP_COMMANDS = 2000
 # no bash or zsh special parameter is one lowercase letter, so the loop cannot
 # assign PATH, CDPATH, IFS or zsh's tied path/cdpath
 LOOP_NAME = re.compile(r"[a-z]")
@@ -194,6 +197,9 @@ def loop_bodies(segs: list[list[str]]) -> tuple[list[list[str]] | None, str | No
             if any(c[0] == "cd" for c in body):
                 return None, ("`cd` inside a `for` loop runs once per word but is "
                               "judged once -- move it before the loop")
+            if len(out) + len(body) * (len(words) + 1) > MAX_LOOP_COMMANDS:
+                return None, (f"a `for` loop expands to more than {MAX_LOOP_COMMANDS} "
+                              "commands to judge")
             out.extend(body + [[substitute(t, name, w) for t in c]
                                for w in words for c in body])
             loop = None

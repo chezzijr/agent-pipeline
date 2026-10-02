@@ -104,7 +104,7 @@ machine — `--setting-sources project` means one is not.
 
 ```sh
 uv run --group dev pytest -q                # the dispatcher suite
-./pipeline/hooks/test_dangerous_commands.py # 182 guard cases (table-driven)
+./pipeline/hooks/test_dangerous_commands.py # 185 guard cases (table-driven)
 ```
 
 `pytest` sees the allow/block tables through `test_the_allow_and_block_tables`,

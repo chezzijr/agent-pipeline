@@ -104,6 +104,10 @@ BLOCKED_READONLY = [
     "ls $HOME; for f in a; do cat $f; done",
     "for f in *; do sed -n 1p $f; done",
     "for f in =ls; do cat $f; done",
+    # one flat loop expands to body x (words + 1) argv lists; a MemoryError exits 1 and runs the command
+    "for f in " + "a " * 50 + "; do " + "cat a; " * 50 + "cat b; done",
+    "for f in a; do " + "cat a; " * 3000 + "done",
+    "for f in a; do cat a; done; " * 3000,
     'python3 -c "\nimport os\n"',
     "python3 - <<PY\nimport os\nPY",
     "cat a >\nfile",
