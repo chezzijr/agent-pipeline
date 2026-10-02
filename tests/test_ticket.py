@@ -822,3 +822,10 @@ def test_test_file_name_half_accepts_a_vitest_title():
                 "a.ts::`id`", "a.ts::it's", 'a.ts::say "hi"', "a.ts::x\ny"):
         assert T.validate_meta({**ok, "test_file": bad}), bad
     assert T.validate_meta({**ok, "test_file": "a b.ts::t"}), "path half stays strict"
+
+
+def test_test_file_refuses_a_trailing_newline():
+    """TICKET-151: `$` accepts a trailing newline; the anchor is the end of string."""
+    ok = {"id": "TICKET-001", "branch": "ticket/001", "files_declared": ["a.py"]}
+    for bad in ("a.ts::x\n", "tests/a.py::test_x\n"):
+        assert T.validate_meta({**ok, "test_file": bad}), bad

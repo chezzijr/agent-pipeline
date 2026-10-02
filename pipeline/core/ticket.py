@@ -28,7 +28,10 @@ def now() -> datetime:
 
 SAFE_ID = re.compile(r"^TICKET-\d{1,6}$")
 SAFE_BRANCH = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,80}$")
-SAFE_TEST = re.compile(r"^[A-Za-z0-9._/-]{1,200}(::[A-Za-z0-9_\[\].-]{1,100})*$")
+# The name half takes a literal space and `>` for Vitest/Jest titles
+# (`outer > does a thing`). `\Z`, not `$`: `$` accepts a trailing newline.
+# Every value is still `shlex.quote`d on the way out.
+SAFE_TEST = re.compile(r"^[A-Za-z0-9._/-]{1,200}(::[A-Za-z0-9_\[\]. >-]{1,200})*\Z")
 SAFE_FILE = re.compile(r"^[A-Za-z0-9._/-]{1,200}$")
 SAFE_HASH = re.compile(r"^[0-9a-f]{64}$")
 
