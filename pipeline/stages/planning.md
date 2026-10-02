@@ -211,9 +211,11 @@ needs. These are plan failures, not shortcuts:
 "Investigate X" is the same failure: do the investigation now, and put what you
 found in `## Digest`.
 
-**Be exact.** Full file paths, every time. Real commands with the output you
-expect. If a step changes code, the step says what the code becomes. DRY,
-YAGNI, test-first, frequent commits.
+**Be exact.** Full file paths, every time. Real commands, with the output they printed when you ran them.
+Run every existing test the plan names on the unfixed branch -- your worktree, before any implementation -- and quote the line it printed.
+You never predict a test result: one ticket took five planning rounds because its plan guessed which tests fail on unfixed code, wrongly.
+A test the plan creates does not exist yet; say so instead of guessing its outcome.
+If a step changes code, the step says what the code becomes. DRY, YAGNI, test-first, frequent commits.
 
 `result`: `ok` (plan written) | `needs-input` (questions appended) |
 `fail` (cannot plan; say what is missing)
