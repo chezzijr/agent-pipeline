@@ -1865,3 +1865,52 @@ def test_reject_withdraws_an_approval_at_revalidating():
     t = Ticket.load(d / ".project/tickets/TICKET-001.md")
     assert t.stage == "planning"
     shutil.rmtree(d)
+
+
+def test_reject_refuses_revalidating_under_a_live_lease():
+    d = Path(tempfile.mkdtemp())
+    cli(d, "new", "t")
+    cli(d, "resume", "TICKET-001", "--stage", "revalidating")
+    path = d / ".project/tickets/TICKET-001.md"
+    holder = f"revalidating-{os.getpid()}"
+    t = Ticket.load(path)
+    t.take_lease(holder)
+    t.save()
+    r = cli(d, "reject", "TICKET-001", "gap")
+    assert r.returncode != 0 and holder in r.stderr, r.stderr
+    t = Ticket.load(path)
+    assert t.stage == "revalidating" and t.counters.get("plan_rejections", 0) == 0
+    shutil.rmtree(d)
+
+
+def test_reject_at_revalidating_frees_a_dead_holders_lease_and_the_approval_hash():
+    d = Path(tempfile.mkdtemp())
+    cli(d, "new", "t")
+    cli(d, "resume", "TICKET-001", "--stage", "revalidating")
+    path = d / ".project/tickets/TICKET-001.md"
+    dead = subprocess.Popen([sys.executable, "-c", "pass"])
+    dead.wait()
+    t = Ticket.load(path)
+    t.take_lease(f"revalidating-{dead.pid}")
+    t.extra["approved_plan_hash"] = "0" * 64
+    t.save()
+    r = cli(d, "reject", "TICKET-001", "gap")
+    assert r.returncode == 0, r.stderr
+    t = Ticket.load(path)
+    assert t.stage == "planning"
+    assert t.lease == {"holder": None, "expires": None}
+    assert "approved_plan_hash" not in t.extra
+    assert t.counters["plan_rejections"] == 1
+    shutil.rmtree(d)
+
+
+def test_reject_still_refuses_awaiting_merge():
+    d = Path(tempfile.mkdtemp())
+    cli(d, "new", "t")
+    cli(d, "resume", "TICKET-001", "--stage", "awaiting-merge")
+    path = d / ".project/tickets/TICKET-001.md"
+    r = cli(d, "reject", "TICKET-001", "gap")
+    assert r.returncode != 0 and "`revalidating`" in r.stderr, r.stderr
+    t = Ticket.load(path)
+    assert t.stage == "awaiting-merge"
+    shutil.rmtree(d)
