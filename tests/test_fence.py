@@ -94,3 +94,24 @@ def test_an_unfenced_symbol_in_machine_py_still_merges_unattended():
     machine.write_text(body.replace("'bugfix': 2", "'bugfix': 3"))
     sh("git add -A")
     assert fenced_touches(d, "main") == []
+
+
+def test_loosening_a_safe_pattern_trips_the_fence():
+    """`validate_meta` applies the module-level `SAFE_*` patterns. A diff
+    that changes only `SAFE_TEST` must trip the fence like one that edits
+    `validate_meta` itself (TICKET-153)."""
+    d, sh = git_project()
+    ticket = d / "pipeline" / "core" / "ticket.py"
+    ticket.parent.mkdir(parents=True)
+    body = (
+        "import re\n\n"
+        "SAFE_TEST = re.compile(r'^[a-z]+$')\n\n\n"
+        "def validate_meta(meta):\n"
+        "    return meta\n"
+    )
+    ticket.write_text(body)
+    sh("git add -A && git commit -qm commit-ticket")
+    assert fenced_touches(d, "main") == []
+    ticket.write_text(body.replace("[a-z]+", "[a-z >]+"))
+    sh("git add -A")
+    assert fenced_touches(d, "main") != []

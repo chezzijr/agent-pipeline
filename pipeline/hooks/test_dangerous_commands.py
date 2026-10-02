@@ -574,6 +574,20 @@ def test_an_exception_in_the_guard_blocks_instead_of_exiting_1():
         print("ok   an exception in the guard exits 2")
 
 
+def test_find_and_awk_cannot_write_in_a_read_only_stage():
+    """`find` and `awk` are on READ_TOOLS with no argument check, so each
+    of these ran in a read-only stage (TICKET-153)."""
+    env = dict(os.environ, PIPELINE_READONLY="1")
+    env.pop("PIPELINE_READONLY_ALLOW", None)
+    cmds = ["find . -name x -delete", "find . -fprint /tmp/out",
+            "awk 'BEGIN{system(\"touch /tmp/x\")}'"]
+    for cmd in cmds:
+        event = json.dumps({"tool_name": "Bash", "tool_input": {"command": cmd}})
+        p = subprocess.run([sys.executable, str(GUARD)], input=event,
+                           capture_output=True, text=True, env=env)
+        assert p.returncode == 2, (cmd, p.returncode, p.stderr)
+
+
 if __name__ == "__main__":
     test_an_exception_in_the_guard_blocks_instead_of_exiting_1()
     VERBOSE = True
