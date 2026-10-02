@@ -876,6 +876,8 @@ and the redirection rule still win over any entry here. The list is read from
 HEAD, and `.project/pipeline.toml` is fenced, so widening it is a human's
 commit.
 
+The built-in rules also accept a `for x in WORDS; do ...; done` loop with a one-letter lowercase variable, whose body commands are each allowed both as written and with each word in place of `$x`, and `cd` into an existing directory inside the stage's worktree, written as `.`, `..`, an absolute path, or a path starting `./` or `../`. Loop words carry no glob, quote or `$`, and a command with a loop may expand only that loop's `$x`, inside it. A loop inside a loop and a `cd` inside a loop are refused, a loop's keywords are never allowed on their own, and an `[readonly] allow` entry does not widen `cd`.
+
 ## MCP servers
 
 A project declares one in `[mcp.<name>]` in `.project/pipeline.toml`:
