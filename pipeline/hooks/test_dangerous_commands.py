@@ -77,6 +77,10 @@ BLOCKED_READONLY = [
     "sed --in-place s/a/b/ x.py",
     "sed -i.bak s/a/b/ x.py",
     "cat a.py\ncd /tmp",
+    # TICKET-152: a loop body is judged command by command
+    "for f in a b; do rm $f; done",
+    "for f in a b; do cat $f > out; done",
+    "do cat a", "done",
     'python3 -c "\nimport os\n"',
     "python3 - <<PY\nimport os\nPY",
     "cat a >\nfile",
@@ -117,6 +121,9 @@ ALLOWED_READONLY = [
     "jq '.a>1' f",
     "sed -n 40,70p f.rs", "sed -n 12p f.rs", "sed -n '$p' f.rs",
     "sed -n '10,20p' README.md",
+    # TICKET-152
+    "nl foo.py", "nl -ba src/a.py",
+    "for f in a b; do cat $f; done",
 ]
 PROJECT_PREFIXES = [["pipeline", "ls"], ["pipeline", "status"],
                      ["./pipeline/hooks/test_dangerous_commands.py"]]
