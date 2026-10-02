@@ -1,4 +1,6 @@
-# How to run this project's tests. `{test}` is substituted with the ticket's
+# How to run this project's tests. `init` seeds these from package.json
+# (vitest or jest), Cargo.toml or pyproject.toml; with none it seeds pytest.
+# `{test}` is substituted with the ticket's
 # `test_file` frontmatter value -- one test, or a list.
 # The dispatcher reads this file from git HEAD, so an edit to a committed
 # config takes effect once it is committed. Not yet committed, it is read
@@ -38,12 +40,10 @@ test_suite_without_new  = "pytest {test:--deselect }"
 # run. `{test:}` is the space-joined form written out, for a runner that
 # takes several values after one flag.
 #
-# Cargo, verified end to end against `cargo test`. `--skip` takes one value at
-# a time, so a two-test ticket needs `{name:--skip }`:
-# test_one               = "cargo test {name}"
-# test_suite             = "cargo test"
-# test_suite_without_new = "cargo test -- {name:--skip }"
-# test_one               = "cargo test {rest}"   # src/vm.rs::vm::tests::foo
+# Cargo: `init` seeds a wrapped `cargo test` when it finds Cargo.toml. Bare
+# `cargo test {name}` exits 0 when its filter matches no test, so `test_one` must
+# be wrapped -- the pipeline-config skill shows the recipe. For a selector like
+# src/vm.rs::vm::tests::foo, write `n={rest}` in place of `n={name}`.
 
 # The branch tickets are cut from, and the one Tier A re-runs {test} against.
 base                    = "main"
