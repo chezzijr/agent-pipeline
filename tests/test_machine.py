@@ -431,3 +431,8 @@ def test_the_size_scaled_bound_has_a_ceiling_and_spares_the_dispatchers_counters
     assert M.bound_for("bugfix", "no_result", {"plan_steps": 400}) == M.MAX_ATTEMPTS
     assert M.bound_for("bugfix", "review_loops", {"plan_steps": 400}) == 2
     assert M.bound_for("bugfix", "plan_validation_attempts", {"plan_steps": "24"}) == 2
+
+
+def test_a_dependency_at_branch_ready_satisfies_depends_on():
+    from pipeline.core.machine import dep_holder
+    assert dep_holder("B", {"B": ["A"]}, {"A": "branch-ready", "B": "new"}) is None

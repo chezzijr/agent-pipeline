@@ -408,3 +408,22 @@ def test_a_failing_worktree_setup_fails_the_base_checkout(capsys):
     assert "worktree_setup failed in the base checkout" in capsys.readouterr().out
     assert len(sh("git worktree list").stdout.splitlines()) == 1
     shutil.rmtree(d, ignore_errors=True)
+
+
+def test_a_branch_cut_from_a_base_behind_its_upstream_warns(capsys):
+    """Local base 1 commit behind its remote: the ticket is planned against
+    old code, so the dispatcher must say so at branch-cut time."""
+    d, sh = git_project()
+    remote = Path(tempfile.mkdtemp())
+    subprocess.run(f"git clone -q --bare {d} {remote}", shell=True, check=True)
+    sh(f"git remote add origin {remote} && git fetch -q origin "
+       "&& git branch -u origin/main main")
+    (d / "g.py").write_text("later")
+    sh("git add -A && git commit -qm later && git push -q origin main"
+       " && git reset -q --hard HEAD~1")
+    assert "behind 1" in sh("git status -sb").stdout
+    W.ensure_worktree(d, {"id": "TICKET-001", "branch": "ticket/001"}, {"base": "main"})
+    out = capsys.readouterr().out
+    assert "behind" in out, f"no warning that base is behind its upstream: {out!r}"
+    shutil.rmtree(d, ignore_errors=True)
+    shutil.rmtree(remote, ignore_errors=True)
