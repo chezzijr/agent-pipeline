@@ -340,13 +340,22 @@ def cmd_reject(args) -> None:
     bound this refuses rather than escalating: escalation means "a human must
     look", and one already is, holding the keyboard. The counter is lifetime,
     not "in a row" -- like every other counter here it only clears via an
-    explicit `--reset`, which is why the escape hatch below names it."""
+    explicit `--reset`, which is why the escape hatch below names it.
+
+    It also withdraws an approval at `revalidating`, before the re-gate runs.
+    A live, living lease holder refuses it, with no `--force`: forcing would
+    rewrite `stage` under a running re-gate (DEC-110)."""
     project = proj(args)
     if not args.reason.strip():
         die("a rejection needs a reason -- that's the whole point")
     t = Ticket.find(project, args.id)
-    if t.stage != "awaiting-approval":
-        die(f"{args.id} is in `{t.stage}`, not `awaiting-approval`")
+    if t.stage not in ("awaiting-approval", "revalidating"):
+        die(f"{args.id} is in `{t.stage}`, not `awaiting-approval` or `revalidating`")
+    holder = live_holder(t)
+    if holder:
+        die(f"{args.id}: `{t.stage}` holds a live lease (`{holder}`) -- the re-gate is running. "
+            f"Wait for it to finish, then reject the ticket where it lands.")
+    frm = t.stage
     if t.counters.get("plan_rejections", 0) >= 2:
         die(f"{args.id}: 3rd rejection: the ticket is the problem, not the plan.\n"
             f"Try `pipeline resume {args.id} --stage triage --reset plan_rejections`, "
@@ -354,9 +363,10 @@ def cmd_reject(args) -> None:
     t.counters["plan_rejections"] = t.counters.get("plan_rejections", 0) + 1
     t.stage = "planning"
     t.extra.pop("approved_plan_hash", None)
+    t.release_lease()
     t.append("human", "rejection", args.reason)
     t.save()
-    record(project, t, "awaiting-approval", "rejected")
+    record(project, t, frm, "rejected")
     print(f"{args.id}: -> planning")
 
 

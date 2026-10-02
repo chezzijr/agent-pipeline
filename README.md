@@ -598,7 +598,7 @@ Then one of three:
 | real, but the stage deserves another go with the thread it has now | `pipeline resume TICKET-017 --stage planning --grant plan_validation_attempts` |
 | the ticket itself is wrong | `pipeline close TICKET-017 --reason "why"` |
 
-`pipeline reject` rejects a plan only at `awaiting-approval`. To cancel an
+`pipeline reject` rejects a plan at `awaiting-approval`, and withdraws an approval at `revalidating` while no live stage holds the lease. To cancel an
 abandoned non-terminal ticket, use `pipeline close TICKET-017 --reason "why"`.
 Close records the human reason and moves the ticket to `rejected`. It refuses
 `done` and already `rejected` tickets. A living lease holder blocks close
