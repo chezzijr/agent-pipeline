@@ -84,6 +84,7 @@ Fill in these sections:
   running it must produce, as in `` - `grep -c foo docs/x.md` prints `0` ``. A
   backticked identifier alone is not a command: the span needs a word and at
   least one argument.
+  Name the plan step each criterion checks, as `(step 2)`, `(steps 1, 3)`, `(steps 1 and 3)` or `(steps 2-4)`. In a plan of two or more steps, the gate fails a step that no criterion names.
   A criterion that wraps must indent its continuation lines; an unindented
   line reads as a criterion of its own and is checked alone.
   A total any other ticket can move, such as the pass count of a suite or a
