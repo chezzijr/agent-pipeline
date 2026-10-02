@@ -57,7 +57,13 @@ FENCED = {
     # fence never sees it -- TICKET-037 and TICKET-038 both merged such a
     # diff unattended on 2026-08-23.
     "pipeline/core/machine.py": ("transition", "CONTROL_FIELDS", "FENCED"),
-    "pipeline/core/ticket.py": ("validate_meta",),
+    # The patterns that check a hostile ticket or sidecar value: SAFE_DEC_ID
+    # in correct_decision(), the rest in validate_meta(). A ticket that
+    # loosened one never touched a function body (TICKET-151 widened
+    # SAFE_TEST and merged unattended).
+    "pipeline/core/ticket.py": ("validate_meta", "SAFE_ID", "SAFE_BRANCH",
+                                "SAFE_TEST", "SAFE_FILE", "SAFE_HASH",
+                                "SAFE_DEC_ID"),
     "pipeline/core/worktree.py": ("strip_settings_sources",),
     # A project's stage prose (TICKET-038) is append-only and grants no
     # privilege, but `tree_snapshot()` excludes `.project/` -- nothing else

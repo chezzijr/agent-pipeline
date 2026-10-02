@@ -501,7 +501,9 @@ checkout, so there is no mid-run self-modification hazard.
 
 But a change to `pipeline/hooks/dangerous-commands.py`, `pipeline/harnesses/claude-code.toml`,
 `pipeline/harnesses/codex.toml`,
-`transition()`, `validate_meta()`, `CONTROL_FIELDS`, `FENCED`, `strip_settings_sources()`,
+`transition()`, `validate_meta()` and the patterns that check ticket values
+(`SAFE_ID`, `SAFE_BRANCH`, `SAFE_TEST`, `SAFE_FILE`, `SAFE_HASH`, `SAFE_DEC_ID`),
+`CONTROL_FIELDS`, `FENCED`, `strip_settings_sources()`,
 `.project/pipeline.toml` or `.project/stages/` **requires human review before merge**, whatever the pipeline says.
 A pipeline that can weaken its own guard unattended is the one failure mode worth
 refusing to automate.
