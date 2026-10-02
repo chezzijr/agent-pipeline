@@ -81,6 +81,29 @@ BLOCKED_READONLY = [
     "for f in a b; do rm $f; done",
     "for f in a b; do cat $f > out; done",
     "do cat a", "done",
+    "for f in <(rm x); do cat $f; done", "for f in a; do cat $f",
+    "for f in a b; cat $f; done", "for ((i=0; i<2; i++)); do cat a; done",
+    "for a in x; do for b in y; do rm $b; done; done",
+    "for PATH in /tmp; do true; done; ls", "for CDPATH in /; do cat a; done",
+    "for path in /tmp; do ls; done",
+    # the loop variable is a value the guard must judge, not a name (TICKET-152)
+    "for f in -i; do sed -n 1p $f x; done",
+    "for f in -i; do true; done; sed -n 1p $f x",
+    "for f in xi; do sed -n 1p $f:s/x/-/ x; done",
+    "for f in xi; do sed -n 1p ${f/x/-} x; done",
+    "for f in 'x -i'; do sed -n 1p $f; done",
+    "for f in {-i,x}; do sed -n 1p $f; done",
+    "cd", "cd -",
+    # loops do not nest, and only the enclosing loop's own variable expands (TICKET-152)
+    "for f in x; do for g in -i; do true; done; sed -n 1p $g x; done",
+    "for f in x; do for f in -i; do true; done; sed -n 1p $f x; done",
+    "for a in x; do for b in y; do cat $a $b; done; done",
+    "for a in 1 2; do for b in 1 2; do for c in 1 2; do true; done; done; done",
+    "for f in -i; do true; done; for g in x; do sed -n 1p $f x; done",
+    "for f in a; do cat $HOME; done",
+    "ls $HOME; for f in a; do cat $f; done",
+    "for f in *; do sed -n 1p $f; done",
+    "for f in =ls; do cat $f; done",
     'python3 -c "\nimport os\n"',
     "python3 - <<PY\nimport os\nPY",
     "cat a >\nfile",
@@ -124,17 +147,30 @@ ALLOWED_READONLY = [
     # TICKET-152
     "nl foo.py", "nl -ba src/a.py",
     "for f in a b; do cat $f; done",
+    "for f in a b\ndo\n  cat $f\ndone | head -5",
+    "for f in a.py b.py; do nl $f | head -3; done",
+    "for f in a; do cat $f.bak ${f}; done; for f in b; do cat $f; done",
+    "for f in -i; do true; done; for f in x; do sed -n 1p $f x; done",
+    "ls; for f in a b; do cat $f; done; ls",
 ]
 PROJECT_PREFIXES = [["pipeline", "ls"], ["pipeline", "status"],
-                     ["./pipeline/hooks/test_dangerous_commands.py"]]
+                     ["./pipeline/hooks/test_dangerous_commands.py"],
+                     ["git", "-C", "vendor"]]
 ALLOWED_PROJECT = [
     "pipeline ls", "pipeline ls -v", "pipeline status",
     "./pipeline/hooks/test_dangerous_commands.py", "pipeline ls | head -5",
+    # a prefix admits a loop body, never past always_rules() (TICKET-152)
+    "git -C vendor push origin x", "for f in a; do pipeline ls $f; done",
+    "for f in a; do sh -c 'pipeline ls'; done",
 ]
 BLOCKED_PROJECT = [
     "pipeline approve TICKET-058", "pipeline resume TICKET-058 --stage planning",
     "pipeline", "pipelines ls", "pipeline ls > out.txt",
     "pipeline ls && git commit -am wip", "sudo pipeline ls",
+    "for f in a; do git -C vendor push --force origin x; done",
+    "for f in --force; do git -C vendor push $f origin x; done",
+    "for f in a; do git -C vendor push origin main; done",
+    "for f in a; do sh -c 'git -C vendor push --force origin x'; done",
 ]
 
 def check(cmds, readonly, expect_block, label):
@@ -193,8 +229,11 @@ def tables():
 
     Pops PIPELINE_READONLY_ALLOW first and restores it in the finally: the
     stage running this suite may already export this repo's own allowlist, and
-    without the pop BLOCKED_READONLY's `pipeline status` would read as allowed."""
+    without the pop BLOCKED_READONLY's `pipeline status` would read as allowed.
+    PIPELINE_WORKTREE is popped too: the tables mean "no worktree known", so
+    every `cd` in them is blocked."""
     saved = os.environ.pop("PIPELINE_READONLY_ALLOW", None)
+    saved_wt = os.environ.pop("PIPELINE_WORKTREE", None)
     try:
         check(BLOCKED_ALWAYS, False, True, "always")
         check(ALLOWED_ALWAYS, False, False, "always")
@@ -207,6 +246,8 @@ def tables():
     finally:
         if saved is not None:
             os.environ["PIPELINE_READONLY_ALLOW"] = saved
+        if saved_wt is not None:
+            os.environ["PIPELINE_WORKTREE"] = saved_wt
 
 
 def test_a_read_only_stage_runs_the_commands_its_project_allows():

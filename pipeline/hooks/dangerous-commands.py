@@ -53,7 +53,7 @@ GIT_WORKTREE_READ = {"list"}
 READ_TOOLS = {"ls", "cat", "head", "tail", "wc", "grep", "rg", "ag", "find",
               "file", "stat", "du", "tree", "echo", "true", "false", "pwd",
               "which", "basename", "dirname", "sort", "uniq", "cut", "awk",
-              "diff", "column", "jq", "yq", "date", "printf", "test", "["}
+              "diff", "column", "jq", "yq", "date", "printf", "test", "[", "nl"}
 TEST_RUNNERS = {"pytest", "py.test", "tox", "nox", "unittest"}
 # programs allowed only with a vetted first argument
 GUARDED = {
@@ -118,6 +118,92 @@ def redirection(argv: list[str]) -> str | None:
                 continue
             return tok
     return None
+
+
+# no bash or zsh special parameter is one lowercase letter, so the loop cannot
+# assign PATH, CDPATH, IFS or zsh's tied path/cdpath
+LOOP_NAME = re.compile(r"[a-z]")
+# no space, quote, glob, `$`, `{`, `<(` or leading `=` (zsh `=cmd`), so a word
+# is exactly the value the shell assigns
+LOOP_WORD = re.compile(r"[\w./@+,:-][\w./@+,:=-]*")
+# the lookahead refuses `$f:s/x/-/` and `$f[1]`, zsh's modifier and subscript
+VAR_REF = re.compile(r"\$(?:([A-Za-z_][A-Za-z0-9_]*)|\{([A-Za-z_][A-Za-z0-9_]*)\})(?=\Z|[/._,=@+-])")
+
+
+def substitute(tok: str, name: str, word: str) -> str:
+    return VAR_REF.sub(lambda m: word if (m.group(1) or m.group(2)) == name else m.group(0), tok)
+
+
+def loop_bodies(segs: list[list[str]]) -> tuple[list[list[str]] | None, str | None]:
+    """Segments with each `for NAME in WORDS; do BODY; done` replaced by BODY's
+    commands, or `(None, reason)`.
+
+    1. Each body command is judged verbatim AND once per word with the
+       variable replaced, because the variable is a value a rule like
+       `sed_is_a_line_print()` must see.
+    2. A `do`/`done` outside the shape stays a command with that keyword as
+       `argv[0]`, so default deny refuses it: the keywords never become
+       allowable.
+    3. Loops do not nest: nesting let an inner name escape the scope check,
+       let a shadowing inner loop rewrite the outer variable, and multiplied
+       the expansion to (words + 1)^depth, whose `MemoryError` exits 1 and
+       runs the command.
+    4. A `$` may name only the loop enclosing it, because the variable
+       outlives the loop.
+    5. Three measured holes shape the rules: the variable outlives the loop
+       (`for f in -i; do true; done; sed -n 1p $f x`), a zsh modifier
+       rewrites it (`$f:s/x/-/`), and parameter expansion rewrites it
+       (`${f/x/-}`)."""
+    if not any(a and a[0] == "for" for a in segs):
+        return segs, None
+    out = []
+    loop = None  # (name, words, body) of the open loop; loops do not nest
+    want_do = False
+    for argv in segs:
+        if not argv:
+            continue
+        if want_do:
+            if argv[0] != "do":
+                return None, "a `for` loop needs `do` after its word list"
+            want_do = False
+            argv = argv[1:]
+            if not argv:
+                continue
+        if argv[0] == "for":
+            if loop is not None:
+                return None, "a `for` loop inside another `for` loop is not a read-only loop"
+            if (len(argv) < 3 or not LOOP_NAME.fullmatch(argv[1]) or argv[2] != "in"
+                    or not all(LOOP_WORD.fullmatch(w) for w in argv[3:])):
+                return None, ("only `for x in WORDS; do ...; done` is a read-only loop: "
+                              "a one-letter lowercase name, and words with no space, "
+                              "quote, glob, `$`, `{`, `<(` or leading `=`")
+            loop = (argv[1], argv[3:], [])
+            want_do = True
+            continue
+        if argv == ["done"]:
+            if loop is None:
+                return None, "`done` closes no `for` loop"
+            name, words, body = loop
+            if any(c[0] == "cd" for c in body):
+                return None, ("`cd` inside a `for` loop runs once per word but is "
+                              "judged once -- move it before the loop")
+            out.extend(body + [[substitute(t, name, w) for t in c]
+                               for w in words for c in body])
+            loop = None
+            continue
+        for tok in argv:
+            for i, ch in enumerate(tok):
+                if ch != "$":
+                    continue
+                m = VAR_REF.match(tok, i)
+                if not m or loop is None or (m.group(1) or m.group(2)) != loop[0]:
+                    return None, (f"`{tok}`: a command with a `for` loop may expand only "
+                                  "the loop's own variable, as a plain $x or ${x}, "
+                                  "inside that loop")
+        (loop[2] if loop else out).append(argv)
+    if want_do or loop is not None:
+        return None, "a `for` loop with no `done`"
+    return out, None
 
 
 def presplit_segments(command: str) -> list[list[str]] | None:
@@ -301,6 +387,15 @@ def readonly_rules(segs: list[list[str]], raw: str) -> str | None:
             return "shell redirection into a file"
     if "$(" in raw or "`" in raw:
         return "command substitution the guard cannot inspect"
+
+    segs, why = loop_bodies(segs)
+    if why:
+        return why
+    # verdict() ran flatten() and always_rules() on segments whose argv[0] was "do", so run both again on the bodies -- DEC-058: a project prefix never re-enables what always_rules() refuses (TICKET-152)
+    segs = [a for seg in segs for a in flatten(seg)]
+    why = always_rules(segs, raw)
+    if why:
+        return why
 
     allow = readonly_prefixes()
     for argv in segs:
