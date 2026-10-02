@@ -134,6 +134,62 @@ BLOCKED_READONLY = [
     "sed -n '40,70p;w out.txt' f.rs",
     # review found 2026-08-30: process substitution writes a file too
     "wc -l >(tee out.txt)",
+    # TICKET-153: find writes or runs a command
+    "find . -name x -delete", "find . -exec rm {} ;", "find . -execdir rm {} +",
+    "find . -ok rm {} ;", "find . -okdir rm {} ;", "find . -fprint /tmp/out",
+    "find . -fprint0 /tmp/out", "find . -fprintf /tmp/out %p",
+    "find . -fls /tmp/out", "for f in -delete; do find . $f; done",
+    # TICKET-153: awk writes or runs a command
+    "awk 'BEGIN{system(\"touch /tmp/x\")}'", "awk '{print $1 > \"out\"}' f",
+    "awk '{print $1 >> \"out\"}' f", "awk '{print $1 | \"sh\"}' f",
+    "awk 'BEGIN{\"date\" | getline d}'",
+    "awk 'BEGIN{x=\"system\"; @x(\"touch /tmp/x\")}'",
+    "awk -f prog.awk f", "awk -i inplace '{print}' f",
+    # TICKET-153: sort, uniq, rg and file write or run a command; ag, tree and yq left READ_TOOLS
+    "sort -o /tmp/out f", "sort -no /tmp/out f", "sort --output=/tmp/out f",
+    "sort --out=/tmp/out f", "sort --compress-program=./p.sh f", "sort -T /tmp f",
+    "uniq f /tmp/out", "uniq -c f /tmp/out", "rg --pre ./p.sh a .",
+    "rg --pre=./p.sh a .", "rg --hostname-bin=./p.sh a .", "rg -z a .",
+    "file -C -m m", "for o in -o; do sort $o /tmp/out f; done",
+    "tree -o /tmp/out", "yq -i '.a=1' f.yaml", "ag --pager ./p.sh a",
+    # TICKET-153: git options and forms that write or run a command
+    "git diff --output=/tmp/o HEAD", "git log --output /tmp/o -1",
+    "git show --output=/tmp/o HEAD", "git grep -O./p.sh x", "git grep -nO./p.sh x",
+    "git grep --open-files-in-pager=./p.sh x", "git grep --open-files=./p.sh x",
+    "git -c core.pager=./p.sh log", "git --config-env=core.pager=P log",
+    "git --exec-path=/tmp log", "git diff --ext-diff HEAD", "git branch -D foo",
+    "git branch newref", "git branch -m a b", "git branch -f main HEAD",
+    "git branch --set-upstream-to=origin/x", "git remote add x u",
+    "git remote -v remove origin", "git remote set-url origin u",
+    "git worktree add ../x list", "for o in --output=/tmp/o; do git diff $o; done",
+    # TICKET-153: uv run and poetry run meet the rules of the command they run
+    "uv run rm /tmp/x", "uv run python -c 1", "uv run find . -name x -delete",
+    "uv run --with x pytest", "uv run --python ./p.sh pytest",
+    "uv run --directory /tmp pytest", "uv run uv run rm x", "uv run",
+    "uv run --group dev", "poetry run touch /tmp/x", "poetry run -C /tmp pytest",
+    "uv sync", "uv run -m pytest",
+    # TICKET-153: npm, pnpm and yarn run only the test script
+    "npm run deploy", "pnpm run build", "yarn run eslint --fix",
+    "npm test --script-shell=./p.sh", "npm run test --script-shell ./p.sh",
+    "npm run-script test", "yarn eslint", "npm test -- --runInBand",
+    # TICKET-153: make, cargo and go options that write outside the worktree or run a command
+    "make test SHELL=./p.sh", "make test --eval=x", "make -C /tmp test",
+    "make test install", "cargo test --config build.rustc-wrapper=./p.sh",
+    "cargo build --target-dir /tmp/t", "cargo test -- --logfile /tmp/l",
+    "cargo fmt", "cargo clippy --fix", "cargo clippy -- -C linker=./p.sh",
+    "go test -exec ./p.sh ./...", "go vet -vettool=./p.sh ./...",
+    "go test -c -o /tmp/x .", "go test -coverprofile=/tmp/c ./...",
+    "go build -ldflags=-extld=./p.sh .",
+    "go test ./... -args -test.coverprofile=/tmp/c",
+    "uv run cargo build --target-dir /tmp/t",
+    # TICKET-153: test runner options that write outside the worktree or load code
+    "pytest --junit-xml=/tmp/x", "pytest --basetemp=/tmp/b", "pytest -p evil",
+    "pytest -o cache_dir=/tmp/c", "pytest --log-file=/tmp/l",
+    "pytest --debug=/tmp/d", "pytest --rootdir=/tmp", "pytest --junit=/tmp/x",
+    "python3 -m pytest --junit-xml=/tmp/x", "py.test --junitxml=/tmp/x",
+    "uv run --group dev pytest --junit-xml=/tmp/x",
+    "tox -e py -- --junit-xml=/tmp/x", "tox --workdir /tmp", "nox -f /tmp/n.py",
+    "python3 -m unittest --junk",
 ]
 ALLOWED_READONLY = [
     "pytest -x", "git diff main...HEAD", "grep -rn foo .", "git log --oneline",
@@ -159,6 +215,31 @@ ALLOWED_READONLY = [
     "for f in a; do cat $f.bak ${f}; done; for f in b; do cat $f; done",
     "for f in -i; do true; done; for f in x; do sed -n 1p $f x; done",
     "ls; for f in a b; do cat $f; done; ls",
+    # TICKET-153
+    "find . -type f -mtime -7", "find -L . -maxdepth 2 -size -10k -print",
+    "find . -path ./node_modules -prune -o -name '*.js' -print",
+    "awk '{print $1}' f", "awk -F: '{print $1}' /etc/passwd",
+    "awk -F , -v n=3 'NR==n{print $2}' f.csv",
+    "rg -n --hidden -g '*.py' 'def foo' pipeline/", "rg -l -t py -e '-foo' .",
+    "rg --files", "sort -nr f", "sort -t, -k2,2 f.csv", "sort -u --key=1,1 f",
+    "git log --oneline | sort | uniq -c | sort -rn | head", "uniq -c f",
+    "file -b --mime-type x.py",
+    "git branch", "git branch -a", "git branch -vv", "git branch --list 'ticket/*'",
+    "git branch --show-current", "git branch --contains HEAD", "git remote -v",
+    "git remote get-url origin", "git remote show origin",
+    "git worktree list --porcelain", "git log -c -1", "git grep -n foo",
+    "git log --oneline --output-indicator-new=+ -1", "git diff --no-ext-diff HEAD",
+    "uv run --group dev pytest -x tests/test_fence.py",
+    "uv run --group=dev --frozen pytest -q", "uv run rg x",
+    "uv run python -m pytest -q", "poetry run pytest -x",
+    "uv run --no-sync git log --oneline", "uv run uv run pytest",
+    "npm test", "npm run test", "pnpm test", "yarn test", "yarn run test",
+    "make check -k", "make lint -j4", "make test -j 4", "cargo test -p foo --release",
+    "cargo test my_test -- --nocapture --test-threads 1",
+    "cargo clippy --all-targets -- -D warnings", "cargo fmt --check",
+    "go test -run TestX -count=1 ./...", "go test ./... -v -race", "go vet ./...",
+    "pytest -q tests/test_fence.py::t -k foo --tb=short", "pytest --lf -rA",
+    "python3 -m unittest -v tests.test_x", "tox -e py", "nox -s tests", "py.test -x",
 ]
 PROJECT_PREFIXES = [["pipeline", "ls"], ["pipeline", "status"],
                      ["./pipeline/hooks/test_dangerous_commands.py"],
@@ -169,6 +250,7 @@ ALLOWED_PROJECT = [
     # a prefix admits a loop body, never past always_rules() (TICKET-152)
     "git -C vendor push origin x", "for f in a; do pipeline ls $f; done",
     "for f in a; do sh -c 'pipeline ls'; done",
+    "uv run pipeline ls",
 ]
 BLOCKED_PROJECT = [
     "pipeline approve TICKET-058", "pipeline resume TICKET-058 --stage planning",
@@ -178,6 +260,7 @@ BLOCKED_PROJECT = [
     "for f in --force; do git -C vendor push $f origin x; done",
     "for f in a; do git -C vendor push origin main; done",
     "for f in a; do sh -c 'git -C vendor push --force origin x'; done",
+    "uv run --with x pipeline ls",
 ]
 
 def check(cmds, readonly, expect_block, label):
