@@ -150,7 +150,7 @@ body is never rewritten: the correction qualifies one claim, where
 thread finding and nothing is written.
 
 That is wrong for a repo where you are the only one running the pipeline.
-`pipeline init --private` writes `.project/` into `.git/info/exclude`, which is
+`pipeline init --private` writes `.project/`, `.worktrees/` and the skill directories `init` installs into `.git/info/exclude`, which is
 **per-clone and never committed** -- no line about a tool your teammates do not
 use lands in their diffs. Everything still works; the tickets are simply a
 local queue, and the dispatcher says so when it skips recording one:

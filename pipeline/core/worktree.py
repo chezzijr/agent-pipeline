@@ -241,10 +241,12 @@ def dirty_snapshot(project: Path) -> str:
 
 
 EXCLUDE_LINE = ".project/"
+WORKTREES_LINE = ".worktrees/"
 
 
-def exclude_project_dir(project: Path) -> str | None:
-    """Hide `.project/` from git for THIS clone only, via `.git/info/exclude`.
+def exclude_project_dir(project: Path, extra: tuple[str, ...] = ()) -> str | None:
+    """Hide `.project/`, `.worktrees/` and the given skill directories from
+    git for THIS clone only, via `.git/info/exclude`.
 
     For a shared repo where not everyone runs the pipeline. `.gitignore` is the
     wrong file for that: it is tracked, so it puts a line about a tool the rest
@@ -271,10 +273,13 @@ def exclude_project_dir(project: Path) -> str | None:
     info.mkdir(parents=True, exist_ok=True)
     f = info / "exclude"
     body = f.read_text() if f.is_file() else ""
-    if EXCLUDE_LINE in body.split():
+    held = body.split()
+    missing = [ln for ln in dict.fromkeys((EXCLUDE_LINE, WORKTREES_LINE, *extra))
+               if ln not in held]
+    if not missing:
         return None
     f.write_text(body + ("" if body.endswith("\n") or not body else "\n")
-                 + f"{EXCLUDE_LINE}\n")
+                 + "".join(f"{ln}\n" for ln in missing))
     return str(f)
 
 

@@ -110,9 +110,13 @@ def cmd_init(args) -> None:
     # `.gitignore` line instead -- a shared decision, made deliberately, not a
     # side effect of a CLI flag.
     if getattr(args, "private", False):
-        wrote = exclude_project_dir(project)
-        print(f"  excluded `.project/` in {wrote} -- this clone only" if wrote
-              else "  `.project/` already excluded (or this is not a git repo)")
+        skill_dirs = tuple(dict.fromkeys(
+            f"{dst.parent.relative_to(project).as_posix()}/"
+            for _, _, dst, _ in skill_status(project)))
+        wrote = exclude_project_dir(project, skill_dirs)
+        print(f"  excluded `.project/`, `.worktrees/` and the installed skill "
+              f"directories in {wrote} -- this clone only" if wrote
+              else "  already excluded (or this is not a git repo)")
         print(f"  {cfg} will never be in git here -- it is pinned at "
               f"{pin_path(project, '.project/pipeline.toml')}")
         print(f"  an unsynced edit is inert -- run "
@@ -1009,7 +1013,7 @@ def main() -> None:
                     "the target for everything else (default: cwd)")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
-    p = sub.add_parser("init"); p.add_argument("dir", nargs="?", default=None); p.add_argument("--private", action="store_true", help="hide .project/ from git in this clone only (.git/info/exclude)"); p.add_argument("--no-register", dest="no_register", action="store_true", help="scaffold only -- skip registering this project with the daemon (for CI or other scaffold-only callers)"); p.set_defaults(fn=cmd_init)
+    p = sub.add_parser("init"); p.add_argument("dir", nargs="?", default=None); p.add_argument("--private", action="store_true", help="hide .project/, .worktrees/ and the installed skills from git in this clone only (.git/info/exclude)"); p.add_argument("--no-register", dest="no_register", action="store_true", help="scaffold only -- skip registering this project with the daemon (for CI or other scaffold-only callers)"); p.set_defaults(fn=cmd_init)
     p = sub.add_parser("new"); p.add_argument("title"); p.add_argument("--class", dest="cls", default="bugfix")
     p.add_argument("--summary-file", metavar="PATH",
                    help="read the complete Summary from PATH, or - for standard input, before publishing the ticket")

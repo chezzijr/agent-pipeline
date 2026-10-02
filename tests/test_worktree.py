@@ -408,3 +408,17 @@ def test_a_failing_worktree_setup_fails_the_base_checkout(capsys):
     assert "worktree_setup failed in the base checkout" in capsys.readouterr().out
     assert len(sh("git worktree list").stdout.splitlines()) == 1
     shutil.rmtree(d, ignore_errors=True)
+
+
+def test_private_exclude_adds_worktrees_and_skill_dirs_once():
+    """TICKET-151: `--private` hides `.worktrees/` and the installed skill
+    directories too, on a clone whose exclude already holds `.project/`."""
+    d, sh = git_project()
+    skills = (".claude/skills/file-ticket/",)
+    (d / ".git" / "info").mkdir(exist_ok=True)
+    (d / ".git" / "info" / "exclude").write_text(".project/" + chr(10))
+    assert W.exclude_project_dir(d, skills)
+    assert sh("git check-ignore -q .worktrees/x").returncode == 0
+    assert sh("git check-ignore -q .claude/skills/file-ticket/SKILL.md").returncode == 0
+    assert (d / ".git" / "info" / "exclude").read_text().split().count(".project/") == 1
+    assert W.exclude_project_dir(d, skills) is None
