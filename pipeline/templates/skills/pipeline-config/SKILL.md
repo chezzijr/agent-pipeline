@@ -69,15 +69,59 @@ unchanged.
 
 ```toml
 # cargo
-test_one               = "cargo test {name}"
-test_suite             = "cargo test"
-test_suite_without_new = "cargo test -- --skip {name}"
+test_one = '''
+n={name}
+out=$(cargo test "$n" 2>&1); rc=$?
+if printf '%s\n' "$out" | grep -Eq '^running [1-9]'; then printf '%s\n' "$out"; exit "$rc"; fi
+printf '%s\n' "$out" | grep -vF -- "$n"; echo 'test_one: no test ran'; exit 1
+'''
+test_suite = "cargo test"
+test_suite_without_new = "cargo test -- {name:--skip }"
 ```
 
-`--skip` takes one value at a time, so a two-test ticket needs
-`cargo test -- {name:--skip }` instead. A multi-segment selector like
-`src/vm.rs::vm::tests::foo` needs `{rest}`, not `{name}`, as the module
-path: `test_one = "cargo test {rest}"`.
+`init` seeds this when it finds `Cargo.toml`. Bare `cargo test {name}` exits 0 when its filter matches no test, and a compile error inside the test prints the test's name; the wrapper turns both into exit 1 without the name. `{name:--skip }` repeats `--skip` once per listed test, because `--skip` takes one value at a time. A multi-segment selector like `src/vm.rs::vm::tests::foo` needs `{rest}`, not `{name}`, as the module path: write `n={rest}` on `test_one`'s first line.
+
+### Vitest and Jest
+
+`init` seeds these when `package.json` lists `vitest` or `jest`.
+
+```toml
+# vitest
+test_one = '''
+n={name}; t=$(printf '%s' "$n" | sed 's/[][\.*^$+?(){}|]/\\&/g')
+out=$(npx vitest run --reporter=verbose {path} -t "^$t\$" 2>&1); rc=$?
+if printf '%s\n' "$out" | grep -Eq 'Tests:? .*[0-9]+ (passed|failed)'; then printf '%s\n' "$out"; exit "$rc"; fi
+printf '%s\n' "$out" | grep -vF -- "$n"; echo 'test_one: no test ran'; exit 1
+'''
+test_suite = "npx vitest run"
+test_suite_without_new = '''
+p=$(for n in {name}; do printf '%s\n' "$n"; done | sed 's/[][\.*^$+?(){}|]/\\&/g' | paste -sd '|' -)
+npx vitest run -t "^(?!(?:$p)\$)"
+'''
+```
+
+```toml
+# jest
+test_one = '''
+n={name}; t=$(printf '%s' "$n" | sed -e 's/ > / /g' -e 's/[][\.*^$+?(){}|]/\\&/g')
+out=$(npx jest {path} -t "^$t\$" 2>&1); rc=$?
+if printf '%s\n' "$out" | grep -Eq 'Tests:? .*[0-9]+ (passed|failed)'; then printf '%s\n' "$out" | sed 's/ › / > /g'; exit "$rc"; fi
+printf '%s\n' "$out" | grep -vF -- "$n"; echo 'test_one: no test ran'; exit 1
+'''
+test_suite = "npx jest"
+test_suite_without_new = '''
+p=$(for n in {name}; do printf '%s\n' "$n"; done | sed -e 's/ > / /g' -e 's/[][\.*^$+?(){}|]/\\&/g' | paste -sd '|' -)
+npx jest -t "^(?!(?:$p)\$)"
+'''
+```
+
+- Vitest joins nested suite names with ` > ` in the full test name; Jest joins them with a space and prints ` › `. The Jest recipe rewrites ` > ` to a space for `-t` and ` › ` back to ` > ` in the output.
+- Both runners exit 0 when `-t` matches nothing (Vitest `Tests  4 skipped (4)`, Jest `Tests:       3 skipped, 3 total`). The wrapper exits 1 unless the output shows a passed or failed test.
+- `npx` and the runner echo the `-t` pattern, so an unmatched or import-erroring test still prints its name, and the gate would read that exit-1 run as a reproduction. The wrapper drops every output line holding the name when no test ran.
+- `-t` is a regex. `[`, `]` and `.` are legal name characters, so the recipe escapes them; `^...$` stops `asks` also selecting `asks twice`.
+- Neither runner has a deselect flag. A negative-lookahead `-t` regex excludes by name, so a same-titled test in another file is excluded too.
+
+Verified against Vitest 5.0.3 and Jest 30.5.2.
 
 ## Prove it before you claim it works
 

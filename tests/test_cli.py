@@ -9,9 +9,11 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+import tomllib
 import types
 from pathlib import Path
 
+import pipeline.core.config as C
 from helpers import FIXTURE, ROOT, git_project, project
 from pipeline.core.config import PKG
 from pipeline.core.ticket import Ticket, stage_view
@@ -1938,3 +1940,53 @@ def test_init_private_hides_installed_skills_and_worktrees():
                             capture_output=True, text=True).stdout
     assert status == "", status
     shutil.rmtree(d, ignore_errors=True)
+
+
+def _init_cfg(files):
+    """Run `init` in a fresh dir holding `files` ({path: text}); return
+    (parsed config, stdout)."""
+    d = Path(tempfile.mkdtemp())
+    for rel, text in files.items():
+        (d / rel).parent.mkdir(parents=True, exist_ok=True)
+        (d / rel).write_text(text)
+    r = cli(d, "init", "--no-register")
+    assert r.returncode == 0, r.stderr
+    cfg = tomllib.loads((d / ".project" / "pipeline.toml").read_text())
+    shutil.rmtree(d, ignore_errors=True)
+    return cfg, r.stdout
+
+
+def test_init_seeds_commands_by_the_project_marker():
+    """TICKET-151: each marker seeds its own commands, equal to the constants
+    the seed tests execute."""
+    jest = tomllib.loads(C.JEST_SEED)["test_one"]
+    vitest = tomllib.loads(C.VITEST_SEED)["test_one"]
+    cfg, _ = _init_cfg({"package.json": '{"devDependencies": {"jest": "^29"}}'})
+    assert cfg["test_one"] == jest
+    cfg, _ = _init_cfg({"Cargo.toml": ""})
+    assert 'cargo test "$n"' in cfg["test_one"]
+    assert "test_one: no test ran" in cfg["test_one"]
+    assert cfg["test_suite_without_new"] == "cargo test -- {name:--skip }"
+    cfg, out = _init_cfg({})
+    assert cfg["test_one"] == "pytest -x {test}"
+    assert "no runner detected" in out
+    cfg, _ = _init_cfg({"package.json": '{"dependencies": {"vitest": "1"}}'})
+    assert cfg["test_one"] == vitest
+    cfg, out = _init_cfg({
+        "package.json": '{"workspaces": ["packages/*"]}',
+        "packages/app/package.json": '{"devDependencies": {"vitest": "^1"}}'})
+    assert cfg["test_one"] == vitest
+    assert "found packages/app/package.json" in out
+    cfg, _ = _init_cfg({
+        "package.json": '{"workspaces": {"packages": ["apps/*"]}}',
+        "apps/web/package.json": '{"devDependencies": {"jest": "^29"}}'})
+    assert cfg["test_one"] == jest
+    cfg, _ = _init_cfg({"package.json": '{"workspaces": ["/etc/*", "../x", ""]}'})
+    assert cfg["test_one"] == "pytest -x {test}", "hostile workspace globs are skipped"
+
+
+def test_the_seeded_recipes_match_the_pipeline_config_skill():
+    """TICKET-151: the skill shows exactly the text `init` writes."""
+    skill = (C.SKILLS_DIR / "pipeline-config" / "SKILL.md").read_text()
+    for seed in (C.VITEST_SEED, C.JEST_SEED, C.CARGO_SEED):
+        assert seed.strip() in skill
