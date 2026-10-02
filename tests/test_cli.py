@@ -1914,3 +1914,27 @@ def test_reject_still_refuses_awaiting_merge():
     t = Ticket.load(path)
     assert t.stage == "awaiting-merge"
     shutil.rmtree(d)
+
+def test_init_seeds_vitest_commands_for_a_package_json_project():
+    """TICKET-151: init must not seed pytest into a JavaScript project."""
+    d = Path(tempfile.mkdtemp())
+    (d / "package.json").write_text('{"devDependencies": {"vitest": "^1.0.0"}}')
+    r = cli(d, "init")
+    assert r.returncode == 0, r.stderr
+    toml = (d / ".project" / "pipeline.toml").read_text()
+    assert "vitest" in toml and 'test_one                = "pytest' not in toml, toml
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_init_private_hides_installed_skills_and_worktrees():
+    """TICKET-151: --private leaves nothing of the pipeline in `git status`."""
+    d = Path(tempfile.mkdtemp())
+    subprocess.run("git init -qb main", shell=True, cwd=d)
+    r = cli(d, "init", "--private")
+    assert r.returncode == 0, r.stderr
+    (d / ".worktrees").mkdir()
+    (d / ".worktrees" / "x").write_text("x")
+    status = subprocess.run("git status --porcelain -uall", shell=True, cwd=d,
+                            capture_output=True, text=True).stdout
+    assert status == "", status
+    shutil.rmtree(d, ignore_errors=True)

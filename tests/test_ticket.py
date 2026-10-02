@@ -810,3 +810,15 @@ def test_a_malformed_approved_plan_hash_is_refused():
     for bad in ("a" * 63, "A" * 64, "$(id)" + "a" * 59, ""):
         found = T.validate_meta({**ok, "approved_plan_hash": bad})
         assert any("approved_plan_hash" in f for f in found), bad
+
+
+def test_test_file_name_half_accepts_a_vitest_title():
+    """TICKET-151: a Vitest title is prose joined with ` > `. The name half
+    takes spaces and `>`; quotes, `$`, backticks, `;`, `|`, `&` stay refused."""
+    ok = {"id": "TICKET-001", "branch": "ticket/001", "files_declared": ["a.py"]}
+    good = "src/save.test.ts::outer > saving onto an existing name asks"
+    assert T.validate_meta({**ok, "test_file": good}) == []
+    for bad in ("a.ts::x; rm -rf ~", "a.ts::x | y", "a.ts::x & y", "a.ts::$(id)",
+                "a.ts::`id`", "a.ts::it's", 'a.ts::say "hi"', "a.ts::x\ny"):
+        assert T.validate_meta({**ok, "test_file": bad}), bad
+    assert T.validate_meta({**ok, "test_file": "a b.ts::t"}), "path half stays strict"
