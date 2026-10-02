@@ -578,3 +578,12 @@ def test_skill_install_refuses_every_symlinked_destination_ancestor():
     except PipelineError as e:
         assert "symlinked skill path" in str(e)
     assert not (outside / "file-ticket" / "SKILL.md").exists()
+
+
+def test_merge_mode_defaults_to_local_and_ignores_a_bad_value(capsys):
+    from pipeline.core.config import merge_mode
+    reset_notices()
+    assert merge_mode(Path("/p"), {}) == "local"
+    assert merge_mode(Path("/p"), {"merge": "none"}) == "none"
+    assert merge_mode(Path("/p"), {"merge": "pr"}) == "local"
+    assert "merge" in capsys.readouterr().out

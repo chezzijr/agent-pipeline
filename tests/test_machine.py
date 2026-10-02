@@ -239,7 +239,7 @@ def test_escalated_tickets_keep_their_worktree():
     assert "escalated" in M.TERMINAL
     assert "escalated" not in M.CLEANUP_STAGES, \
         "removing it destroys the uncommitted evidence a human was called for"
-    assert M.CLEANUP_STAGES == {"done", "rejected"}
+    assert M.CLEANUP_STAGES == {"done", "rejected", "branch-ready"}
 
 
 def test_an_approved_plan_is_re_gated_before_it_is_implemented():
@@ -436,3 +436,11 @@ def test_the_size_scaled_bound_has_a_ceiling_and_spares_the_dispatchers_counters
 def test_a_dependency_at_branch_ready_satisfies_depends_on():
     from pipeline.core.machine import dep_holder
     assert dep_holder("B", {"B": ["A"]}, {"A": "branch-ready", "B": "new"}) is None
+
+
+def test_merging_kept_ends_at_branch_ready():
+    assert M.transition("merging", "kept", {}) == ("branch-ready", {})
+    assert "branch-ready" in M.TERMINAL
+    assert "branch-ready" in M.CLEANUP_STAGES
+    assert "branch-ready" in M.KNOWN_STAGES
+    assert M.VERIFIED == {"done", "branch-ready"}
