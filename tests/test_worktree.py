@@ -427,3 +427,32 @@ def test_a_branch_cut_from_a_base_behind_its_upstream_warns(capsys):
     assert "behind" in out, f"no warning that base is behind its upstream: {out!r}"
     shutil.rmtree(d, ignore_errors=True)
     shutil.rmtree(remote, ignore_errors=True)
+
+
+def test_a_branch_cut_fetches_the_upstream_and_leaves_base_alone(capsys):
+    d, sh = git_project()
+    remote = Path(tempfile.mkdtemp())
+    other = Path(tempfile.mkdtemp())
+    subprocess.run(f"git clone -q --bare {d} {remote}", shell=True, check=True)
+    sh(f"git remote add origin {remote} && git fetch -q origin && git branch -u origin/main main")
+    subprocess.run(f"git clone -q {remote} {other} && cd {other} && git config user.email t@t "
+                   "&& git config user.name t && echo h > h.py && git add h.py "
+                   "&& git commit -qm h && git push -q origin main", shell=True, check=True)
+    assert sh("git rev-list --count main..origin/main").stdout.strip() == "0"
+    old = sh("git rev-parse main").stdout
+    W.ensure_worktree(d, {"id": "TICKET-001", "branch": "ticket/001"}, {"base": "main"})
+    assert "behind" in capsys.readouterr().out
+    assert sh("git rev-parse main").stdout == old
+    assert sh("git rev-parse ticket/001").stdout == old
+    assert sh("git rev-list --count main..origin/main").stdout.strip() == "1"
+    for p in (d, remote, other):
+        shutil.rmtree(p, ignore_errors=True)
+
+
+def test_a_base_with_no_upstream_cuts_without_a_warning(capsys):
+    d, sh = git_project()
+    wt = W.ensure_worktree(d, {"id": "TICKET-001", "branch": "ticket/001"}, {"base": "main"})
+    out = capsys.readouterr().out
+    assert wt is not None and wt.is_dir()
+    assert "behind" not in out and "fetch" not in out
+    shutil.rmtree(d, ignore_errors=True)

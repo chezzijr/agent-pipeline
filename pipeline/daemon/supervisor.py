@@ -899,9 +899,14 @@ def start(project: Path, path: Path, hcfg: dict, inflight: dict,
         # ticket's agent -- down with it
         return bail(str(e))
     drain_all(inflight)      # `git worktree add` + worktree_setup both block
-    wt = ensure_worktree(project, t.frontmatter(), cfg)
+    notes: list[str] = []
+    wt = ensure_worktree(project, t.frontmatter(), cfg, notes)
     if wt is None:
         return bail("could not create a worktree")
+    for n in notes:
+        t.append(stage, "note", n)
+    if notes:
+        t.save()
 
     def child(cmd: str, kind: str, env: dict | None = None) -> tuple[bool, dict]:
         # a child that outlives the tick must lease exactly like an agent, or a

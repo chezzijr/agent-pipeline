@@ -11,6 +11,7 @@ from pathlib import Path
 EAGAIN_TRIES = 4
 EAGAIN_BACKOFF = 0.25
 OUTPUT_EDGE = 2000
+FETCH_TIMEOUT = 20
 # The prefix `gate._base_findings()` matches to tell a setup failure from a
 # failed `git worktree add`.
 SETUP_FAILED = "worktree_setup exited "
@@ -73,6 +74,54 @@ def base_ref(cfg: dict) -> str:
     return str(cfg.get("base", "main"))
 
 
+def _first_line(out: str) -> str:
+    return next((l.strip() for l in out.splitlines() if l.strip()), "")
+
+
+def base_upstream(project: Path, cfg: dict) -> str | None:
+    """The upstream ref base tracks (`origin/main`), or None when it tracks nothing."""
+    code, out = run_cmd("git rev-parse --abbrev-ref --symbolic-full-name "
+                        + shlex.quote(base_ref(cfg) + "@{upstream}"), project)
+    return (_first_line(out) or None) if code == 0 else None
+
+
+def base_lag(project: Path, cfg: dict) -> tuple[str, int] | None:
+    """(upstream, commits local base is behind it) as of the last fetch. Read-only."""
+    up = base_upstream(project, cfg)
+    if up is None:
+        return None
+    base = base_ref(cfg)
+    code, out = run_cmd("git rev-list --count " + shlex.quote(f"{base}..{base}@{{upstream}}"), project)
+    n = _first_line(out)
+    return (up, int(n)) if code == 0 and n.isdigit() else None
+
+
+def fetch_base(project: Path, cfg: dict, timeout: int = FETCH_TIMEOUT) -> str | None:
+    """Fetch base's remote. None on success or when there is nothing to fetch, else the error.
+
+    A plain remote fetch only updates `refs/remotes/`, never a local branch, so
+    the main checkout's branch cannot move. Bounded: this runs on the
+    dispatcher's loop."""
+    if base_upstream(project, cfg) is None:
+        return None
+    _, out = run_cmd("git config --get " + shlex.quote(f"branch.{base_ref(cfg)}.remote"), project)
+    remote = _first_line(out)
+    if not remote or remote == "." or remote.startswith("-"):
+        return None
+    try:
+        p = retry_eagain(lambda: subprocess.run(
+            ["git", "fetch", "--quiet", remote], cwd=project, stdin=subprocess.DEVNULL,
+            capture_output=True, text=True, timeout=timeout,
+            env={**project_env(), "GIT_TERMINAL_PROMPT": "0"}))
+    except subprocess.TimeoutExpired:
+        return f"git fetch {remote} timed out after {timeout}s"
+    except OSError as e:
+        return f"git fetch {remote} failed: {e}"
+    if p.returncode:
+        return f"git fetch {remote} exited {p.returncode}: {_first_line(p.stderr)}"
+    return None
+
+
 LOCKFILES = ("package-lock.json", "pnpm-lock.yaml", "yarn.lock", "uv.lock",
              "poetry.lock", "Gemfile.lock")
 
@@ -87,7 +136,8 @@ def unset_setup_lockfile(project: Path, cfg: dict) -> str | None:
     return next((n for n in LOCKFILES if (project / n).is_file()), None)
 
 
-def ensure_worktree(project: Path, meta: dict, cfg: dict) -> Path | None:
+def ensure_worktree(project: Path, meta: dict, cfg: dict,
+                    notes: list[str] | None = None) -> Path | None:
     """A ticket owns a checkout. Two tickets cannot share one, which is why
     concurrency and worktrees arrive together. Scripted, never improvised by an
     agent -- that is where 'forgot the env file' bugs come from."""
@@ -98,6 +148,21 @@ def ensure_worktree(project: Path, meta: dict, cfg: dict) -> Path | None:
     branch = shlex.quote(meta["branch"])
     rc, _ = run_cmd(f"git rev-parse --verify --quiet {branch}", project)
     branch_exists = rc == 0
+    if not branch_exists:
+        base = base_ref(cfg)
+        msgs = []
+        err = fetch_base(project, cfg)
+        if err:
+            msgs.append(f"could not fetch `{base}`'s upstream ({err}); comparing against the last fetched copy")
+        lag = base_lag(project, cfg)
+        if lag and lag[1] > 0:
+            msgs.append(f"`{meta['branch']}` is cut from local `{base}`, which is {lag[1]} commit(s) "
+                        f"behind `{lag[0]}` -- every stage of this ticket sees the older code. "
+                        f"`git pull --ff-only` on `{base}` in the main checkout catches it up for later tickets.")
+        for m in msgs:
+            print(f"  {meta['id']}: {m}")
+            if notes is not None:
+                notes.append(m)
     # Never `-B`: it RESETS the branch to base, so re-creating a worktree after
     # a resume would silently discard every commit the ticket already made.
     add = (f"git worktree add {shlex.quote(str(wt))} {branch}" if branch_exists else

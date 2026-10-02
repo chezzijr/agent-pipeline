@@ -3556,3 +3556,16 @@ def test_a_source_change_drain_names_what_it_waits_on(capsys):
 
     out = capsys.readouterr().out
     assert "draining 1 inflight stage(s): TICKET-001 (implementing)" in out, out
+
+
+def test_a_branch_cut_behind_its_upstream_notes_the_ticket():
+    from helpers import upstream_ahead
+    d, sh = git_project()
+    upstream_ahead(d, sh)
+    path = d / ".project/tickets/TICKET-001.md"
+    path.write_text(FIXTURE.replace("stage: plan-validation", "stage: verifying"))
+    did, rec = supervisor.start(d, path, harness("fake"), {})
+    assert did and rec
+    rec["proc"].wait()
+    supervisor.finish(d, rec)
+    assert "behind" in Ticket.load(path).section("Thread")
