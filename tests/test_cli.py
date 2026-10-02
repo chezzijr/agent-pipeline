@@ -65,7 +65,7 @@ def test_diagnostics_exits_nonzero_when_git_author_is_missing():
     assert r.returncode == 1, r.stdout
     rows = dict(l.split(": ", 1) for l in r.stdout.splitlines() if ": " in l)
     for label in ("package", "executable", "pipeline", "harness",
-                  "daemon", "registration", "worktree setup", "git author",
+                  "daemon", "registration", "worktree setup", "base", "git author",
                   "worktree commit"):
         assert label in rows, r.stdout
     assert rows["git author"] == "missing: user.name, user.email"
@@ -1914,3 +1914,25 @@ def test_reject_still_refuses_awaiting_merge():
     t = Ticket.load(path)
     assert t.stage == "awaiting-merge"
     shutil.rmtree(d)
+
+
+def test_diagnostics_reports_whether_base_is_behind_its_upstream():
+    from helpers import upstream_ahead
+    d, sh = git_project()
+    env = {"XDG_CONFIG_HOME": str(tempfile.mkdtemp())}
+    r = cli(d, "diagnostics", env=env)
+    rows = dict(l.split(": ", 1) for l in r.stdout.splitlines() if ": " in l)
+    assert rows["base"] == "no upstream for `main`", r.stdout
+    remote = upstream_ahead(d, sh)
+    r = cli(d, "diagnostics", env=env)
+    rows = dict(l.split(": ", 1) for l in r.stdout.splitlines() if ": " in l)
+    assert rows["base"].startswith("behind: "), r.stdout
+    assert r.returncode == 0, r.stderr
+    shutil.rmtree(d, ignore_errors=True)
+    shutil.rmtree(remote, ignore_errors=True)
+
+
+def test_bare_ls_keeps_a_branch_ready_ticket():
+    from pipeline.cli.main import filter_ls_rows
+    rows = [{"id": "A", "stage": "branch-ready"}, {"id": "B", "stage": "done"}]
+    assert [r["id"] for r in filter_ls_rows(rows, None, False, None)] == ["A"]

@@ -1378,3 +1378,9 @@ def test_tail_log_still_renders_a_stream_json_log():
 
     lines, _ = tail_log(str(d), "TICKET-001")
     assert lines == ["planning done"]
+
+
+def test_the_tree_keeps_a_branch_ready_ticket():
+    from pipeline.tui.app import FINISHED
+    assert "branch-ready" not in FINISHED
+    assert "done" in FINISHED
