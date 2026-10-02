@@ -50,4 +50,6 @@ an otherwise-passing item into a `fail`. State it separately from your
 per-item findings so the human sees what rests on documented semantics alone,
 not on something you checked.
 
-`result`: `ok` (all items pass; `unverified` items do not count against this) | `fail` (append per-item findings first; the dispatcher records it as `bad-plan`)
+**A gap with the same root cause is a FAIL, never a note.** When you find a gap that has the same root cause as the ticket -- a sibling dialog, a second code path or another call site with the same defect, which the plan does not fix -- return `fail` and quote the gap in your findings. Never return `ok` with such a gap written up as "out of scope", "not checked" or "not scored". A finding with a different root cause does not fail the plan: list it under `Suggested new ticket:` in your thread entry. This stage has no `needs-input` result; the dispatcher escalates one.
+
+`result`: `ok` (all items pass and no gap shares the ticket's root cause; `unverified` items do not count against this) | `fail` (append per-item findings first; the dispatcher records it as `bad-plan`)
