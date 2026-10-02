@@ -630,3 +630,24 @@ def test_planning_prompt_documents_static_interpreter_compatibility():
         "planning.md does not say the gate never executes a criterion")
     assert re.search(r"unclassified|cannot classify|ambiguous", text, re.I), (
         "planning.md does not name the unknown-shape fallback")
+
+
+def test_plan_validation_fails_a_gap_that_shares_the_tickets_root_cause():
+    """TICKET-149: a same-root-cause gap was left as a footnote under `ok`."""
+    text = (C.STAGES_DIR / "plan-validation.md").read_text()
+    assert "same root cause" in text, "plan-validation.md has no same-root-cause rule"
+    assert re.search(r"same root cause[^.]*(FAIL|needs-input)", text), (
+        "plan-validation.md does not fail or ask on a same-root-cause gap")
+
+
+def test_planning_runs_named_tests_instead_of_predicting_their_result():
+    """TICKET-149: a plan asserted which tests fail on unfixed code, wrongly."""
+    text = (C.STAGES_DIR / "planning.md").read_text()
+    assert "never predict" in text, "planning.md does not forbid predicting test results"
+    assert "unfixed branch" in text, "planning.md does not require running on the unfixed branch"
+
+
+def test_common_says_the_pipeline_commit_format_wins_in_a_ticket_branch():
+    """TICKET-149: a project's own commit rules conflicted with rule 6."""
+    text = (C.STAGES_DIR / "_common.md").read_text()
+    assert "commit format wins" in text, "_common.md has no commit-format precedence sentence"

@@ -1852,3 +1852,16 @@ def test_kill_refuses_a_note_without_resume_at():
     finally:
         clim.connect = old_connect
         shutil.rmtree(d, ignore_errors=True)
+
+
+def test_reject_withdraws_an_approval_at_revalidating():
+    """TICKET-149: `reject` accepted only `awaiting-approval`, so an operator
+    who spotted a gap after approving could not stop `revalidating`."""
+    d = Path(tempfile.mkdtemp())
+    cli(d, "new", "t")
+    cli(d, "resume", "TICKET-001", "--stage", "revalidating")
+    r = cli(d, "reject", "TICKET-001", "the plan misses a sibling dialog")
+    assert r.returncode == 0, r.stderr
+    t = Ticket.load(d / ".project/tickets/TICKET-001.md")
+    assert t.stage == "planning"
+    shutil.rmtree(d)
