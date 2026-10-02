@@ -13,11 +13,11 @@ from pathlib import Path
 from pipeline.cli import metrics
 from pipeline.cli.client import connect
 from pipeline.core import PipelineError, line_buffer_stdout
-from pipeline.core.config import (CONFIG_TEMPLATE, HARNESSES_DIR, PKG,
+from pipeline.core.config import (HARNESSES_DIR, PKG,
                                   TICKET_TEMPLATE, config_source, harness,
                                   install_skill, mark_skill, pin_dir,
                                   pin_path, project_config, project_harness,
-                                  selector_failure, skill_mark_key, skill_marks, skill_status,
+                                  seed_config, selector_failure, skill_mark_key, skill_marks, skill_status,
                                   suite_failure, sync_pins)
 from pipeline.core.gate import gate
 from pipeline.core.machine import KNOWN_STAGES, TERMINAL, cleared_key
@@ -55,9 +55,16 @@ def cmd_init(args) -> None:
     tickets_dir(project).mkdir(parents=True, exist_ok=True)
     (project / ".project" / "decisions").mkdir(exist_ok=True)
     cfg = project / ".project" / "pipeline.toml"
+    seeded = None
     if not cfg.exists():
-        cfg.write_text(CONFIG_TEMPLATE.read_text())
+        text, runner, marker = seed_config(project)
+        cfg.write_text(text)
+        seeded = (f"  seeded {runner} test commands "
+                  + (f"(found {marker})" if marker
+                     else "(no runner detected -- the default)"))
     print(f"initialised {project / '.project'} -- edit {cfg} for this project's commands")
+    if seeded:
+        print(seeded)
     # Registered by default so `pipeline start` discovers a freshly scaffolded
     # project with no second command. No test-command probe here (unlike
     # `cmd_register()`): setup writes an unedited template, so there is

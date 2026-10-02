@@ -30,6 +30,57 @@ HOOKS_DIR = PKG / "hooks"
 HARNESSES_DIR = PKG / "harnesses"
 TICKET_TEMPLATE = PKG / "templates" / "ticket.md"
 CONFIG_TEMPLATE = PKG / "templates" / "pipeline.toml"
+# The three test commands `init` seeds. `PYTEST_SEED` is
+# `pipeline/templates/pipeline.toml`'s three command lines, byte for byte:
+# `seed_config()` replaces them by exact match. The other seeds are TOML
+# literal strings; the pipeline-config skill shows the same text and a test
+# keeps the two identical. The JS and Cargo `test_one` wrap the runner because
+# it exits 0 when its filter matches nothing, and prints the name even when no
+# test ran -- so the wrapper drops name lines unless a test ran.
+PYTEST_SEED = """\
+test_one                = "pytest -x {test}"
+test_suite              = "pytest"
+test_suite_without_new  = "pytest {test:--deselect }"
+"""
+
+VITEST_SEED = r"""test_one = '''
+n={name}; t=$(printf '%s' "$n" | sed 's/[][\.*^$+?(){}|]/\\&/g')
+out=$(npx vitest run --reporter=verbose {path} -t "^$t\$" 2>&1); rc=$?
+if printf '%s\n' "$out" | grep -Eq 'Tests:? .*[0-9]+ (passed|failed)'; then printf '%s\n' "$out"; exit "$rc"; fi
+printf '%s\n' "$out" | grep -vF -- "$n"; echo 'test_one: no test ran'; exit 1
+'''
+test_suite = "npx vitest run"
+test_suite_without_new = '''
+p=$(for n in {name}; do printf '%s\n' "$n"; done | sed 's/[][\.*^$+?(){}|]/\\&/g' | paste -sd '|' -)
+npx vitest run -t "^(?!(?:$p)\$)"
+'''
+"""
+
+JEST_SEED = r"""test_one = '''
+n={name}; t=$(printf '%s' "$n" | sed -e 's/ > / /g' -e 's/[][\.*^$+?(){}|]/\\&/g')
+out=$(npx jest {path} -t "^$t\$" 2>&1); rc=$?
+if printf '%s\n' "$out" | grep -Eq 'Tests:? .*[0-9]+ (passed|failed)'; then printf '%s\n' "$out" | sed 's/ › / > /g'; exit "$rc"; fi
+printf '%s\n' "$out" | grep -vF -- "$n"; echo 'test_one: no test ran'; exit 1
+'''
+test_suite = "npx jest"
+test_suite_without_new = '''
+p=$(for n in {name}; do printf '%s\n' "$n"; done | sed -e 's/ > / /g' -e 's/[][\.*^$+?(){}|]/\\&/g' | paste -sd '|' -)
+npx jest -t "^(?!(?:$p)\$)"
+'''
+"""
+
+CARGO_SEED = r"""test_one = '''
+n={name}
+out=$(cargo test "$n" 2>&1); rc=$?
+if printf '%s\n' "$out" | grep -Eq '^running [1-9]'; then printf '%s\n' "$out"; exit "$rc"; fi
+printf '%s\n' "$out" | grep -vF -- "$n"; echo 'test_one: no test ran'; exit 1
+'''
+test_suite = "cargo test"
+test_suite_without_new = "cargo test -- {name:--skip }"
+"""
+
+SEED_COMMANDS = {"vitest": VITEST_SEED, "jest": JEST_SEED, "cargo": CARGO_SEED}
+
 SKILLS_DIR = PKG / "templates" / "skills"
 SKILL_TEMPLATE = SKILLS_DIR / "file-ticket" / "SKILL.md"
 SKILL_TARGETS = {
@@ -913,3 +964,62 @@ def stage_settings(stage: str, cfg: dict, hcfg: dict | None = None) -> Path | No
         json.dump(settings, f)
     f.close()
     return Path(f.name)
+
+
+def _package_deps(path: Path) -> tuple[dict, set[str]]:
+    """`(package.json, names it depends on)`; unreadable or non-object is `{}`."""
+    try:
+        pkg = json.loads(path.read_text())
+    except (OSError, ValueError):
+        pkg = {}
+    if not isinstance(pkg, dict):
+        pkg = {}
+    names: set[str] = set()
+    for key in ("devDependencies", "dependencies"):
+        if isinstance(pkg.get(key), dict):
+            names |= set(pkg[key])
+    return pkg, names
+
+
+def detect_runner(project: Path) -> tuple[str, str]:
+    """`(runner, marker)`: vitest or jest from `package.json` (the root, then
+    each npm/yarn workspace member), else cargo, else pytest. `marker` is the
+    file that decided it, empty when nothing was found."""
+    pkg, names = _package_deps(project / "package.json")
+    found = [("package.json", names)]
+    ws = pkg.get("workspaces")
+    if isinstance(ws, dict):
+        ws = ws.get("packages")
+    for pat in ws if isinstance(ws, list) else []:
+        if (not isinstance(pat, str) or not pat.strip("/")
+                or pat.startswith("/") or ".." in pat.split("/")):
+            continue
+        try:
+            members = sorted(project.glob(f"{pat.rstrip('/')}/package.json"))
+        except (ValueError, NotImplementedError, OSError):
+            continue
+        for p in members:
+            rel = p.relative_to(project)
+            if "node_modules" not in rel.parts:
+                found.append((rel.as_posix(), _package_deps(p)[1]))
+    for runner in ("vitest", "jest"):
+        for marker, deps in found:
+            if runner in deps:
+                return runner, marker
+    if (project / "Cargo.toml").exists():
+        return "cargo", "Cargo.toml"
+    if (project / "pyproject.toml").exists():
+        return "pytest", "pyproject.toml"
+    return "pytest", ""
+
+
+def seed_config(project: Path) -> tuple[str, str, str]:
+    """`(text, runner, marker)`: the config template with the test commands
+    for the runner `detect_runner()` finds."""
+    runner, marker = detect_runner(project)
+    text = CONFIG_TEMPLATE.read_text()
+    if runner == "pytest":
+        return text, runner, marker
+    if PYTEST_SEED not in text:
+        raise PipelineError(f"{CONFIG_TEMPLATE} no longer holds the pytest seed lines")
+    return text.replace(PYTEST_SEED, SEED_COMMANDS[runner], 1), runner, marker

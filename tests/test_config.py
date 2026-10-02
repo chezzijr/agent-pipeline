@@ -5,10 +5,12 @@ import os
 import subprocess
 import sys
 import tempfile
+import tomllib
 from pathlib import Path
 
 from pipeline.core import PipelineError, reset_notices
-from pipeline.core.config import (cap_config, format_test_cmd,
+from pipeline.core.config import (CARGO_SEED, JEST_SEED, PROBE_TEST,
+                                  VITEST_SEED, cap_config, format_test_cmd,
                                   format_tests_cmd, harness, install_skill,
                                   gate_quarantine,
                                    pin_dir, pin_path, project_config,
@@ -578,3 +580,57 @@ def test_skill_install_refuses_every_symlinked_destination_ancestor():
     except PipelineError as e:
         assert "symlinked skill path" in str(e)
     assert not (outside / "file-ticket" / "SKILL.md").exists()
+
+
+def _fake_tool(d, name, *lines):
+    f = d / "bin" / name
+    f.parent.mkdir(exist_ok=True)
+    f.write_text(chr(10).join(["#!/bin/sh", *lines]) + chr(10))
+    f.chmod(0o755)
+
+
+def _run_seed(d, cmd, test):
+    env = {**os.environ, "PATH": f"{d / 'bin'}{os.pathsep}{os.environ['PATH']}"}
+    return subprocess.run(format_test_cmd(cmd, test), shell=True, cwd=d,
+                          capture_output=True, text=True, env=env)
+
+
+def test_the_cargo_seed_fails_when_no_test_ran():
+    """TICKET-151: libtest exits 0 when its filter matches nothing. A bare
+    `cargo test {name}` seed fails the first assert with exit 0."""
+    d = Path(tempfile.mkdtemp())
+    cmd = tomllib.loads(CARGO_SEED)["test_one"]
+    _fake_tool(d, "cargo", 'echo "running 0 tests"', 'echo "filter $2"', "exit 0")
+    r = _run_seed(d, cmd, PROBE_TEST)
+    assert r.returncode == 1, r.stdout
+    assert "pipeline_register_probe_no_such_test" not in r.stdout
+    assert "test_one: no test ran" in r.stdout
+    _fake_tool(d, "cargo", 'echo "running 1 test"',
+               'echo "test tests::$2 ... FAILED"', "exit 101")
+    r = _run_seed(d, cmd, "src/lib.rs::it_fails")
+    assert r.returncode == 101, r.stdout
+    assert "tests::it_fails ... FAILED" in r.stdout
+
+
+def test_the_js_seeds_fail_when_no_test_ran():
+    """TICKET-151: Vitest and Jest exit 0 when `-t` matches nothing, and `npx`
+    echoes the pattern. A bare `npx ... -t {name}` seed fails the first assert."""
+    for seed, skipped, failed, line, pattern in (
+        (VITEST_SEED, " Tests  1 skipped (1)", " Tests  1 failed (1)",
+         " × outer > does a thing", "-t ^outer > does a thing$"),
+        (JEST_SEED, "Tests:       1 skipped, 1 total", "Tests:       1 failed, 1 total",
+         "  ● outer › does a thing", "-t ^outer does a thing$"),
+    ):
+        d = Path(tempfile.mkdtemp())
+        cmd = tomllib.loads(seed)["test_one"]
+        _fake_tool(d, "npx", 'echo "npx $*"', f'echo "{skipped}"', "exit 0")
+        r = _run_seed(d, cmd, PROBE_TEST)
+        assert r.returncode == 1, r.stdout
+        assert "pipeline_register_probe_no_such_test" not in r.stdout
+        assert "test_one: no test ran" in r.stdout
+        _fake_tool(d, "npx", 'echo "npx $*"', f'echo "{line}"', f'echo "{failed}"',
+                   "exit 1")
+        r = _run_seed(d, cmd, "src/a.test.ts::outer > does a thing")
+        assert r.returncode == 1, r.stdout
+        assert "outer > does a thing" in r.stdout
+        assert pattern in r.stdout
