@@ -113,6 +113,14 @@ CRIT_COUNT_RULE = (
 CRIT_BASELINE_RE = re.compile(
     r"(?:^|[.;:)(\[]|--)\s*(?:measured|baseline)\b", re.I)
 
+# `STEP_CRIT_RULE` paraphrases `## Acceptance criteria` in
+# `pipeline/stages/planning.md` and changes with it.
+STEP_REF_RE = re.compile(r"\bsteps?\s+(\d+(?:\s*(?:,|-|and)\s*\d+)*)", re.I)
+STEP_SPAN_RE = re.compile(r"(\d{1,9})(?:\s*-\s*(\d{1,9}))?")
+STEP_CRIT_RULE = ("name the step in the criterion that checks it, as `(step 2)`, "
+                  "`(steps 1, 3)`, `(steps 1 and 3)` or `(steps 2-4)`; "
+                  "a plan of one step is exempt")
+
 
 def assertion_clause(crit: str) -> str:
     m = CRIT_BASELINE_RE.search(crit)
@@ -242,6 +250,7 @@ STRUCTURAL_MARKS = (
     "plan step names no declared file",
     "acceptance criterion names no test",
     "acceptance criterion pins an absolute count",
+    "plan step has no acceptance criterion",
     UNMATCHABLE_MARK,  # DEC-065: a new structural finding needs its own mark
 )
 
@@ -500,6 +509,22 @@ def _repeat_note(finding: str, prior: dict[str, int]) -> str:
     if n < 2:
         return finding
     return finding + "\n" + REPEAT_NOTE.format(n=n, extra=GATE_EXTRA)
+
+
+def crit_spans(crit: str) -> list[tuple[int, int]]:
+    """The `(lo, hi)` step ranges `crit` names, a single step as `(n, n)`.
+
+    Criterion text is hostile: a part that does not fullmatch `STEP_SPAN_RE`
+    (`1-3-5`, `2026-10-02`, more than 9 digits) is skipped, so `int()` never
+    sees a malformed or 4300-digit string, and pairs instead of a `range()`
+    set mean `steps 1-999999999` allocates nothing."""
+    out: list[tuple[int, int]] = []
+    for m in STEP_REF_RE.finditer(crit):
+        for part in re.split(r"\s*(?:,|and)\s*", m.group(1)):
+            p = STEP_SPAN_RE.fullmatch(part)
+            if p:
+                out.append((int(p.group(1)), int(p.group(2) or p.group(1))))
+    return out
 
 
 def plan_steps(plan: str) -> int:
@@ -1090,8 +1115,8 @@ def gate(project: Path, tid: str, workdir: Path | None = None) -> tuple[bool, li
     # declaration in the first place. An empty `## Plan` is already caught by
     # REQUIRED_SECTIONS above; skip this check rather than double-report it.
     plan = secs.get("Plan", "")
+    steps: list[str] = []
     if plan.strip():
-        steps: list[str] = []
         in_step = False
         raws = plan.splitlines()
         # `_fenced()` and not a local scan: it is what `sections()` already
@@ -1224,6 +1249,22 @@ def gate(project: Path, tid: str, workdir: Path | None = None) -> tuple[bool, li
         if CRIT_CMD_RE.search(c) and CRIT_OUTCOME_RE.search(c):
             continue
         findings.append(f"acceptance criterion names no test: {c} -- {CRIT_RULE}")
+
+    # One step is exempt: every criterion checks it, and FIXTURE plus every
+    # gate test built on it is a one-step plan. A step number over 9 digits is
+    # skipped because `int()` raises past 4300 digits.
+    numbered: list[tuple[int, str]] = []
+    for step in steps:
+        num = PLAN_STEP_RE.match(step).group(0).strip().rstrip(".)")
+        if len(num) <= 9:
+            numbered.append((int(num), step))
+    if len(numbered) >= 2 and crits:
+        spans = [sp for c in crits for sp in crit_spans(c)]
+        for n, step in numbered:
+            if not any(lo <= n <= hi for lo, hi in spans):
+                findings.append(
+                    f"plan step has no acceptance criterion: step {n} "
+                    f"{step[:80]!r} -- {STEP_CRIT_RULE}")
 
     # `t` was read before the project's test commands ran, and those take
     # minutes. Two writers touch the ticket in that window: the planning agent,
